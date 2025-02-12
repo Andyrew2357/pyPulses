@@ -2,7 +2,7 @@
 # instrument in question has an Arduino Uno connected to the Analog Devices DAC
 # that takes serial bus input to set 20-bit unipolar DC outputs on 8 channels.
 
-from pyvisa_device import pyvisaDevice
+from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
 import numpy as np
 from math import ceil
@@ -13,7 +13,7 @@ class ad5764(pyvisaDevice):
 
         # configurations for pyvisa resource manager
         self.config = {
-            "resource_name" : "ASRLCOM3::INSTR",
+            "resource_name" : "ASRL3::INSTR",
             "baud_rate"     : 115200,
             "data_bits"     : 8,
             "parity"        : pyvisa.constants.Parity.none,
@@ -23,7 +23,7 @@ class ad5764(pyvisaDevice):
 
         super().__init__(self.config, logger)
 
-        self.device.set_buffer(pyvisa.constants.VI_WRITE_BUF, 512)
+        # self.device.set_buffer(pyvisa.constants.VI_WRITE_BUF, 512)
 
         # maximum bounds on channel values
         self.max_V      = 10.
