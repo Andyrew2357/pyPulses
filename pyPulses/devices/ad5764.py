@@ -6,10 +6,12 @@ from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
 import numpy as np
 from math import ceil
+from typing import Optional
 import time
 
 class ad5764(pyvisaDevice):
-    def __init__(self, logger = None):
+    def __init__(self, logger = None, max_step: Optional[float] = 0.05, 
+                 wait: Optional[float] = 0.1):
 
         # configurations for pyvisa resource manager
         self.config = {
@@ -30,8 +32,8 @@ class ad5764(pyvisaDevice):
         self.min_V      = 0.
 
         # sweep parameters
-        self.max_step   = 0.05
-        self.wait       = 0.1
+        self.max_step   = max_step
+        self.wait       = wait
 
         self.V = [0] * 8
 
@@ -70,10 +72,24 @@ class ad5764(pyvisaDevice):
         dist = abs(V - start)
         num_step = ceil(dist / max_step)
         for v in np.linspace(start, V, num_step + 1)[1:]:
-            self.set_V(ch, v)
+            self.set_V(ch, v, chatty = False)
             time.sleep(wait)
+        
+        self.info(f"Channel Settings: {self.V}")
 
-    def set_V(self, ch, V):
+    def get_V(self, ch):
+        """
+        Get the DC value on a given channel.
+        Note: This is not a true query. It simply returns what is saved on the
+        computer. There is currently no way to ask the arduino how you set it.
+        """
+        if ch not in self.channel_map:
+            self.error(f"AD5764 does not have a channel {ch}.")
+            return None
+        
+        return self.V[ch]
+
+    def set_V(self, ch, V, chatty = True):
         """Set the DC value on a given channel."""
 
         if ch not in self.channel_map:
@@ -118,7 +134,8 @@ class ad5764(pyvisaDevice):
                 pass  # No data available to read
                 
             self.V[ch] = V
-            self.info(f"Channel Settings: {self.V}")
+            if chatty:
+                self.info(f"Channel Settings: {self.V}")
                 
         except Exception as e:
             self.error(f"Error when writing to AD5764: {e}")

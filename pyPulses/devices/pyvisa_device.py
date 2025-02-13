@@ -1,23 +1,12 @@
+# This class is a bare-bones framework for low-level devices that use the pyvisa 
+# package for communication. This includes the majority of standalone instruments.
+
+from .abstract_device import abstractDevice
 import pyvisa
 
-class pyvisaDevice:
+class pyvisaDevice(abstractDevice):
     def __init__(self, pyvisa_config, logger = None):
-        self.logger = logger
+        """Standard initialization, calling ResourceManager.open_resource."""
+        super.__init__(logger)
         rm = pyvisa.ResourceManager('@py')
         self.device = rm.open_resource(**pyvisa_config)
-
-    def debug(self, msg):
-        if self.logger:
-            self.logger.debug(msg)
-
-    def info(self, msg):
-        if self.logger:
-            self.logger.info(msg)
-
-    def warn(self, msg):
-        if self.logger:
-            self.logger.warning(msg)
-
-    def error(self, msg):
-        if self.logger:
-            self.logger.error(msg)
