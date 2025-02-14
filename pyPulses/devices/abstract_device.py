@@ -1,4 +1,6 @@
-# This class implements the logging behavior for all devices.
+"""
+This class implements the logging behavior for all devices.
+"""
 
 class abstractDevice:
     def __init__(self, logger = None):

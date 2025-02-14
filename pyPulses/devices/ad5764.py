@@ -1,7 +1,10 @@
-# This class is an interface for communicating with the AD5764 DC box. The
-# instrument in question has an Arduino Uno connected to the Analog Devices DAC
-# that takes serial bus input to set 20-bit unipolar DC outputs on 8 channels.
+"""
+This class is an interface for communicating with the AD5764 DC box. The
+instrument in question has an Arduino Uno connected to the Analog Devices DAC
+that takes serial bus input to set 20-bit unipolar DC outputs on 8 channels.
+"""
 
+from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
 import numpy as np
@@ -11,7 +14,7 @@ import time
 
 class ad5764(pyvisaDevice):
     def __init__(self, logger = None, max_step: Optional[float] = 0.05, 
-                 wait: Optional[float] = 0.1):
+                 wait: Optional[float] = 0.1, instrument_id: Optional[str] = None):
 
         # configurations for pyvisa resource manager
         self.config = {
@@ -22,8 +25,11 @@ class ad5764(pyvisaDevice):
             "stop_bits"     : pyvisa.constants.StopBits.one,
             "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE
         }
+        if instrument_id: 
+            self.config["resource_name"] = instrument_id
 
         super().__init__(self.config, logger)
+        DeviceRegistry.register_device(self.config["resource_name"], self)
 
         # self.device.set_buffer(pyvisa.constants.VI_WRITE_BUF, 512)
 

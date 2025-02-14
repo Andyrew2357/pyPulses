@@ -1,19 +1,27 @@
-# This class is an interface for communicating with the DTG5274 data timing
-# generator. It implements only a small fraction of the functionality offered
-# by the instrument. It is primarily used by the pulseGenerator class, which
-# coordinates multiple instruments to generate clean excitation and discharge
-# pulses.
+"""
+This class is an interface for communicating with the DTG5274 data timing
+generator. It implements only a small fraction of the functionality offered
+by the instrument. It is primarily used by the pulseGenerator class, which
+coordinates multiple instruments to generate clean excitation and discharge
+pulses.
+"""
 
+from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
+from typing import Optional
 
 class dtg5274(pyvisaDevice):
-    def __init__(self, logger = None):
+    def __init__(self, logger: Optional[str] = None, 
+                 instrument_id: Optional[str] = None):
         self.config = {
             "resource_name" : "GPIB0::27::INSTR",
         }
+        if instrument_id: 
+            self.config["resource_name"] = instrument_id
 
         super().__init__(self.config, logger)
+        DeviceRegistry.register_device(self.config["resource_name"], self)
 
         # Set Output Buffer Size to 512 bytes
         self.device.set_buffer(pyvisa.constants.VI_WRITE_BUF, 512)

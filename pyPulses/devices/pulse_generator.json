@@ -1,4 +1,7 @@
 {
+    "dcbox_address" : "ASRL3::INSTR",
+    "dtg_address" : "GPIB0::27::INSTR",
+
     "max_V" : 4.3,
     "min_V" : 0,
 
@@ -14,4 +17,5 @@
     "ac2"    : ["B", 1],
     "ac2bar" : ["B", 2],
     "trig"   : ["C", 1]
+
 }

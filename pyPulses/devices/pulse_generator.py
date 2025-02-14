@@ -1,7 +1,12 @@
-# This class represents a multi-instrument object that controls a dc box and dtg
-# to produce excitation and discharge pulses with the desired heights the dcbox
-# is wired to the 
+"""
+This class represents a multi-instrument object that controls a dc box and dtg
+to produce excitation and discharge pulses with the desired heights. The DC box
+is wired to Xsg1, Ysg1, Xsg2, and Ysg2 on the pulse shaper box, and the DTG is
+wired to all of the clock inputs (AC1, AC1bar, AC2, AC2bar) and the repetitive 
+signal averager's trigger input.
+"""
 
+from ._registry import DeviceRegistry
 from .abstract_device import abstractDevice
 from .ad5764 import ad5764
 from .dtg5274 import dtg5274
@@ -19,11 +24,7 @@ class pulseGenerator(abstractDevice):
             except:
                 logger = dc_logger = dtg_logger = loggers
         
-        super().__init__(logger)
-
-        self.dcbox = ad5764(dc_logger)
-        self.dtg = dtg5274(dtg_logger)
-        
+        super().__init__(logger)        
 
         self.max_V = config["max_V"]
         self.min_V = config["min_V"]
@@ -35,6 +36,17 @@ class pulseGenerator(abstractDevice):
         self.ac2    = tuple(config["ac2"])
         self.ac2bar = tuple(config["ac2bar"])
         self.trig   = tuple(config["trig"])
+
+        dcbox_address   = config["dcbox_address"]
+        dtg_address     = config["dtg_address"]
+
+        self.dcbox = DeviceRegistry.get_device(dcbox_address)
+        if self.dcbox is None:
+            self.dcbox = ad5764(dc_logger, instrument_id = dcbox_address)
+        
+        self.dtg = DeviceRegistry.get_device(dtg_address)
+        if self.dtg is None:
+            self.dtg = dtg5274(dtg_logger, instrument_id = dtg_address)
         
         self.get_status()
     
