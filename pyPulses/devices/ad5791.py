@@ -1,3 +1,6 @@
+# Note: This does not currently work. I believe there is something wrong with
+# the box itself (output 7 appears to be shorted to the +15 V input).
+
 """
 This class is an interface for communicating with the AD5791 DC box. The
 instrument in question has an Arduino Uno connected to the Analog Devices DAC
@@ -72,7 +75,6 @@ class ad5791(pyvisaDevice):
     def get_V(self, ch):
         """
         Get the DC value on a given channel.
-        Note: Unlike for the AD5791, this is a true query
         """
         if ch not in range(0, 8):
             self.error(f"AD5791 does not have a channel {ch}.")
