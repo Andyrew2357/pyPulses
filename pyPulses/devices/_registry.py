@@ -18,7 +18,7 @@ class DeviceRegistry:
     """
     
     _instance = None
-    _active_devices = Dict[str, object] = {}
+    _active_devices: Dict[str, object] = {}
 
     def __new__(cls):
         if cls._instance is None:

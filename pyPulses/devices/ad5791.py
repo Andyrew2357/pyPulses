@@ -21,7 +21,7 @@ class ad5791(pyvisaDevice):
 
         # configurations for pyvisa resource manager
         self.config = {
-            "resource_name" : "FILL THIS IN CORRECTLY",
+            "resource_name" : "ASRL4::INSTR",
             "baud_rate"     : 115200,
             "data_bits"     : 8,
             "parity"        : pyvisa.constants.Parity.none,
@@ -44,10 +44,12 @@ class ad5791(pyvisaDevice):
         self.max_step   = max_step
         self.wait       = wait
 
+        self.V = [0] * 8
+
     def sweep_V(self, ch, V, max_step = None, wait = None):
         """Sweep smoothly to the DC value on a given channel."""
 
-        if ch not in self.channel_map:
+        if ch not in range(0, 8):
             self.error(f"AD5791 does not have a channel {ch}.")
             return
         
@@ -84,7 +86,12 @@ class ad5791(pyvisaDevice):
         clear_cmd = bytes([255, 254, 251, ch, 0, 0])
         self.device.write_raw(clear_cmd)
         time.sleep(0.02)
-        self.device.clear()
+        
+        # Clear the read buffer
+        try:
+            self.device.read_raw()
+        except pyvisa.errors.VisaIOError:
+            pass  # No data available to read
 
         # Read command
         read_cmd = bytes([255, 254, ch, 144, 0, 0])
@@ -96,7 +103,12 @@ class ad5791(pyvisaDevice):
         time.sleep(0.02)
         response = self.device.read_bytes(6)
         time.sleep(0.02)
-        self.device.clear()
+        
+        # Clear the read buffer
+        try:
+            self.device.read_raw()
+        except pyvisa.errors.VisaIOError:
+            pass  # No data available to read
 
         # Parse response bytes
         mid_byte = response[4]
@@ -117,6 +129,7 @@ class ad5791(pyvisaDevice):
             self.error("AD5791: Invalid voltage read from Arduino.")
             return None
 
+        self.V[ch] = voltage
         return voltage
 
     def set_V(self, ch, V, chatty = True):
@@ -157,7 +170,13 @@ class ad5791(pyvisaDevice):
             
             # Write to instrument using PyVISA
             self.device.write_raw(command)
-            self.device.clear()
+            
+            # Clear the read buffer
+            try:
+                self.device.read_raw()
+            except pyvisa.errors.VisaIOError:
+                print("error handling used")
+                pass  # No data available to read
                 
             self.V[ch] = V
             if chatty:

@@ -80,8 +80,9 @@ class dtg5274(pyvisaDevice):
             f"PGEN{slot}{mainframe}:CH{channel}:POLarity {'NORM' if pos else 'INV'}"
         )
         self.info(
-            f"DTG5274: Set polarity on {slot}{mainframe}:{channel} 
-            {'positive' if pos else 'negative'}")
+            f"DTG5274: Set polarity on {slot}{mainframe}:{channel} " +
+            f"{'positive' if pos else 'negative'}"
+        )
         
     def get_polarity(self, slot, channel, mainframe = 1) -> bool:
         """Query the polarity of the pulses on a given output."""
