@@ -1,2 +1,2 @@
 # pyPulses
-Instrument Control Code for Pulsed Electronic Measurements implemented for Python
+Instrument control code for pulsed electronic measurements implemented for python
