@@ -7,7 +7,7 @@ by the instrument.
 from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
-from typing import Optional
+from typing import Optional, Tuple
 import numpy as np
 
 class mso44(pyvisaDevice):
@@ -41,7 +41,7 @@ class mso44(pyvisaDevice):
         """Get the target channel to which other commands point."""
         return int(self.device.query("DATa:SOUrce?")[2:])
     
-    def get_waveform(self):
+    def get_waveform(self) -> Tuple[np.ndarray, np.ndarray]:
         """Pull a time-domain waveform off the scope."""
         data = np.fromstring(self.device.query("CURVe?"), 
                              dtype = float, sep = ',')

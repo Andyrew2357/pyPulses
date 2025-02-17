@@ -1,7 +1,7 @@
 """
-This class is an interface for communicating with the AD5764 DC box. The
+This class is an interface for communicating with the AD5791 DC box. The
 instrument in question has an Arduino Uno connected to the Analog Devices DAC
-that takes serial bus input to set 16-bit unipolar DC outputs on 8 channels.
+that takes serial bus input to set 20-bit unipolar DC outputs on 8 channels.
 """
 
 from ._registry import DeviceRegistry
@@ -12,13 +12,13 @@ from math import ceil
 from typing import Optional
 import time
 
-class ad5764(pyvisaDevice):
+class ad5791(pyvisaDevice):
     def __init__(self, logger = None, max_step: Optional[float] = 0.05, 
                  wait: Optional[float] = 0.1, instrument_id: Optional[str] = None):
 
         # configurations for pyvisa resource manager
         self.config = {
-            "resource_name" : "ASRL3::INSTR",
+            "resource_name" : "FILL THIS IN CORRECTLY",
             "baud_rate"     : 115200,
             "data_bits"     : 8,
             "parity"        : pyvisa.constants.Parity.none,
@@ -41,31 +41,17 @@ class ad5764(pyvisaDevice):
         self.max_step   = max_step
         self.wait       = wait
 
-        self.V = [0] * 8
-
-        # mapping for controlling the instrument channels via serial bus
-        self.channel_map = {
-            0: (19, 0, 1, 0),
-            1: (18, 0, 1, 0),
-            2: (17, 0, 1, 0),
-            3: (16, 0, 1, 0),
-            4: (0, 19, 0, 1),
-            5: (0, 18, 0, 1),
-            6: (0, 17, 0, 1),
-            7: (0, 16, 0, 1)
-        }
-
     def sweep_V(self, ch, V, max_step = None, wait = None):
         """Sweep smoothly to the DC value on a given channel."""
 
         if ch not in self.channel_map:
-            self.error(f"AD5764 does not have a channel {ch}.")
+            self.error(f"AD5791 does not have a channel {ch}.")
             return
         
         if V > self.max_V or V < self.min_V:
             Vt = min(self.max_V, max(self.min_V, V))
             self.warn(
-                f"{V} on AD5764 channel {ch} is out of range; truncating to {Vt}."
+                f"{V} on AD5791 channel {ch} is out of range; truncating to {Vt}."
             )
             V = Vt
 
@@ -74,7 +60,7 @@ class ad5764(pyvisaDevice):
         if not wait:
             wait = self.wait
 
-        start = self.V[ch]
+        start = self.get_V(ch)
         dist = abs(V - start)
         num_step = ceil(dist / max_step)
         for v in np.linspace(start, V, num_step + 1)[1:]:
@@ -86,63 +72,95 @@ class ad5764(pyvisaDevice):
     def get_V(self, ch):
         """
         Get the DC value on a given channel.
-        Note: This is not a true query. It simply returns what is saved on the
-        computer. There is currently no way to ask the arduino how you set it.
+        Note: Unlike for the AD5791, this is a true query
         """
-        if ch not in self.channel_map:
-            self.error(f"AD5764 does not have a channel {ch}.")
+        if ch not in range(0, 8):
+            self.error(f"AD5791 does not have a channel {ch}.")
             return None
         
-        return self.V[ch]
+        # Clear command
+        clear_cmd = bytes([255, 254, 251, ch, 0, 0])
+        self.device.write_raw(clear_cmd)
+        time.sleep(0.02)
+        self.device.clear()
+
+        # Read command
+        read_cmd = bytes([255, 254, ch, 144, 0, 0])
+        self.device.write_raw(read_cmd)
+        time.sleep(0.02)
+
+        # Read response
+        self.device.write_raw(read_cmd)
+        time.sleep(0.02)
+        response = self.device.read_bytes(6)
+        time.sleep(0.02)
+        self.device.clear()
+
+        # Parse response bytes
+        mid_byte = response[4]
+        lo_byte = response[5]
+        hi_byte_tmp = response[3]
+
+        hi_byte_tmp_dac = hi_byte_tmp // 16
+        hi_byte = hi_byte_tmp -16 * hi_byte_tmp_dac
+
+        tmp = lo_byte + mid_byte * 256 + hi_byte * 65536
+
+        # Convert to voltage
+        if 0 <= tmp <= 2**19:
+            voltage = 10.7 * tmp / (2**19 - 1)
+        elif 2**19 < tmp <= 2**20:
+            voltage = (tmp - 2**20) * 10.7 / 2**19
+        else:
+            self.error("AD5791: Invalid voltage read from Arduino.")
+            return None
+
+        return voltage
 
     def set_V(self, ch, V, chatty = True):
         """Set the DC value on a given channel."""
 
-        if ch not in self.channel_map:
-            self.error(f"AD5764 does not have a channel {ch}.")
+        if ch not in range(0, 8):
+            self.error(f"AD5791 does not have a channel {ch}.")
             return
         
         if V > self.max_V or V < self.min_V:
             Vt = min(self.max_V, max(self.min_V, V))
             self.warn(
-                f"{V} on AD5764 channel {ch} is out of range; truncating to {Vt}."
+                f"{V} on AD5791 channel {ch} is out of range; truncating to {Vt}."
             )
             V = Vt
 
-        n1, n2, m1, m2 = self.channel_map[ch]
-        # Calculate 16-bit decimal equivalent
+        # Calculate 20-bit decimal equivalent
         if V >= 0:
-            dec16 = round((2**15 - 1) * V / 10)
+            dec20 = round((2**19 - 1) * V / 10.7)
         else:
-            dec16 = round(2**16 - abs(V) / 10 * 2**15)
+            dec20 = round(2**20 - abs(V) / 10.7 * 2**19)
 
         try:
-            # Convert to 16-bit binary
-            # Using numpy's binary_repr to ensure 16-bit representation
-            bin16 = np.binary_repr(dec16, width=16)
+            # Convert to 20-bit binary
+            # Using numpy's binary_repr to ensure 20-bit representation
+            bin20 = np.binary_repr(dec20, width=20)
             
-            # Split into two 8-bit parts and convert back to decimal
-            # First 8 bits (MSB)
-            d1 = int(bin16[:8], 2)
-            # Second 8 bits (LSB)
-            d2 = int(bin16[8:], 2)
+            # Split into one 4 bit and two 8-bit parts; convert back to decimal
+            # First 4 bits (MSB)
+            d1 = int(bin20[:4], 2) + 16 # we add 16 here for some reason
+            # Second 8 bits
+            d2 = int(bin20[4:12], 2)
+            # Third 8 bits (LSB)
+            d3 = int(bin20[12:], 2)
             
             # Create command sequence
-            command = bytes([255, 254, 253, n1, d1*m1, d2*m1, n2, d1*m2, d2*m2])
+            command = bytes([255, 254, 253, ch, d1, d2, d3])
             
             # Write to instrument using PyVISA
             self.device.write_raw(command)
-            
-            # Clear the read buffer
-            try:
-                self.device.read_raw()
-            except pyvisa.errors.VisaIOError:
-                pass  # No data available to read
+            self.device.clear()
                 
             self.V[ch] = V
             if chatty:
                 self.info(f"Channel Settings: {self.V}")
                 
         except Exception as e:
-            self.error(f"Error when writing to AD5764: {e}")
+            self.error(f"Error when writing to AD5791: {e}")
             pass

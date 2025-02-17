@@ -1,0 +1,8 @@
+{
+    "scope_address" : "TCPIP0::169.254.9.11::4000::SOCKET",
+
+    "slope_window" : [10e-9, 60e-9],
+    "target_intercept" : 0e-9,
+    
+    "integral_window" : [100e-9, 150e-9]
+}
