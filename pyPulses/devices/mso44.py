@@ -6,7 +6,7 @@ by the instrument.
 
 from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
-import pyvisa.constants
+# import pyvisa.constants
 from typing import Optional, Tuple
 import numpy as np
 
@@ -14,7 +14,7 @@ class mso44(pyvisaDevice):
     def __init__(self, logger: Optional[str] = None, 
                  instrument_id: Optional[str] = None):
         self.config = {
-            "resource_name" : "TCPIP0::169.254.9.11::4000::SOCKET",
+            "resource_name" : "TCPIP0::169.254.9.11::inst0::INSTR",
         }
         if instrument_id: 
             self.config["resource_name"] = instrument_id
@@ -23,7 +23,7 @@ class mso44(pyvisaDevice):
         DeviceRegistry.register_device(self.config["resource_name"], self)
 
         # Set the input buffer size to 2^14 bytes
-        self.device.set_buffer(pyvisa.constants.VI_READ_BUF, 16384)
+        # self.device.set_buffer(pyvisa.constants.VI_READ_BUF, 16384)
 
         # Right now, I've only implemented this for pulling data using ASCII
         self.device.write("DATA:WIDTh 4")
@@ -74,7 +74,7 @@ class mso44(pyvisaDevice):
     def fast_acquisition(self, on: Optional[bool] = None) -> Optional[bool]:
         """Query or set whether fast acquisition is enabled."""
         if on is None:
-            return self.device.query("FASTAcq:STATE?") == 'ON\n'
+            return int(self.device.query("FASTAcq:STATE?")) == 1
         
         self.device.write(f"FASTAcq:STATE {'ON' if on else 'OFF'}")
         self.info(f"MSO44: Turned fast acquisition {'on' if on else 'off'}.")
