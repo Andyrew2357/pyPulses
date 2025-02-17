@@ -59,6 +59,18 @@ class mso44(pyvisaDevice):
         self.YMU = float(self.device.query("WFMP:YMU?"))
         self.YOF = float(self.device.query("WFMP:YOF?"))
 
+        self.info("MSO44: Updating waveform parameters...")
+        self.info(f"    XZE = {self.XZE}")
+        self.info(f"    XIN = {self.XIN}")
+        self.info(f"    YZE = {self.YZE}")
+        self.info(f"    YMU = {self.YMU}")
+        self.info(f"    YOF = {self.YOF}")
+
+    def clear_trace(self):
+        """Clear the captured waveforms and all averages."""
+        self.device.write("CLEAR")
+        self.info("MSO44: Trace cleared.")
+
     def fast_acquisition(self, on: Optional[bool] = None) -> Optional[bool]:
         """Query or set whether fast acquisition is enabled."""
         if on is None:

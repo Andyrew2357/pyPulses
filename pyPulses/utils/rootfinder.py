@@ -1,3 +1,7 @@
+"""
+These are utility datastructures for root finding algorithms.
+"""
+
 from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum, auto
