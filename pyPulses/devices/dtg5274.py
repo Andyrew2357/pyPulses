@@ -24,7 +24,7 @@ class dtg5274(pyvisaDevice):
         DeviceRegistry.register_device(self.config["resource_name"], self)
 
         # Set Output Buffer Size to 512 bytes
-        self.device.set_buffer(pyvisa.constants.VI_WRITE_BUF, 512)
+        # self.device.set_buffer(pyvisa.constants.VI_WRITE_BUF, 512)
         
         # Set EOS Character Code to LF (Line Feed, ASCII 10)
         self.device.set_visa_attribute(
@@ -55,9 +55,9 @@ class dtg5274(pyvisaDevice):
         self.device.write(f"TBAS:FREQ {f}")
         self.info(f"DTG5274: Set frequency to {f}.")
 
-    def get_frequency(self) -> int:
+    def get_frequency(self) -> float:
         """Query the device frequency."""
-        return int(self.device.query("TBAS:FREQ?"))
+        return float(self.device.query("TBAS:FREQ?"))
     
     def set_relative_rate(self, prate, slot, channel, mainframe = 1):
         """
@@ -123,7 +123,7 @@ class dtg5274(pyvisaDevice):
             f"DTG5274: Set Logical high on {slot}{mainframe}:{channel} to {V}V"
         )
 
-    def get_low(self, slot, channel, mainframe = 1) -> float:
+    def get_high(self, slot, channel, mainframe = 1) -> float:
         """Get the high level for pulses on a given output."""
         return float(
             self.device.query(f"PGEN{slot}{mainframe}:CH{channel}:HIGH?")
