@@ -55,17 +55,6 @@ class ad5764(pyvisaDevice):
             7: (0, 16, 0, 1)
         }
 
-        self.getter_map = {
-            0: (147, 0),
-            1: (146, 0),
-            2: (145, 0),
-            3: (144, 0),
-            4: (0, 147),
-            5: (0, 146),
-            6: (0, 145),
-            7: (0, 144)
-        }
-
     def sweep_V(self, ch, V, max_step = None, wait = None):
         """Sweep smoothly to the DC value on a given channel."""
 
@@ -94,39 +83,7 @@ class ad5764(pyvisaDevice):
         
         self.info(f"Channel Settings: {self.V}")
 
-    def get_V(self, ch):
-
-        nc1, nc2 = self.getter_map[ch]
-        ask_cmd = bytes([255, 254, 253, nc1, 0, 0, nc2, 0, 0])
-        self.device.write_raw(ask_cmd)
-        # Clear the read buffer
-        try:
-            self.device.read_raw()
-        except pyvisa.errors.VisaIOError:
-            pass  # No data available to read
-
-        read_cmd = bytes([255, 254, 253, 0, 0, 0, 0, 0, 0])
-        self.device.write_raw(read_cmd)
-        out = self.device.read_raw(6)
-
-        if ch >= 4:
-            high_byte = out[4]
-            low_byte = out[5]
-        else:
-            high_byte = out[1]
-            low_byte = out[2]
-            
-        tmp = low_byte + high_byte * 256
-        if 0 <= tmp <= 2**15:
-            v = 10 * tmp / (2**15 - 1)
-        elif 2**15 < tmp <= 2**16:
-            v = 10 * (tmp - 2**16) / 2**15
-        else:
-            self.error("AD5791: Invalid voltage read from Arduino.")
-            return None
-
-        return v
-    
+    def get_V(self, ch):    
         """
         Get the DC value on a given channel.
         Note: This is not a true query. It simply returns what is saved on the
@@ -189,3 +146,49 @@ class ad5764(pyvisaDevice):
         except Exception as e:
             self.error(f"Error when writing to AD5764: {e}")
             pass
+
+    def broken_true_query(self, ch):
+        return
+
+        getter_map = {
+            0: (147, 0),
+            1: (146, 0),
+            2: (145, 0),
+            3: (144, 0),
+            4: (0, 147),
+            5: (0, 146),
+            6: (0, 145),
+            7: (0, 144)
+        }
+
+        nc1, nc2 = getter_map[ch]
+        ask_cmd = bytes([255, 254, 253, nc1, 0, 0, nc2, 0, 0])
+        self.device.write_raw(ask_cmd)
+        # Clear the read buffer
+        try:
+            self.device.read_raw()
+        except pyvisa.errors.VisaIOError:
+            pass  # No data available to read
+
+        read_cmd = bytes([255, 254, 253, 0, 0, 0, 0, 0, 0])
+        self.device.write_raw(read_cmd)
+        out = self.device.read_raw(6)
+        print(out)
+
+        if ch >= 4:
+            high_byte = out[4]
+            low_byte = out[5]
+        else:
+            high_byte = out[1]
+            low_byte = out[2]
+            
+        tmp = low_byte + high_byte * 256
+        if 0 <= tmp <= 2**15:
+            v = 10 * tmp / (2**15 - 1)
+        elif 2**15 < tmp <= 2**16:
+            v = 10 * (tmp - 2**16) / 2**15
+        else:
+            self.error("AD5791: Invalid voltage read from Arduino.")
+            return None
+
+        return v
