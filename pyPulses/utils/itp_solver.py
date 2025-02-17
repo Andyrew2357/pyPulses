@@ -1,12 +1,18 @@
-# This class implements a modified version of the ITP method for root finding.
-# This is likely more sophisticated than our purposes demand, but it may help in
-# reducing the required number of function calls (costly measurements) to 
-# converge on a balance point.
+# Note: I've opted to use a modified Brent-Dekker method instead for our
+# purposes. The usage of that solver is slightly different from this one, so if
+# one wishes to use this for balancing procedures, they should modify it to
+# comply with the standard set by brent_solver.py
+"""
+This class implements a modified version of the ITP method for root finding.
+This is likely more sophisticated than our purposes demand, but it may help in
+reducing the required number of function calls (costly measurements) to 
+converge on a balance point.
+"""
 
 from math import ceil, log2, copysign
 from typing import Optional
 
-class bracketITP:
+class ITPsolver:
     def __init__(self, eps:float, xa: float, xb: float, ya: float, yb: float,
                  kap1: Optional[float] = 0.1, kap2: Optional[float] = 2, 
                  n0: Optional[float] = 1):
