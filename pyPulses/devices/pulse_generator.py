@@ -12,11 +12,17 @@ from .ad5764 import ad5764
 from .dtg5274 import dtg5274
 from typing import Optional
 import json
+import os
 
 class pulseGenerator(abstractDevice):
     def __init__(self, loggers = None, config = None):
         if not config:
-            config = json.load(r'pulse_generator.json')
+            fname = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                r'pulse_generator.json'
+            )
+            with open(fname, 'r') as f:
+                config = json.load(f)
 
         if loggers:
             try:
@@ -63,7 +69,7 @@ class pulseGenerator(abstractDevice):
             )
             V = Vt
 
-        self.dcbox.set_V(self.dcbox_map[ch], V)
+        self.dcbox.sweep_V(self.dcbox_map[ch], V)
         self.info(f"Set {ch} to {V} V.")
         return V
 
@@ -75,11 +81,11 @@ class pulseGenerator(abstractDevice):
     def set_prate(self, prate):
         """Set the relative pulse rate consistently accross all outputs."""
         if self.exc_on():
-            self.dtg.set_relative_rate(prate, self.ac1)
-            self.dtg.set_relative_rate(prate, self.ac1bar)
+            self.dtg.set_relative_rate(prate, *self.ac1)
+            self.dtg.set_relative_rate(prate, *self.ac1bar)
         if self.dis_on():
-            self.dtg.set_relative_rate(prate, self.ac2)
-            self.dtg.set_relative_rate(prate, self.ac2bar)
+            self.dtg.set_relative_rate(prate, *self.ac2)
+            self.dtg.set_relative_rate(prate, *self.ac2bar)
         self.dtg.set_relative_rate(prate, *self.trig)
         self.prate = prate
         self.info(f"Set the relative pulse rate to {prate}.")
@@ -87,6 +93,7 @@ class pulseGenerator(abstractDevice):
     def exc_on(self, on: Optional[bool] = None) -> Optional[bool]:
         """Query or set whether excitation pulses are on or off."""
         if on is None:
+            print(self.dtg.get_relative_rate(*self.ac1))
             return self.dtg.get_relative_rate(*self.ac1) != 'OFF'
 
         if on:

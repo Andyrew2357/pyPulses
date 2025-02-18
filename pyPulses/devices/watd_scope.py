@@ -11,11 +11,17 @@ from .mso44 import mso44
 from typing import Optional, Tuple
 import numpy as np
 import json
+import os
 
 class watdScope(abstractDevice):
     def __init__(self, loggers = None, config = None):
         if not config:
-            config = json.load(r'pulse_generator.json')
+            fname = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                r'watd_scope.json'
+            )
+            with open(fname, 'r') as f:
+                config = json.load(f)
 
         if loggers:
             try:

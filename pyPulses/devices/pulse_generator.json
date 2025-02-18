@@ -1,5 +1,5 @@
 {
-    "dcbox_address" : "ASRL3::INSTR",
+    "dcbox_address" : "ASRL6::INSTR",
     "dtg_address" : "GPIB0::27::INSTR",
 
     "max_V" : 4.3,
