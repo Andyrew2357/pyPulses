@@ -10,6 +10,7 @@ from .abstract_device import abstractDevice
 from .mso44 import mso44
 from typing import Optional, Tuple
 import numpy as np
+import time
 import json
 import os
 
@@ -54,7 +55,9 @@ class watdScope(abstractDevice):
         """
         Query a waveform off the scope and update t and v accordingly.
         """
-        self.t, self.v = self.scope.get_waveform
+        self.scope.clear_trace()
+        time.sleep(0.2)
+        self.t, self.v = self.scope.get_waveform()
         self.info(f"Took trace with {self.t.size} points.")
 
     def get_waveform(self) -> Tuple[np.ndarray, np.ndarray]:
