@@ -31,6 +31,8 @@ class watdScope(abstractDevice):
                 logger = scope_logger = loggers
 
         super.__init__(logger)
+
+        self.trace_wait = config["trace_wait"]
         
         self.tsl0, self.tsl1 = config["slope_window"]
         self.target_intercept = config["target_intercept"]
@@ -51,17 +53,18 @@ class watdScope(abstractDevice):
         self.scope.set_channel(ch)
         self.info(f"Set active channel to {ch}")
 
-    def take_waveform(self):
+    def get_waveform(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Return t and v."""
+        return self.t, self.v
+
+    def take_waveform(self) -> Tuple[np.ndarray, np.ndarray]:
         """
         Query a waveform off the scope and update t and v accordingly.
         """
         self.scope.clear_trace()
-        time.sleep(0.2)
+        time.sleep(self.trace_wait)
         self.t, self.v = self.scope.get_waveform()
         self.info(f"Took trace with {self.t.size} points.")
-
-    def get_waveform(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Return t and v."""
         return self.t, self.v
 
     def get_slope_int(self) -> float:
@@ -69,7 +72,7 @@ class watdScope(abstractDevice):
         Calculate and return the implied t intercept of the initial slope
         relative to the target intercept using t and v.
         """
-        mask = self.tsl0 <= self.t <= self.tsl1
+        mask = (self.tsl0 <= self.t) & (self.t <= self.tsl1)
         b, m = np.polyfit(self.t[mask], self.v[mask], 1)
         return -(b / m) - self.target_intercept
 
@@ -85,7 +88,7 @@ class watdScope(abstractDevice):
         Calculate and return the integral of the waveform over a specified time
         using a trapezoidal sum.
         """
-        mask = self.tint0 <= self.t <= self.tint1
+        mask = (self.tint0 <= self.t) & (self.t <= self.tint1)
         return np.sum(np.diff(self.t[mask]) * 
                       (self.v[mask][1:] + self.v[mask][:-1])) / 2
     
