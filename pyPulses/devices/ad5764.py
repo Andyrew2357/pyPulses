@@ -139,7 +139,7 @@ class ad5764(pyvisaDevice):
             except pyvisa.errors.VisaIOError:
                 pass  # No data available to read
                 
-            self.V[ch] = V
+            self.V[ch] = float(V)
             if chatty:
                 self.info(f"Channel Settings: {self.V}")
                 

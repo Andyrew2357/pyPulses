@@ -129,7 +129,7 @@ class ad5791(pyvisaDevice):
             self.error("AD5791: Invalid voltage read from Arduino.")
             return None
 
-        self.V[ch] = voltage
+        self.V[ch] = float(voltage)
         return voltage
 
     def set_V(self, ch, V, chatty = True):
@@ -178,7 +178,7 @@ class ad5791(pyvisaDevice):
                 print("error handling used")
                 pass  # No data available to read
                 
-            self.V[ch] = V
+            self.V[ch] = float(V)
             if chatty:
                 self.info(f"Channel Settings: {self.V}")
                 
