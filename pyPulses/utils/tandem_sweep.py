@@ -11,7 +11,11 @@ def tandemSweep(wait: float,
                 ]]):
     """
     Sweeps multiple parameters smoothly while respecting their maximum step
-    sizes.
+    sizes. It takes arguments of the form:
+    wait_time, 
+    (setter1, start1, target1, max_step1), 
+    (setter2, start2, target2, max_step2),
+    ...
     """
     
     # Repackage the input into an 'instructions' list of tuples like:

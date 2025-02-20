@@ -115,3 +115,5 @@ if __name__ == '__main__':
                         help = "End of the gate bias points.")
     parser.add_argument("-Vgst", "--Vgsteps", type = int, required = True,
                         help = "Number of distinct gate bias points to take.")
+
+    main(parser.parse_args())
