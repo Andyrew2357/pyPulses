@@ -1,4 +1,4 @@
-from ..devices import pulseGenerator, watdScope
+from ..devices import pulseGenerator, watdScope, DeviceRegistry
 from ..utils import getQuickLogger, tandemSweep
 import numpy as np
 import argparse
@@ -51,6 +51,8 @@ def main(args):
             pulse_gen.set_V("Vx1", V)
             pulse_gen.set_V("Vy1", V)
             sfile.write(f"{V}    {watd.take_integral()}")
+
+    DeviceRegistry.clear_registry()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(

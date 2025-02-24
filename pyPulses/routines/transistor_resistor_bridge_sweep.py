@@ -1,4 +1,4 @@
-from ..devices import pulseGenerator, watdScope
+from ..devices import pulseGenerator, watdScope, DeviceRegistry
 from ..utils import ExtrapPred1d, balance1d, BalanceConfig, BrentSolver 
 from ..utils import getQuickLogger, RootFinderStatus
 import numpy as np
@@ -78,6 +78,8 @@ def main(args):
             print("Failed to find a sufficient balance point.")
             print(f"Ended with Vy = {Vy}.")
         print("="*40)
+    
+    DeviceRegistry.clear_registry()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
