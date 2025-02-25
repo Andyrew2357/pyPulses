@@ -1,13 +1,121 @@
-# This class is a bare-bones framework for low-level devices that use the pyvisa 
-# package for communication. This includes the majority of standalone instruments.
+"""
+This class is a bare-bones framework for low-level devices that use the pyvisa 
+package for communication. This includes the majority of standalone instruments.
+"""
 
 from .nivisa_utils import visa_dll
 from .abstract_device import abstractDevice
+import pyvisa.constants
 import pyvisa
+import time
+import re
 
 class pyvisaDevice(abstractDevice):
     def __init__(self, pyvisa_config, logger = None):
         """Standard initialization, calling ResourceManager.open_resource."""
         super().__init__(logger)
+        # rm = pyvisa.ResourceManager(visa_dll)
+        # self.device = rm.open_resource(**pyvisa_config)
+        self.pyvisa_config = pyvisa_config
+        self.connect()
+
+    def connect(self):
+        """
+        Open a VISA instrument with the right configuration.
+        Works with ASRL, GPIB, and TCPIP instruments.
+        """
+    
+        # Store the resource name and configuration
+        resource_name = self.pyvisa_config["resource_name"]
+    
+        # Determine instrument type
+        if re.match(r'^ASRL', resource_name):
+            interface_type = 'ASRL'
+        elif re.match(r'^GPIB', resource_name):
+            interface_type = 'GPIB'
+        elif re.match(r'^TCPIP', resource_name):
+            interface_type = 'TCPIP'
+        else:
+            interface_type = 'OTHER'
+    
+        # Open the instrument with the resource manager
         rm = pyvisa.ResourceManager(visa_dll)
-        self.device = rm.open_resource(**pyvisa_config)
+        self.device = rm.open_resource(resource_name)
+    
+        # Common configuration
+        for attr in ['timeout', 'write_termination', 'read_termination']:
+            if attr in self.pyvisa_config:
+                try:
+                    setattr(self.device, attr, self.pyvisa_config[attr])
+                except Exception as e:
+                    self.warn(f"Could not set attribute {attr}: {e}")
+
+        if 'output_buffer_size' in self.pyvisa_config:
+            try:
+                self.device.set_buffer(
+                    pyvisa.constants.VI_WRITE_BUF, 
+                    self.pyvisa_config['output_buffer_size']
+                )
+            except Exception as e:
+                self.warn(f"Could not set output buffer size: {e}")
+        if 'input_buffer_size' in self.pyvisa_config:
+            try:
+                self.device.set_buffer(
+                    pyvisa.constants.VI_READ_BUF, 
+                    self.pyvisa_config['input_buffer_size']
+                )
+            except Exception as e:
+                self.warn(f"Could not set input buffer size: {e}")
+    
+        # Interface-specific configuration
+        match interface_type:
+            case 'ASRL':
+                # Serial-specific attributes
+                for attr in ['baud_rate', 'data_bits', 'stop_bits', 
+                             'parity', 'flow_control', 'write_buffer_size', 
+                             'read_buffer_size']:
+                    if attr in self.pyvisa_config:
+                        try:
+                            setattr(self.device, attr, self.pyvisa_config[attr])
+                        except Exception as e:
+                            self.warn(f"Could not set attribute {attr}: {e}")
+                        
+            case 'GPIB':
+                # GPIB-specific attributes using set_visa_attribute
+                if 'gpib_eos_mode' in self.pyvisa_config:
+                    self.device.set_visa_attribute(
+                        pyvisa.constants.VI_ATTR_TERMCHAR_EN, 
+                        self.pyvisa_config['gpib_eos_mode']
+                    )
+                if 'gpib_eoi_mode' in self.pyvisa_config:
+                    self.device.set_visa_attribute(
+                        pyvisa.constants.VI_ATTR_SEND_END_EN, 
+                        self.pyvisa_config['gpib_eoi_mode']
+                    )
+                if 'gpib_eos_char' in self.pyvisa_config:
+                    self.device.set_visa_attribute(
+                        pyvisa.constants.VI_ATTR_TERMCHAR, 
+                        self.pyvisa_config['gpib_eos_char']
+                    )
+                
+            case 'TCPIP':
+                # TCPIP-specific attributes
+                if 'tcpip_nodelay' in self.pyvisa_config:
+                    self.device.set_visa_attribute(
+                        pyvisa.constants.VI_ATTR_TCPIP_NODELAY, 
+                        self.pyvisa_config['tcpip_nodelay']
+                    )
+                if 'tcpip_keepalive' in self.pyvisa_config:
+                    self.device.set_visa_attribute(
+                        pyvisa.constants.VI_ATTR_TCPIP_KEEPALIVE, 
+                        self.pyvisa_config['tcpip_keepalive'])
+            
+            case _:
+                self.warn(f"Interface type {interface_type} not recognized.")
+    
+        self.info(f"Connected to instrument {resource_name}.")
+
+    def refresh(self):
+        """Close and reopen the device."""
+        self.device.close()
+        self.connect()

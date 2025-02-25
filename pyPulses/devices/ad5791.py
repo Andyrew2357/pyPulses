@@ -26,15 +26,15 @@ class ad5791(pyvisaDevice):
             "data_bits"     : 8,
             "parity"        : pyvisa.constants.Parity.none,
             "stop_bits"     : pyvisa.constants.StopBits.one,
-            "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE
+            "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE,
+
+            "write_buffer_size" : 512
         }
         if instrument_id: 
             self.config["resource_name"] = instrument_id
 
         super().__init__(self.config, logger)
         DeviceRegistry.register_device(self.config["resource_name"], self)
-
-        # self.device.set_buffer(pyvisa.constants.VI_WRITE_BUF, 512)
 
         # maximum bounds on channel values
         self.max_V      = 10.
@@ -69,8 +69,8 @@ class ad5791(pyvisaDevice):
         dist = abs(V - start)
         num_step = ceil(dist / max_step)
         for v in np.linspace(start, V, num_step + 1)[1:]:
-            self.set_V(ch, v, chatty = False)
             time.sleep(wait)
+            self.set_V(ch, v, chatty = False)
         
         self.info(f"Channel Settings: {self.V}")
 

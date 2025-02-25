@@ -33,10 +33,10 @@ def tandemSweep(wait: float,
     min_steps = 0
     for _, start, target, max_step in instructions:
         if max_step:
-            min_steps = max(ceil((target - start) / max_step), min_steps)
+            min_steps = max(ceil(abs(target - start) / max_step), min_steps)
 
     # Perform the sweep, setting each value and waiting between steps
     for step in range(1, min_steps + 1):
+        time.sleep(wait)
         for setter, start, target, _ in instructions:
             setter(start + step * (target - start) / min_steps)
-        time.sleep(wait)

@@ -1,10 +1,10 @@
 {
-    "scope_address" : "TCPIP0::169.254.9.11::4000::SOCKET",
+    "scope_address" : "TCPIP0::169.254.9.11::inst0::INSTR",
 
-    "trace_wait" : 0.2,
+    "trace_wait" : 0.5,
 
     "slope_window" : [10e-9, 60e-9],
     "target_intercept" : 0e-9,
     
-    "integral_window" : [100e-9, 150e-9]
+    "integral_window" : [20e-9, 60e-9]
 }

@@ -55,12 +55,13 @@ class pulseGenerator(abstractDevice):
             self.dtg = dtg5274(dtg_logger, instrument_id = dtg_address)
         
         self.get_status()
+        self.dtg.run(True)
     
     def get_V(self, ch):
         """Get the pulse height of a given output."""
         return self.dcbox.get_V(self.dcbox_map[ch])
     
-    def set_V(self, ch, V) -> float:
+    def set_V(self, ch, V, *args) -> float:
         """Set the pulse height of a given output."""
         if not self.min_V <= V < self.max_V:
             Vt = min(self.max_V, max(self.min_V, V))
@@ -69,7 +70,7 @@ class pulseGenerator(abstractDevice):
             )
             V = Vt
 
-        self.dcbox.sweep_V(self.dcbox_map[ch], V)
+        self.dcbox.sweep_V(self.dcbox_map[ch], V, *args)
         self.info(f"Set {ch} to {V} V.")
         return V
 

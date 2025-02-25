@@ -15,15 +15,15 @@ class mso44(pyvisaDevice):
                  instrument_id: Optional[str] = None):
         self.config = {
             "resource_name" : "TCPIP0::169.254.9.11::inst0::INSTR",
+
+            "timeout"           : 10000,
+            "input_buffer_size"  : 16384,
         }
         if instrument_id: 
             self.config["resource_name"] = instrument_id
 
         super().__init__(self.config, logger)
         DeviceRegistry.register_device(self.config["resource_name"], self)
-
-        # Set the input buffer size to 2^14 bytes
-        # self.device.set_buffer(pyvisa.constants.VI_READ_BUF, 16384)
 
         # Right now, I've only implemented this for pulling data using ASCII
         self.device.write("DATA:WIDTh 4")

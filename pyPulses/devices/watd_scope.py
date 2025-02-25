@@ -30,7 +30,7 @@ class watdScope(abstractDevice):
             except:
                 logger = scope_logger = loggers
 
-        super.__init__(logger)
+        super().__init__(logger)
 
         self.trace_wait = config["trace_wait"]
         
@@ -61,7 +61,7 @@ class watdScope(abstractDevice):
         """
         Query a waveform off the scope and update t and v accordingly.
         """
-        self.scope.clear_trace()
+        # self.scope.clear_trace()
         time.sleep(self.trace_wait)
         self.t, self.v = self.scope.get_waveform()
         self.info(f"Took trace with {self.t.size} points.")

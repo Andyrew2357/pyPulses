@@ -16,28 +16,17 @@ class dtg5274(pyvisaDevice):
                  instrument_id: Optional[str] = None):
         self.config = {
             "resource_name" : "GPIB0::27::INSTR",
+
+            "output_buffer_size" : 512,
+            "gpib_eos_mode"     : False,
+            "gpib_eos_char"     : ord('\n'),
+            "gpib_eoi_mode"     : True,
         }
         if instrument_id: 
             self.config["resource_name"] = instrument_id
 
         super().__init__(self.config, logger)
         DeviceRegistry.register_device(self.config["resource_name"], self)
-
-        # Set Output Buffer Size to 512 bytes
-        # self.device.set_buffer(pyvisa.constants.VI_WRITE_BUF, 512)
-        
-        # Set EOS Character Code to LF (Line Feed, ASCII 10)
-        self.device.set_visa_attribute(
-            pyvisa.constants.VI_ATTR_TERMCHAR, ord('\n')
-        )
-
-        # Set EOI Mode to 'on'
-        self.device.send_end = True
-
-        # Set EOS Mode to 'none'
-        self.device.set_visa_attribute(
-            pyvisa.constants.VI_ATTR_TERMCHAR_EN, False
-        )
 
         # Do a level calibration
         self.device.query("*CAL?")
