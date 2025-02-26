@@ -29,6 +29,7 @@ class mso44(pyvisaDevice):
         self.device.write("DATA:WIDTh 4")
         self.device.write("DATA:ENCdg ASCII")
 
+        self.set_channel(1)
         self.get_status()
 
     def set_channel(self, ch: int):
