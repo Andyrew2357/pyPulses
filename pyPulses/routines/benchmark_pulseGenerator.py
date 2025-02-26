@@ -72,7 +72,7 @@ def main(args):
             print(f"Vx = {Vx}")
             pulse_gen.set_V("Vx1", Vx, 0.1, wait)
             integral = watd.take_integral()
-            wave = ''.join([f"{v}, " for v in np.round(watd.get_waveform()[1])])[:-1]
+            wave = ''.join([f"{v}, " for v in watd.get_waveform()[1]])[:-1]
             xfile.write(f"{Vx}, {integral}, {wave}\n")
     
     pulse_gen.set_V("Vx1", 0., 0.1, wait)
