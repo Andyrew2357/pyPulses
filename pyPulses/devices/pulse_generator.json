@@ -2,7 +2,7 @@
     "dcbox_address" : "ASRL3::INSTR",
     "dtg_address" : "GPIB0::27::INSTR",
 
-    "max_V" : 4.3,
+    "max_V" : 4.5,
     "min_V" : 0,
 
     "dcbox_map" : {
