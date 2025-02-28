@@ -7,252 +7,302 @@ converge on a balance point.
 
 from .rootfinder import RootFinderState, RootFinderStatus
 from typing import Tuple, Optional
-import numpy as np
 
 class BrentSolver:
-    def __init__(self, x0: float, x1: float,
+    def __init__(self, xa: float, xb: float,
                  search_range: Optional[Tuple[float, float]] = None,
-                 max_iter: int = 100,
-                 tolerance: float = 1e-6,
-                 max_step: Optional[float] = None):
+                 x_tolerance: float         = 1e-6,
+                 y_tolerance: float         = 1e-6,
+                 max_iter: int              = 100,
+                 max_reps: Optional[int]    = 6,
+                 max_coll: Optional[int]    = 3):
+        
         """
         Initialize the Brent solver with external function evaluation.
        
         Args:
-            x0: First initial guess
-            x1: Second initial guess
+            xa          : First initial guess
+            xb          : Second initial guess
             search_range: Optional tuple of (min, max) defining search range
-            max_iter: Maximum iterations allowed
-            tolerance: Convergence tolerance
-            max_step: Maximum allowed step size
+            max_iter    : Maximum iterations allowed
+            x_tolerance : Convergence tolerance for x
+            y_tolerance : Convergence tolerance for y (regardless of x status)
+            max_rep     : Maximum allowed repetitions before we assume a cycle
+            max_coll    : Maximum allowed collisions with the boundary
         """
+
         self.search_range = search_range
         if search_range:
             min_x, max_x = search_range
-            self.x0 = min(max(x0, min_x), max_x)
-            self.x1 = min(max(x1, min_x), max_x)
+            self.xa = min(max(xb, min_x), max_x)
+            self.xb = min(max(xb, min_x), max_x)
+
+            self.min_x, self.max_x = search_range
         else:
-            self.x0 = x0
-            self.x1 = x1
-           
+            self.xa = xa
+            self.xb = xb
+
         self.max_iter = max_iter
-        self.tolerance = tolerance
-        self.max_step = max_step
-       
+        self.x_tolerance = x_tolerance
+        self.y_tolerance = y_tolerance
+
         # Internal state
-        self.x2 = self.x0
-        self.f0 = None
-        self.f1 = None
-        self.f2 = None
-       
+        self.fa = None
+        self.fb = None
+
+        # Previous guessed point
+        self.xc = None
+        self.fc = None
+
+        # Previous-previous guessed point
+        self.xd = None
+
         self.past_points = set()
-        self.points_near_boundary = 0
+        self.reps = 0
+        self.max_allowed_reps = max_reps
+
+        self.boundary_collisions = 0
+        self.max_allowed_collisions = max_coll
+
         self.min_f_seen = float('inf')
         self.iterations = 0
-       
+
         # Initialize state
-        self.state = RootFinderState(
-            status = RootFinderStatus.NEEDS_EVALUATION,
-            point = self.x0,
-            root = None,
-            iterations = 0,
-            message = "Awaiting initial function evaluation",
-            best_value = float('inf')
+        self.state      = RootFinderState(
+            status      = RootFinderStatus.NEEDS_EVALUATION,
+            point       = self.xa,
+            root        = None,
+            iterations  = 0,
+            message     = "Awaiting initial function evaluation",
+            best_value  = float('inf')
         )
        
         self._evaluation_step = 0  # Tracks which initial point we're evaluating
-       
+
+        self._bracketed
+        self._prev_step_bisect = True
+
     def update(self, f_value: float) -> RootFinderState:
         """
         Provide a function evaluation and get the next state.
         """
+
         # Handle initial evaluations
         if self._evaluation_step == 0:
-            self.f0 = f_value
-            self.f2 = f_value
+            self.fa = f_value
             self._evaluation_step = 1
             self.min_f_seen = abs(f_value)
            
-            if abs(f_value) < self.tolerance:
+            if abs(f_value) < self.y_tolerance:
                 self.state = RootFinderState(
-                    status = RootFinderStatus.CONVERGED,
-                    point = self.x0,
-                    root = self.x0,
-                    iterations = 0,
-                    message = "Root found at initial point x0",
-                    best_value = abs(f_value)
+                    status      = RootFinderStatus.CONVERGED,
+                    point       = self.xa,
+                    root        = self.xa,
+                    iterations  = 0,
+                    message     = "Root found at initial point xa",
+                    best_value  = abs(f_value)
                 )
             else:
                 self.state = RootFinderState(
-                    status = RootFinderStatus.NEEDS_EVALUATION,
-                    point = self.x1,
-                    root = None,
-                    iterations = 0,
-                    message = "Need second initial evaluation",
-                    best_value = self.min_f_seen
+                    status      = RootFinderStatus.NEEDS_EVALUATION,
+                    point       = self.xb,
+                    root        = None,
+                    iterations  = 0,
+                    message     = "Need second initial evaluation",
+                    best_value  = self.min_f_seen
                 )
            
             return self.state
            
         if self._evaluation_step == 1:
-            self.f1 = f_value
+            self.fb = f_value
             self._evaluation_step = 2
             self.min_f_seen = min(self.min_f_seen, abs(f_value))
            
             if abs(f_value) < self.tolerance:
                 self.state = RootFinderState(
-                    status = RootFinderStatus.CONVERGED,
-                    point = self.x1,
-                    root = self.x1,
-                    iterations = 0,
-                    message = "Root found at initial point x1",
-                    best_value = abs(f_value)
-                )
-            else:
-                # Add points to past_points
-                self.past_points.add(self.x0)
-                self.past_points.add(self.x1)
-           
-            return self.state
-           
-        # Main iteration
-        if self._evaluation_step >= 2:
-            self.iterations += 1
-           
-            # Sort points so x1 has smallest function value
-            if abs(self.f0) < abs(self.f1):
-                self.x0, self.x1 = self.x1, self.x0
-                self.f0, self.f1 = self.f1, self.f0
-               
-            # Update minimum function value seen
-            self.min_f_seen = min(self.min_f_seen, abs(f_value))
-           
-            # Check convergence
-            if abs(f_value) < self.tolerance:
-                self.state = RootFinderState(
-                    status = RootFinderStatus.CONVERGED,
-                    point = self.x1,
-                    root = self.x1,
-                    iterations = self.iterations,
-                    message = "Root found within tolerance",
-                    best_value = abs(f_value)
+                    status      = RootFinderStatus.CONVERGED,
+                    point       = self.xb,
+                    root        = self.xb,
+                    iterations  = 0,
+                    message     = "Root found at initial point xb",
+                    best_value  = abs(f_value)
                 )
                 return self.state
 
-            # Set a default step using bisection as fallback
-            default_step = 0.5 * (self.x0 - self.x1)
-               
-            # Calculate next step
-            try:
-                # Check if denominators are close to zero
-                if abs(self.f0 - self.f1) < 1e-10 or abs(self.f2 - self.f1) < 1e-10 or abs(self.f2 - self.f0) < 1e-10:
-                    raise ZeroDivisionError("Denominator too small")
-               
-                # Try IQI (Inverse Quadratic Interpolation) first
-                q11 = (self.x1 - self.x0) * self.f1 / (self.f0 - self.f1)
-                q21 = (self.x1 - self.x2) * self.f1 / (self.f2 - self.f1)
-                d = (self.x1 - self.x2) * self.f0 / (self.f2 - self.f0)
-                step = self.f1 * (q11 + q21 - d)
-               
-                # Check if step resulted in NaN or infinity
-                if np.isnan(step) or np.isinf(step):
-                    raise ValueError("Step is NaN or infinity")
-               
-                # Fall back to secant if step is too large
-                if self.max_step and abs(step) > self.max_step:
-                    if abs(self.f1 - self.f0) < 1e-10:
-                        raise ZeroDivisionError("Secant denominator too small")
-                   
-                    step = -self.f1 * (self.x1 - self.x0) / (self.f1 - self.f0)
-                   
-                    # Check if secant step resulted in NaN or infinity
-                    if np.isnan(step) or np.isinf(step):
-                        raise ValueError("Secant step is NaN or infinity")
-                   
-            except (ZeroDivisionError, ValueError):
-                # Use bisection as ultimate fallback
-                step = default_step
-                   
-            # Apply max step size if specified
-            if self.max_step:
-                step = max(min(step, self.max_step), -self.max_step)
-               
-            # Calculate new point
-            new_x = self.x1 + step
-           
-            # Sanity check the new point - if it's NaN, use bisection
-            if np.isnan(new_x):
-                if self.search_range:
-                    min_x, max_x = self.search_range
-                    new_x = 0.5 * (min_x + max_x)
-                else:
-                    new_x = 0.5 * (self.x0 + self.x1)
-           
-            # Handle search range if specified
-            if self.search_range:
-                min_x, max_x = self.search_range
-                if new_x < min_x:
-                    new_x = min_x
-                    self.points_near_boundary += 1
-                elif new_x > max_x:
-                    new_x = max_x
-                    self.points_near_boundary += 1
-                   
-                # Check if we're repeatedly hitting boundaries with no improvement
-                if self.points_near_boundary > 5 and self.min_f_seen > self.tolerance:
-                    self.state = RootFinderState(
-                        status = RootFinderStatus.NO_ROOT_LIKELY,
-                        point = new_x,
-                        root = None,
-                        iterations = self.iterations,
-                        message = f"No root likely in range [{min_x}, {max_x}]",
-                        best_value = self.min_f_seen
-                    )
-                    return self.state
-                   
-            # Check for cycling
-            if new_x in self.past_points:
-                if self.min_f_seen > self.tolerance:
-                    self.state = RootFinderState(
-                        status = RootFinderStatus.CYCLING,
-                        point = new_x,
-                        root = None,
-                        iterations = self.iterations,
-                        message = "Search cycling with no root found",
-                        best_value = self.min_f_seen
-                    )
-                    return self.state
-                   
-                # Take a small random step if cycling
-                new_x = self.x0 + np.random.uniform(-0.1, 0.1) * (self.x1 - self.x0)
-               
-            # Update points for next iteration - CRITICAL CODE
-            self.x2, self.f2 = self.x0, self.f0  # Old x0 becomes x2
-            self.x0, self.f0 = self.x1, self.f1  # Old x1 becomes x0
-            self.x1 = new_x                      # New point becomes x1
-            self.f1 = None                       # Clear f1 as it needs evaluation
-            self.past_points.add(new_x)
-           
-            # Check max iterations
-            if self.iterations >= self.max_iter:
+            # Add points to past_points
+            self.past_points.add(self.xa)
+            self.past_points.add(self.xb)
+
+        self.min_f_seen = min(self.min_f_seen, abs(f_value))
+        self.iterations += 1
+
+        # Check to see if we have converged
+        if self.min_f_seen < self.y_tolerance:
+            self.state = RootFinderState(
+                    status      = RootFinderStatus.CONVERGED,
+                    point       = self.state.point,
+                    root        = self.state.point,
+                    iterations  = self.iterations,
+                    message     = f"Root found within tolerance",
+                    best_value  = self.min_f_seen
+            )
+            return self.state
+        
+        # Check if we've reached max iterations
+        if self.iterations > self.max_iter:
+            self.state = RootFinderState(
+                status      = RootFinderStatus.MAX_ITERATIONS,
+                point       = self.state.point,
+                root        = None,
+                iterations  = self.max_iter,
+                message     = "Reached the maximum number of iterations.",
+                best_value  = self.min_f_seen
+            )
+            return self.state
+
+        self.xd = self.xc
+        self.xc, self.fc = self.xb, self.fb
+
+        if self._bracketed:
+            # Proceed by Brent-Dekker Iteration
+            if self.fa*f_value < 0:
+                self.xb, self.fb = self.state.point, f_value
+            else:
+                self.xa, self.fa = self.state.point, f_value
+
+            # Swap labels so that |fb| < |fa|
+            if abs(self.fa) < abs(self.fb):
+                self.xa, self.xb = self.xb, self.xa
+                self.fa, self.fb = self.fb, self.fa
+
+            # Check if we have converged
+            if abs(self.xa - self.xb) < self.x_tolerance:
+                
                 self.state = RootFinderState(
-                    status = RootFinderStatus.MAX_ITERATIONS,
-                    point = new_x,
-                    root = None,
-                    iterations = self.iterations,
-                    message = f"Failed to converge in {self.max_iter} iterations",
-                    best_value = self.min_f_seen
+                    status      = RootFinderStatus.CONVERGED,
+                    point       = self.state.point,
+                    root        = self.state.point,
+                    iterations  = self.iterations,
+                    message     = f"Root found within tolerance",
+                    best_value  = self.min_f_seen
                 )
                 return self.state
-               
-            # Request evaluation at new point
+
+            return self.brent(f_value)
+        
+        else:
+            # Case if we haven't yet entered Brent-Dekker iterations
+            self.xb, self.fb = self.xa, self.fa
+            self.xa, self.fa = self.state.point, f_value
+
+            # Check if we are bracketed
+            if self.fa*self.fb < 0:
+                self._bracketed = True
+                # Proceed by Brent-Dekker Setup and Iteration
+                
+                # Swap labels so that |fb| < |fa|
+                if abs(self.fa) < abs(self.fb):
+                    self.xa, self.xb = self.xb, self.xa
+                    self.fa, self.fb = self.fb, self.fa
+                self.xc, self.fc = self.xb, self.yb
+                s = self.brent_iteration(f_value)
+            
+            elif  self.fa*self.fb > 0:
+                # Proceed by Unbracketed Iteration
+                s = self.unbracketed_iteration(f_value)
+
+        # Truncate to the search range and check for collisions
+        if self.search_range:
+            if abs(s - self.min_x) < self.x_tolerance \
+                or abs(s - self.max_x) < self.x_tolerance:
+                self.boundary_collisions += 1
+
+            if self.boundary_collisions > self.max_allowed_collisions:
+                self.state = RootFinderState(
+                    status      = RootFinderStatus.NO_ROOT_LIKELY,
+                    point       = s,
+                    root        = None,
+                    iterations  = self.iterations,
+                    message     = "No root is likely in the given search range",
+                    best_value  = self.min_f_seen
+                )
+                return self.state
+
+            s = max(self.min_x, min(self.max_x, s))
+            
+
+        # Check for cycling
+        if s in self.past_points:
+            self.reps += 1
+        if self.reps > self.max_allowed_reps:
             self.state = RootFinderState(
-                status = RootFinderStatus.NEEDS_EVALUATION,
-                point = new_x,
-                root = None,
-                iterations = self.iterations,
-                message = "Need function evaluation at new point",
-                best_value = self.min_f_seen
+                status      = RootFinderStatus.CYCLING,
+                point       = s,
+                root        = None,
+                iterations  = self.iterations,
+                message     = "Cycling encountered during root finding",
+                best_value  = self.min_f_seen
             )
-           
+            return self.state
+        self.past_points.add(s) 
+
+        self.state = RootFinderState(
+            status      = RootFinderStatus.NEEDS_EVALUATION,
+            point       = s,
+            root        = None,
+            iterations  = self.iterations,
+            message     = "Need another evaluation",
+            best_value  = self.min_f_seen
+        )
+
         return self.state
+        
+    def brent_iteration(self, f_value: float) -> float:
+        """
+        Perform an iteration using the Brent-Dekker method.
+        """
+
+        if self.fa != self.fc and self.fb != self.fc:
+            # Attempt Inverse Quadratic Interpolation
+            s  = self.xa * self.fb * self.fc / ((self.fa - self.fb) * (self.fa - self.fc))
+            s += self.xb * self.fa * self.fc / ((self.fb - self.fa) * (self.fb - self.fc))
+            s += self.xc * self.fa * self.fb / ((self.fc - self.fa) * (self.fc - self.fb))
+        
+        else:
+            # Attempt Secant Method
+            s = self.xb - self.fb * (self.xb - self.xa) / (self.fb - self.fa)
+
+        if (not (3 * self.xa + self.xb) / 4 < s < self.xb) \
+            or (self._prev_step_bisect and abs(s - self.xb) >= abs(self.xb - self.xc) / 2) \
+            or (not self._prev_step_bisect and abs(s - self.xb) >= abs(self.xc - self.xd) / 2) \
+            or (self._prev_step_bisect and abs(self.xb - self.xc) < self.x_tolerance) \
+            or (not self._prev_step_bisect and abs(self.xc - self.xd) < self.x_tolerance):
+            
+            # Fall back to Bisection if any of these conditions hold
+            s = 0.5 * (self.xa + self.xb)
+            self._prev_step_bisect = True
+
+        else:
+            self._prev_step_bisect = False
+
+        return s
+    
+    def unbracketed_iteration(self, f_value) -> float:
+        """
+        Perform an iteration without any bracket.
+        This proceeds either with IQI or Secant Method.
+        """
+
+        if self.fa != self.fc and self.fb != self.fc:
+            # Attempt Inverse Quadratic Interpolation
+            s  = self.xa * self.fb * self.fc / ((self.fa - self.fb) * (self.fa - self.fc))
+            s += self.xb * self.fa * self.fc / ((self.fb - self.fa) * (self.fb - self.fc))
+            s += self.xc * self.fa * self.fb / ((self.fc - self.fa) * (self.fc - self.fb))
+        
+        else:
+            # Attempt Secant Method
+            s = self.xb - self.fb * (self.xb - self.xa) / (self.fb - self.fa)
+
+        return s
+         
