@@ -58,8 +58,7 @@ def balance1d(p: float, C: BalanceConfig) -> RootFinderState:
         max_coll        = C.max_coll
     )
 
-    state = Solver.state
-    Solver.update(y0)
+    state = Solver.update(y0)
 
     # If y0 is small enough, terminate successfully
     if state.status == RootFinderStatus.CONVERGED:
@@ -91,7 +90,7 @@ def balance1d(p: float, C: BalanceConfig) -> RootFinderState:
     # Take a measurement at x1.
     C.set_x(x1)
     y1 = C.get_y()
-    Solver.update(y1)
+    state = Solver.update(y1)
 
     # If y1 is small enough, terminate successfully
     if state.status == RootFinderStatus.CONVERGED:
@@ -132,7 +131,7 @@ def balance1d(p: float, C: BalanceConfig) -> RootFinderState:
     # If we didn't terminate in the root finder main loop,
     # we encountered an error of some kind
     if C.logger:
-        C.logger.warning("Balancing terminated unsucessfully.")
+        C.logger.warning("Balancing terminated unsuccessfully.")
         match state.status:
             case RootFinderStatus.CYCLING:
                 C.logger.warning("Cycling encountered during root finding.")

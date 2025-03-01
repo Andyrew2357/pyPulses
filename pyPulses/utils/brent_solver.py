@@ -34,7 +34,7 @@ class BrentSolver:
         self.search_range = search_range
         if search_range:
             min_x, max_x = search_range
-            self.xa = min(max(xb, min_x), max_x)
+            self.xa = min(max(xa, min_x), max_x)
             self.xb = min(max(xb, min_x), max_x)
 
             self.min_x, self.max_x = search_range
@@ -79,7 +79,7 @@ class BrentSolver:
        
         self._evaluation_step = 0  # Tracks which initial point we're evaluating
 
-        self._bracketed
+        self._bracketed = False
         self._prev_step_bisect = True
 
     def update(self, f_value: float) -> RootFinderState:
@@ -100,7 +100,7 @@ class BrentSolver:
                     root        = self.xa,
                     iterations  = 0,
                     message     = "Root found at initial point xa",
-                    best_value  = abs(f_value)
+                    best_value  = self.min_f_seen
                 )
             else:
                 self.state = RootFinderState(
@@ -119,14 +119,14 @@ class BrentSolver:
             self._evaluation_step = 2
             self.min_f_seen = min(self.min_f_seen, abs(f_value))
            
-            if abs(f_value) < self.tolerance:
+            if abs(f_value) < self.y_tolerance:
                 self.state = RootFinderState(
                     status      = RootFinderStatus.CONVERGED,
                     point       = self.xb,
                     root        = self.xb,
                     iterations  = 0,
                     message     = "Root found at initial point xb",
-                    best_value  = abs(f_value)
+                    best_value  = self.min_f_seen
                 )
                 return self.state
 
@@ -178,7 +178,6 @@ class BrentSolver:
 
             # Check if we have converged
             if abs(self.xa - self.xb) < self.x_tolerance:
-                
                 self.state = RootFinderState(
                     status      = RootFinderStatus.CONVERGED,
                     point       = self.state.point,
@@ -189,7 +188,7 @@ class BrentSolver:
                 )
                 return self.state
 
-            return self.brent(f_value)
+            s = self.brent_iteration(f_value)
         
         else:
             # Case if we haven't yet entered Brent-Dekker iterations
@@ -205,7 +204,7 @@ class BrentSolver:
                 if abs(self.fa) < abs(self.fb):
                     self.xa, self.xb = self.xb, self.xa
                     self.fa, self.fb = self.fb, self.fa
-                self.xc, self.fc = self.xb, self.yb
+                self.xc, self.fc = self.xa, self.fa
                 s = self.brent_iteration(f_value)
             
             elif  self.fa*self.fb > 0:
@@ -255,7 +254,6 @@ class BrentSolver:
             message     = "Need another evaluation",
             best_value  = self.min_f_seen
         )
-
         return self.state
         
     def brent_iteration(self, f_value: float) -> float:
@@ -273,12 +271,13 @@ class BrentSolver:
             # Attempt Secant Method
             s = self.xb - self.fb * (self.xb - self.xa) / (self.fb - self.fa)
 
-        if (not (3 * self.xa + self.xb) / 4 < s < self.xb) \
+        m = (3 * self.xa + self.xb) / 4
+        if (not ((m <= s <= self.xb) or (self.xb <= s < m))) \
             or (self._prev_step_bisect and abs(s - self.xb) >= abs(self.xb - self.xc) / 2) \
             or (not self._prev_step_bisect and abs(s - self.xb) >= abs(self.xc - self.xd) / 2) \
             or (self._prev_step_bisect and abs(self.xb - self.xc) < self.x_tolerance) \
             or (not self._prev_step_bisect and abs(self.xc - self.xd) < self.x_tolerance):
-            
+
             # Fall back to Bisection if any of these conditions hold
             s = 0.5 * (self.xa + self.xb)
             self._prev_step_bisect = True
