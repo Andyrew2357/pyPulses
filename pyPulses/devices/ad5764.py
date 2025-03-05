@@ -117,9 +117,13 @@ class ad5764(pyvisaDevice):
         else:
             dec16 = round(2**16 - abs(V) / 10 * 2**15)
 
+        dec16 = max(0, min(dec16, 2**16 - 1))
+
         # Convert to 16-bit binary
         # Using numpy's binary_repr to ensure 16-bit representation
         bin16 = np.binary_repr(dec16, width=16)
+        # Using format
+        # bin16 = format(int(dec16), '016b')
         
         # Split into two 8-bit parts and convert back to decimal
         # First 8 bits (MSB)

@@ -82,8 +82,23 @@ def balance1d(p: float, C: BalanceConfig) -> RootFinderState:
         if C.logger:
             C.logger.info(
                 f"x1 = {x1} is out of range ({min_x}, {max_x}). Truncating to {xt}."
-            ) 
-        x1 = xt
+            )
+
+        # We have to let the solver know that this has changed as well
+        Solver.xb = x1
+
+    # Perturb the guess if it's equal to the first
+    if x1 == x0:
+        if abs(x1 - min_x) < abs(x1 - max_x):
+            x1 += 0.01 * (max_x - min_x)
+        else:
+            x1 -= 0.01 * (max_x - min_x)
+
+        if C.logger:
+            C.logger.info(
+                f"x1 ({x1}) is identical to x0. Perturbing to {x1}."
+            )
+        
         # We have to let the solver know that this has changed as well
         Solver.xb = x1
 

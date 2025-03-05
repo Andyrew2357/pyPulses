@@ -46,4 +46,4 @@ class ExtrapPred1d():
             self.seen += 1
 
     def reset(self):
-        self.seen = 0.
+        self.seen = 0
