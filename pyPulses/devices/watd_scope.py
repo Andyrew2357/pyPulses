@@ -46,6 +46,17 @@ class watdScope(abstractDevice):
 
         self.scope.get_waveform_parameters()
 
+    def run(self, on: bool):
+        """Start or stop acquisitions."""
+        self.scope.run(on)
+        self.info(f"{'Started' if on else 'Stopped'} acquisitions.")
+
+    def is_running(self) -> bool:
+        """
+        Query whether the scope is taking acquisitions.
+        """
+        return self.scope.is_running()
+
     def set_channel(self, ch: int):
         """
         Set the active channel on which measurements are taken.
@@ -98,3 +109,46 @@ class watdScope(abstractDevice):
         """
         self.take_waveform()
         return self.get_integral()
+    
+    def get_mean(self) -> float:
+        """
+        Calculate and return the mean of the waveform over a specified time.
+        """
+        return self.get_integral() / (self.tint1 - self.tint0)
+    
+    def take_mean(self) -> float:
+        """
+        Update t and v; then return the result of get_mean.
+        """
+        self.take_waveform()
+        return self.get_mean()
+    
+    def get_abs_integral(self) -> float:
+        """
+        Calculate and return the integral of the absolute value of the waveform
+        over a specified time using a trapezoidal sum. 
+        """       
+        mask = (self.tint0 <= self.t) & (self.t <= self.tint1)
+        return np.sum(np.diff(self.t[mask]) * 
+                (np.abs(self.v[mask][1:]) + np.abs(self.v[mask][:-1]))) / 2
+    
+    def take_abs_integral(self) -> float:
+        """
+        Update t and v; then return the result of get_abs_integral.
+        """
+        self.take_waveform()
+        return self.get_abs_integral()
+    
+    def get_abs_mean(self) -> float:
+        """
+        Calculate and return the mean of the absolute value of the integral over
+        a specified time.
+        """
+        return self.get_abs_integral() / (self.tint1 - self.tint0)
+    
+    def take_abs_mean(self) -> float:
+        """
+        Update t and v; then return the result of get_abs_mean.
+        """
+        self.take_waveform()
+        return self.get_abs_mean()

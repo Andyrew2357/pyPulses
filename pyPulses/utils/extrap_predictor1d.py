@@ -33,7 +33,11 @@ class ExtrapPred1d():
         return poly(x)
     
     def predict1(self, x: float, p: Tuple[float, float]) -> float:
-        return self.default1(x, p, self)
+        if self.seen == 0:
+            return self.default1(x, p, self)
+        
+        xp, yp = self.get_last()
+        return yp
     
     def update(self, x: float, y: float):
         self.X[1:] = self.X[0:-1]
@@ -47,3 +51,6 @@ class ExtrapPred1d():
 
     def reset(self):
         self.seen = 0
+
+    def get_last(self) -> Tuple[float, float]:
+        return self.X[0], self.Y[0]

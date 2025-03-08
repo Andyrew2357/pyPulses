@@ -32,6 +32,15 @@ class mso44(pyvisaDevice):
         self.set_channel(1)
         self.get_status()
 
+    def run(self, on: bool):
+        """Run/Stop acquisition"""
+        self.device.write(f"ACQuire:STATE {1 if on else 0}")
+        self.info(f"MSO44: {'Started' if on else 'Stopped'} acquisition.")
+
+    def is_running(self) -> bool:
+        """Query whether acquisitions are being taken."""
+        return int(self.device.query("ACQuire:STATE?")) == 1
+
     def set_channel(self, ch: int):
         """Set the target channel to which other commands point."""
         self.device.write(f"DATa:SOUrce CH{ch}")
