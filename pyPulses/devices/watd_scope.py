@@ -78,6 +78,22 @@ class watdScope(abstractDevice):
         self.info(f"Took trace with {self.t.size} points.")
         return self.t, self.v
 
+    def get_slope(self) -> float:
+        """
+        Calculate and reuturn the initial slope of the curve using a least-
+        squares fit.
+        """
+        mask = (self.tsl0 <= self.t) & (self.t <= self.tsl1)
+        b, m = np.polyfit(self.t[mask], self.v[mask], 1)
+        return m
+    
+    def take_slope(self) -> float:
+        """
+        Update t and v; then return the result of get_slope.
+        """
+        self.take_waveform()
+        return self.get_slope()
+
     def get_slope_int(self) -> float:
         """
         Calculate and return the implied t intercept of the initial slope
