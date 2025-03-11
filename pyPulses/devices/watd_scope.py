@@ -84,7 +84,7 @@ class watdScope(abstractDevice):
         squares fit.
         """
         mask = (self.tsl0 <= self.t) & (self.t <= self.tsl1)
-        b, m = np.polyfit(self.t[mask], self.v[mask], 1)
+        m, b = np.polyfit(self.t[mask], self.v[mask], 1)
         return m
     
     def take_slope(self) -> float:
@@ -100,7 +100,7 @@ class watdScope(abstractDevice):
         relative to the target intercept using t and v.
         """
         mask = (self.tsl0 <= self.t) & (self.t <= self.tsl1)
-        b, m = np.polyfit(self.t[mask], self.v[mask], 1)
+        m, b = np.polyfit(self.t[mask], self.v[mask], 1)
         return -(b / m) - self.target_intercept
 
     def take_slope_int(self) -> float:
