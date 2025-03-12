@@ -55,6 +55,8 @@ class ExtrapPredNd():
         self.default0 = default0
         self.default1 = default1
 
+        self.z1_guess = None
+
     def predict0(self, p: Tuple[float, ...]) -> float:
         if np.all(self.pointer == 0):
             return self.default0(p)
@@ -64,17 +66,20 @@ class ExtrapPredNd():
         max_cut_len = 0
         n_max_cut = 0
         next_max_cut_len = 0
+        
         for d in range(self.ndim):
-            pd = self.pointer.copy()
+            pd = np.array(
+            [np.sum(np.where(self.axes[d] == p[d])) 
+                                for d in range(self.ndim)]
+            )
             id_end = pd[d]
 
-            n = min(self.order[d], pd[d])
+            n = min(self.support[d], pd[d])
             
             xcut = []
             zcut = []
             for id in range(id_end - n, id_end):
                 pd[d] = id
-
                 z = self.balance_history[*pd]
                 if np.isinf(z):
                     continue
@@ -82,8 +87,8 @@ class ExtrapPredNd():
                 xcut.append(self.axes[d][id])
                 zcut.append(z)
 
-            xcuts[d] = np.array(xcut)
-            zcuts[d] = np.array(zcut)
+            xcuts[d] = np.array(xcut.copy())
+            zcuts[d] = np.array(zcut.copy())
             
             if len(xcut) > max_cut_len:
                 next_max_cut_len = max_cut_len
@@ -100,13 +105,17 @@ class ExtrapPredNd():
         self.z1_guess = None
         z1_guess_perf = np.inf
 
+        z0_d = None
+
         for d in range(self.ndim):
             if len(xcuts[d]) < max_cut_len:
+                if next_max_cut_len == 0: 
+                    continue
                 if not (n_max_cut == 1 and len(xcuts[d]) == next_max_cut_len):
                     continue
 
-                coeff = np.polyfit(xcut[d], zcut[d], 
-                                   min(self.order[d], next_max_cut_len))
+                coeff = np.polyfit(xcuts[d], zcuts[d], 
+                                   min(self.order[d], next_max_cut_len - 1))
                 
                 poly = np.poly1d(coeff)
                 zpred = poly(p[d])
@@ -118,8 +127,8 @@ class ExtrapPredNd():
                     self.z1_guess = zpred
             
             else:
-                coeff = np.polyfit(xcut[d], zcut[d], 
-                                   min(self.order[d], max_cut_len))
+                coeff = np.polyfit(xcuts[d], zcuts[d], 
+                                   min(self.order[d], max_cut_len - 1))
                 
                 poly = np.poly1d(coeff)
                 zpred = poly(p[d])
@@ -132,6 +141,10 @@ class ExtrapPredNd():
 
                     self.z1_guess = z0_guess
                     z0_guess = zpred
+
+                elif perf < z1_guess_perf:
+                    z1_guess_perf = perf
+                    self.z1_guess = zpred
 
         return z0_guess
 
