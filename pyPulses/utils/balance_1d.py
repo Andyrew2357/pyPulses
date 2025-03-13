@@ -6,7 +6,7 @@ to converge on a balance point if its first two guesses are insufficient.
 
 from .rootfinder import RootFinderState, RootFinderStatus
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, Union
 
 @dataclass
 class BalanceConfig:
@@ -22,7 +22,8 @@ class BalanceConfig:
     max_coll        : int                       # Max boundary collisions
     logger          : Optional[object]          # Logger
 
-def balance1d(p: float, C: BalanceConfig) -> RootFinderState:
+def balance1d(p: Union[float, Tuple[float, ...]], 
+              C: BalanceConfig) -> RootFinderState:
 
     if C.logger:
         C.logger.info("=" * 80)
@@ -83,6 +84,7 @@ def balance1d(p: float, C: BalanceConfig) -> RootFinderState:
             C.logger.info(
                 f"x1 = {x1} is out of range ({min_x}, {max_x}). Truncating to {xt}."
             )
+        x1 = xt
 
         # We have to let the solver know that this has changed as well
         Solver.xb = x1
