@@ -1,3 +1,8 @@
+"""
+This function is obsolete, as its functionality is implemented in 
+param_sweep_measure.sweepMeasureCut.
+"""
+
 import numpy as np
 import time
 from dataclasses import dataclass
@@ -39,6 +44,7 @@ class BiasSweepConfig:
                             ]
                         ]
     logger          : Optional[object]  # logger
+    callback        : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
 
 def biasSweep(C: BiasSweepConfig) -> np.ndarray:
     
@@ -128,5 +134,8 @@ def biasSweep(C: BiasSweepConfig) -> np.ndarray:
             msg = f"Result ({n+1}/{C.npoints}) = "
             msg += f"{''.join(f"{r:.5f}, " for r in result[n])[:-2]}"
             C.logger.info(msg)
+
+        if C.callback:
+            C.callback(n, np.array(biases), result[n,:].flatten())
 
     return result
