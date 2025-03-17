@@ -82,17 +82,17 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
         )
 
     if not type(C.sweep[0]) == tuple:
-        C.sweep = (C.sweep)
+        C.sweep = (C.sweep,)
 
     if not type(C.measurement) in [tuple, list]:
-        C.measurement = (C.measurement)
+        C.measurement = (C.measurement,)
     
     if C.swept_name and C.measured_name:
         if type(C.swept_name) == str:
-            C.swept_name = (C.swept_name)
+            C.swept_name = (C.swept_name,)
         
         if type(C.measured_name) == str:
-            C.measured_name = (C.measured_name)
+            C.measured_name = (C.measured_name,)
 
         if not (len(C.swept_name) == len(C.sweep) and \
                 len(C.measured_name) == len(C.measurement)):
@@ -225,17 +225,17 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
         )
 
     if not type(C.sweep) in [tuple, list]:
-        C.sweep = (C.sweep)
+        C.sweep = (C.sweep,)
 
     if not type(C.measurement) in [tuple, list]:
-        C.measurement = (C.measurement)
+        C.measurement = (C.measurement,)
     
     if C.swept_name and C.measured_name:
         if type(C.swept_name) == str:
-            C.swept_name = (C.swept_name)
+            C.swept_name = (C.swept_name,)
         
         if type(C.measured_name) == str:
-            C.measured_name = (C.measured_name)
+            C.measured_name = (C.measured_name,)
 
         if not (len(C.swept_name) == len(C.sweep) and \
                 len(C.measured_name) == len(C.measurement)):
@@ -298,7 +298,7 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
 
         # log the result
         if C.logger:
-            msg = f"Result ({n+1}/{C.npoints}) = "
+            msg = f"Result ({n+1}/{npoints}) = "
             msg += f"{''.join(f"{r:.5f}, " for r in result[n])[:-2]}"
             C.logger.info(msg)
 
@@ -368,17 +368,17 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
         )
 
     if not type(C.sweep) in [tuple, list]:
-        C.sweep = (C.sweep)
+        C.sweep = (C.sweep,)
 
     if not type(C.measurement) in [tuple, list]:
-        C.measurement = (C.measurement)
+        C.measurement = (C.measurement,)
     
     if C.swept_name and C.measured_name:
         if type(C.swept_name) == str:
-            C.swept_name = (C.swept_name)
+            C.swept_name = (C.swept_name,)
         
         if type(C.measured_name) == str:
-            C.measured_name = (C.measured_name)
+            C.measured_name = (C.measured_name,)
 
         if not (len(C.swept_name) == len(C.sweep) and \
                 len(C.measured_name) == len(C.measurement)):
@@ -389,7 +389,8 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
         raise ValueError("axes does not match the number of setters.")
 
     # result array
-    result = np.full(shape = (len(C.measurement), *(ax.size for ax in C.axes)))
+    result = np.full(shape = (len(C.measurement), *(ax.size for ax in C.axes)),
+                     fill_value = np.nan)
 
     # write the header for the output file
     if C.fname:
