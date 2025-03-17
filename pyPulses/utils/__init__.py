@@ -1,5 +1,6 @@
 from .balance_1d import balance1d, BalanceConfig
 from .brent_solver import BrentSolver
+from .dummy_predictor import DummyPred, DummyPredFunc
 from .extrap_predictor1d import ExtrapPred1d
 from .extrap_predictorNd import ExtrapPredNd
 from .get_quick_logger import getQuickLogger, clearLoggers
@@ -14,6 +15,8 @@ __all__ = [
     BalanceConfig,
     BrentSolver,
     clearLoggers,
+    DummyPred,
+    DummyPredFunc,
     ExtrapPred1d,
     ExtrapPredNd,
     getQuickLogger,
