@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 class DummyPred:
     def __init__(self, x0: float, x1: float):
-        self.x0 = x0,
+        self.x0 = x0
         self.x1 = x1
 
     def predict0(self, *args, **kwargs) -> float:
