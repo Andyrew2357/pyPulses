@@ -56,13 +56,19 @@ class pulseGenerator(abstractDevice):
         
         self.get_status()
         self.dtg.run(True)
+
+        self.wait = 0.05
+        self.max_step = 0.1
     
     def get_V(self, ch):
         """Get the pulse height of a given output."""
         return self.dcbox.get_V(self.dcbox_map[ch])
     
-    def set_V(self, ch, V, *args) -> float:
+    def set_V(self, ch, V, **kwargs) -> float:
         """Set the pulse height of a given output."""
+        if "wait" not in kwargs: kwargs["wait"] = self.wait
+        if "max_step" not in kwargs: kwargs["max_step"] = self.max_step
+
         if not self.min_V <= V < self.max_V:
             Vt = min(self.max_V, max(self.min_V, V))
             self.warn(
@@ -70,7 +76,7 @@ class pulseGenerator(abstractDevice):
             )
             V = Vt
 
-        self.dcbox.sweep_V(self.dcbox_map[ch], V, *args)
+        self.dcbox.sweep_V(self.dcbox_map[ch], V, **kwargs)
         self.info(f"Set {ch} to {V} V.")
         return V
 

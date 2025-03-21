@@ -120,4 +120,14 @@ class mso44(pyvisaDevice):
         Note: right now this is bare-bones, but it's wrapped like this for
         future-proofing.
         """
-        self.get_waveform_parameters()
+        running = self.is_running()
+        if not running:
+            self.run(True)
+
+        try:
+            self.get_waveform_parameters()
+        except:
+            self.warn("MSO44: Could not get waveform parameters.")
+
+        if not running:
+            self.run(False)
