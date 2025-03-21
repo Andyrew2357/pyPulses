@@ -6,17 +6,20 @@ if not find_and_load_gpib():
 from ._registry import DeviceRegistry
 from .ad5764 import ad5764
 # from .ad5791 import ad5791
+from .cryomagnetics_4G import cryomagnetics4G
 from .dtg5274 import dtg5274
 from .hp34401a import hp34401a
 from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
 from .mso44 import mso44
 from .pulse_generator import pulseGenerator
+from .pulse_generator_dtg import pulseGeneratorDTG
 from .watd_scope import watdScope
 
 __all__ = [
     ad5764,
     # ad5791,
+    cryomagnetics4G,
     dtg5274,
     DeviceRegistry,
     hp34401a,
@@ -24,6 +27,7 @@ __all__ = [
     keithley2450,
     mso44,
     pulseGenerator,
+    pulseGeneratorDTG,
     watdScope
 ]
 

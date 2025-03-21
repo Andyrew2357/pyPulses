@@ -7,6 +7,7 @@ from .get_quick_logger import getQuickLogger, clearLoggers
 from .param_sweep_measure import SweepMeasureConfig, sweepMeasure
 from .param_sweep_measure import SweepMeasureCutConfig, sweepMeasureCut
 from .param_sweep_measure import SweepMeasureProductConfig, sweepMeasureProduct
+from .R_predictor import RPredictor
 from .rootfinder import RootFinderState, RootFinderStatus
 from .tandem_sweep import tandemSweep
 
@@ -22,6 +23,7 @@ __all__ = [
     getQuickLogger,
     RootFinderState,
     RootFinderStatus,
+    RPredictor,
     sweepMeasure,
     SweepMeasureConfig,
     sweepMeasureCut,
