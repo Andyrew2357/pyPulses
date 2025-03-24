@@ -14,6 +14,7 @@ from .keithley2450 import keithley2450
 from .mso44 import mso44
 from .pulse_generator import pulseGenerator
 from .pulse_generator_dtg import pulseGeneratorDTG
+from .sr865a import sr865a
 from .watd_scope import watdScope
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     mso44,
     pulseGenerator,
     pulseGeneratorDTG,
+    sr865a,
     watdScope
 ]
 
