@@ -70,6 +70,7 @@ class sr865a(pyvisaDevice):
     def set_frequency(self, freq: float):
         """Set the reference frequency in Hz."""
         self.device.write(f"FREQ {freq}")
+        self.info(f"SR865A: Set reference frequency to {freq} Hz.")
 
     def get_phase(self) -> float:
         """Get the reference phase shift in degrees."""
@@ -78,6 +79,7 @@ class sr865a(pyvisaDevice):
     def set_phase(self, phase: float):
         """Set the reference phase shift in degrees."""
         self.device.write(f"PHAS {phase}")
+        self.info(f"SR865A: Set reference phase shift to {phase} degrees.")
 
     def get_ref_amplitude(self) -> float:
         """Get the reference amplitude in volts."""
@@ -86,6 +88,7 @@ class sr865a(pyvisaDevice):
     def set_ref_amplitude(self, amplitude: float):
         """Set the reference amplitude in volts."""
         self.device.write(f"SLVL {amplitude}")
+        self.info(f"SR865A: Set reference amplitude to {amplitude} V.")
 
     # INPUT SETTINGS
 
@@ -101,6 +104,9 @@ class sr865a(pyvisaDevice):
         """ 
         idx = self._input_range_index(range_v)
         self.device.write(f"IRNG {idx}")
+        self.info(
+            f"SR865A: Set input range to {self._input_range_value(idx)} V."
+        )
 
     def get_sensitivity(self) -> float:
         """Get the current sensitivity in volts."""
@@ -114,6 +120,7 @@ class sr865a(pyvisaDevice):
         """
         idx = self._sens_index(sensitivity)
         self.device.write(f"SCAL {idx}")
+        self.info(f"SR865A: Set sensitivity to {self._sens_value(idx)} V.")
 
     def get_time_const(self) -> float:
         """Get the time constant in seconds."""
@@ -127,6 +134,7 @@ class sr865a(pyvisaDevice):
         """
         idx = self._tau_index(time_const)
         self.device.write(f"OFLT {idx}")
+        self.info(f"SR865A: Set time constant to {self._tau_value(idx)} s.")
 
     # SYNC FILTER CONTROL
 
@@ -137,6 +145,9 @@ class sr865a(pyvisaDevice):
     def set_sync_filter(self, enabled: bool):
         """Enable or disable the sync filter."""
         self.device.write(f"SYNC {1 if enabled else 0}")
+        self.info(
+            f"SR865A: {'Enabled' if enabled else 'Disabled'} sync filter."
+        )
 
     # AUXILIARY I/O
 
@@ -161,6 +172,7 @@ class sr865a(pyvisaDevice):
                 "Aux output voltage must be between -10.5 and 10.5 V"
             )
         self.device.write(f"OAUX {ch} {V}")
+        self.info(f"SR865A: Set channel {ch} auxiliary output to {V} V.")
 
     def get_dc_offset(self) -> float:
         """Get the DC offset in percent."""
@@ -171,6 +183,7 @@ class sr865a(pyvisaDevice):
         if not -100 <= off <= 100:
             raise ValueError("DC offset must be between -100 and 100%.")
         self.device.write(f"SOFF {off}")
+        self.info(f"SR865A: Set DC offset to {off}%.")
 
     # STATUS / DIAGNOSTICS
 
@@ -220,17 +233,23 @@ class sr865a(pyvisaDevice):
         self.sampint = 1/sample_rate
         self.buffer_sizes = [buffer_size, buffer_size]
 
+        self.info(f"SR865A: Setup data acquisition with parameters:")
+        self.info(f"    buffer_size = {buffer_size}")
+        self.info(f"    sample_rate = {sample_rate} Hz")
+        self.info(f"    sync_sampling {'on' if sync_sampling else 'off'}")
         return sample_rate
     
     def start_acquisition(self):
         """Start data acquisition."""
         self.device.write("STRT")
+        self.info("SR865A: Started data acquisition.")
 
     def reset_acquisition(self):
         """Reset data acquisition buffers."""
         self.device.write("REST")
         self.currsamp = 0
         time.sleep(0.1) # give instrument time before next trigger
+        self.info("SR865A: Reset data acquisition.")
 
     def get_buffered_data(self, ch: int) -> np.ndarray:
         """
@@ -260,6 +279,8 @@ class sr865a(pyvisaDevice):
         # this uses PyVISA's read_binary_values method
         val = self.device.read_binary_values('f')[:npts]
         self.currsamp += npts
+
+        self.info(f"SR865A: Retrieved buffered data from channel {ch}.")
 
         return np.array(val)
 
