@@ -9,7 +9,6 @@ primarily using pulse heights.
 
 from .curves import pchip, prune_sort
 from .extrap_predictorNd import ExtrapPredNd
-from .extrap_predictor1d import ExtrapPred1d
 from .dummy_predictor import DummyPred
 from typing import Tuple
 import numpy as np
@@ -20,6 +19,7 @@ class RPredictor:
         self.Vg     = Vg
         self.Rref   = Rref
         self.RtoVg  = pchip(*prune_sort(Rref, Vg))
+        self.VgtoR  = pchip(Vg, Rref)
 
         self.Rpredictor = ExtrapPredNd(
             support     = 5,
@@ -29,8 +29,40 @@ class RPredictor:
             axes        = axes
         )
 
-        self.VyPred = ExtrapPred1d(
-
+        self.VyPred = DummyPred(
+            f0  = self.predict_Vy0,
+            f1  = self.predict_Vy1
         )
-        self.VgPred = self.VgPredictor()
 
+        self.VgPred = DummyPred(
+            f0  = self.predict_Vg0,
+            f1  = self.predict_Vg1
+        )
+
+
+    def predict_VG0(self, Vx: float, *p: Tuple[float, ...]) -> float:
+        Rp = self.Rpredictor.predict0()
+        dRp = 0.1*Rp
+        Vg_guess = self.RtoVg(Rp + dRp)
+        self.Vy_guess = (1 + dRp / Rp) * Vx 
+        return Vg_guess
+
+    # THERE HAVE TO BE MUCH BETTER WAYS TO DO THIS
+    def predict_VG1(self, Vx: float, *p: Tuple[float, ...]) -> float:
+        Rp = self.Rpredictor.predict1()
+        dRp = 0.1*Rp
+        Vg_guess = self.RtoVg(Rp + dRp)
+        self.Vy_guess = (1 + dRp / Rp) * Vx 
+        return Vg_guess
+
+    def predict_VY0(self, Vx: float, *p: Tuple[float, ...]) -> float:
+        return self.Vy_guess
+
+    # FIGURE OUT A NON-STUPID WAY TO DO THIS
+    def predict_VY1(self, Vx: float, *p: Tuple[float, ...]) -> float:
+        pass
+
+    def update(self, Vgref: float, Vy: float, 
+               Vx: float, *p: Tuple[float, ...]):
+        R_measured = self.VgtoR(Vgref) * (Vx / Vy)
+        self.Rpredictor.update((Vx, *p), R_measured)
