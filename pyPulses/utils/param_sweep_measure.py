@@ -27,7 +27,11 @@ measurements at each point.
     swept_name      : string or tuple of strings naming the swept parameters for
                       purposes of logging or writing the ouput
     logger          : Optional; logger object
-    callback        : Optional; generic callback function called after the 
+    pre_callback    : Optional; generic callback function called before the
+                      measurement is taken at each point. The function passes
+                      back the index of the current point in the sweep, and a 1d
+                      array of the swept parameters at that point.
+    post_callback   : Optional; generic callback function called after the 
                       result is updated at each point. The function passes back
                       the index of the current point in the sweep, a 1d array of
                       the swept paramters at that point, and a 1d array of 
@@ -71,7 +75,8 @@ class SweepMeasureCutConfig:
                             ]
                         ]
     logger          : Optional[object]  # logger
-    callback        : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
+    pre_callback    : Optional[Callable[[int, np.ndarray], Any]]
+    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
 
 def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -134,6 +139,9 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
         # move to the bias point, wait some time, then measure
         for setter, start, stop in C.sweep:
             setter(start + (stop - start) * n / (C.npoints - 1))
+
+        if C.pre_callback:
+            C.pre_callback(n, np.array(biases))
         
         time.sleep(C.time_per_point)
         for i in range(len(C.measurement)):
@@ -152,8 +160,8 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
             msg += f"{''.join(f"{r:.5f}, " for r in result[n])[:-2]}"
             C.logger.info(msg)
 
-        if C.callback:
-            C.callback(n, np.array(biases), result[n,:].flatten())
+        if C.post_callback:
+            C.post_callback(n, np.array(biases), result[n,:].flatten())
 
     return result
 
@@ -178,7 +186,11 @@ the array 'points', taking measurements at each step.
     swept_name      : string or tuple of strings naming the swept parameters for
                       purposes of logging or writing the ouput
     logger          : Optional; logger object
-    callback        : Optional; generic callback function called after the 
+    pre_callback    : Optional; generic callback function called before the
+                      measurement is taken at each point. The function passes
+                      back the index of the current point in the sweep, and a 1d
+                      array of the swept parameters at that point.
+    post_callback   : Optional; generic callback function called after the 
                       result is updated at each point. The function passes back
                       the index of the current point in the sweep, a 1d array of
                       the swept paramters at that point, and a 1d array of 
@@ -214,7 +226,8 @@ class SweepMeasureConfig:
                             ]
                         ]
     logger          : Optional[object]  # logger
-    callback        : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
+    pre_callback    : Optional[Callable[[int, np.ndarray], Any]]
+    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
 
 def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -284,6 +297,9 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
         # move to the bias point, wait some time, then measure
         for d, setter in enumerate(C.sweep):
             setter(C.points[n, d])
+
+        if C.pre_callback:
+            C.pre_callback(n, biases.flatten())
         
         time.sleep(C.time_per_point)
         for i in range(len(C.measurement)):
@@ -302,8 +318,8 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
             msg += f"{''.join(f"{r:.5f}, " for r in result[n])[:-2]}"
             C.logger.info(msg)
 
-        if C.callback:
-            C.callback(n, biases.flatten(), result[n,:].flatten())
+        if C.post_callback:
+            C.post_callback(n, biases.flatten(), result[n,:].flatten())
 
     return result
 
@@ -326,7 +342,11 @@ each point.
     swept_name      : tuple of strings naming the swept parameters for purposes
                       of logging or writing the ouput
     logger          : Optional; logger object
-    callback        : Optional; generic callback function called after the 
+    pre_callback    : Optional; generic callback function called before the
+                      measurement is taken at each point. The function passes
+                      back the index of the current point in the sweep, and a 1d
+                      array of the swept parameters at that point.
+    post_callback   : Optional; generic callback function called after the 
                       result is updated at each point. The function passes back
                       the index of the current point in the sweep, a 1d array of
                       the swept paramters at that point, and a 1d array of 
@@ -356,7 +376,8 @@ class SweepMeasureProductConfig:
                             Tuple[str, ...]
                         ]
     logger          : Optional[object]  # logger
-    callback        : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
+    pre_callback    : Optional[Callable[[int, np.ndarray], Any]]
+    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
 
 def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
 
@@ -421,6 +442,9 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
         # move to the bias point, wait some time, then measure
         for d, setter in enumerate(C.sweep):
             setter(C.axes[d][ind[d]])
+
+        if C.pre_callback:
+            C.pre_callback(ind, biases.flatten())
         
         time.sleep(C.time_per_point)
         for i in range(len(C.measurement)):
@@ -439,7 +463,7 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
             msg += f"{''.join(f"{r:.5f}, " for r in result[:, *ind])[:-2]}"
             C.logger.info(msg)
 
-        if C.callback:
-            C.callback(ind, biases.flatten(), result[:, *ind].flatten())
+        if C.post_callback:
+            C.post_callback(ind, biases.flatten(), result[:, *ind].flatten())
 
     return result

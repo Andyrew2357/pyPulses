@@ -46,6 +46,8 @@ class cryomagnetics4G(pyvisaDevice):
         """Sweeps to a field H_T in Tesla."""
         H_kG        = 10*H_T    # field strength in kilogauss
 
+        self.info(f"CM4G: Requested sweep to {H_T} T.")
+
         pshtr = self.device.query("PSHTR?").strip() == '1'
         if pshtr:
             self.error("Switch heater is on; expected switch heater to be off.")
@@ -115,6 +117,7 @@ class cryomagnetics4G(pyvisaDevice):
 
         self.wait_for_field(0.0, self.H_sweep_tol)
 
+        self.info(f"CM4G: Successfully swept to {H_T} T.")
         return True
 
     def set_verify(self, setting: str, H_kG: float, H_tol_kG: float) -> bool:
@@ -125,11 +128,17 @@ class cryomagnetics4G(pyvisaDevice):
             self.error(f"Error setting {setting}.")
             return False
 
+        self.info(
+            f"CM4G: Successfully set {setting} to {H_kG} kG within {H_tol_kG} kG."
+        )
         return True
 
     def set_sweep_lim(self, H_lo: float, H_hi: float) -> bool:
         for _ in range(3):
             if self._set_sweep_lim(H_lo, H_hi):
+                self.info(
+                    f"CM4G: Successfully set sweep limits [{H_lo}, {H_hi}]."
+                )
                 return True
         else:
             self.error("Failed to set sweep limits three times.")
