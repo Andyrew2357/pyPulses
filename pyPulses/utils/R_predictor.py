@@ -40,7 +40,7 @@ class RPredictor:
         )
 
 
-    def predict_VG0(self, Vx: float, *p: Tuple[float, ...]) -> float:
+    def predict_Vg0(self, Vx: float, *p: Tuple[float, ...]) -> float:
         Rp = self.Rpredictor.predict0()
         dRp = 0.1*Rp
         Vg_guess = self.RtoVg(Rp + dRp)
@@ -48,18 +48,18 @@ class RPredictor:
         return Vg_guess
 
     # THERE HAVE TO BE MUCH BETTER WAYS TO DO THIS
-    def predict_VG1(self, Vx: float, *p: Tuple[float, ...]) -> float:
+    def predict_Vg1(self, Vx: float, *p: Tuple[float, ...]) -> float:
         Rp = self.Rpredictor.predict1()
         dRp = 0.1*Rp
         Vg_guess = self.RtoVg(Rp + dRp)
         self.Vy_guess = (1 + dRp / Rp) * Vx 
         return Vg_guess
 
-    def predict_VY0(self, Vx: float, *p: Tuple[float, ...]) -> float:
+    def predict_Vy0(self, Vx: float, *p: Tuple[float, ...]) -> float:
         return self.Vy_guess
 
     # FIGURE OUT A NON-STUPID WAY TO DO THIS
-    def predict_VY1(self, Vx: float, *p: Tuple[float, ...]) -> float:
+    def predict_Vy1(self, Vx: float, *p: Tuple[float, ...]) -> float:
         pass
 
     def update(self, Vgref: float, Vy: float, 
