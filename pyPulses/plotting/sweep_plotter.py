@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from IPython.display import display, clear_output
 from typing import List, Optional, Tuple
+from collections import deque
 
 class SweepPlotter:    
     def __init__(self, 
@@ -18,6 +19,7 @@ class SweepPlotter:
                  update_interval: int = 1,
                  figsize        : Tuple[int, int] = (12, 8),
                  display_mode   : str = 'jupyter',
+                 max_history    : Optional[int] = None,
                  total_points   : Optional[int] = None):
         """
         Initialize the SweepPlotter.
@@ -52,8 +54,8 @@ class SweepPlotter:
         self.show_progress      = total_points is not None
         
         # Data storage
-        self.swept_data = []
-        self.measured_data = []
+        self.swept_data = deque(maxlen = max_history)
+        self.measured_data = deque(maxlen = max_history)
         
         # Create figure and axes based on layout
         self._setup_figure()
@@ -66,10 +68,12 @@ class SweepPlotter:
         n_measured = len(self.measured_names)
         
         if self.plot_layout == 'grid':
-            # Create a grid with measurements as rows and swept parameters as columns
+            # Create a grid with measurements as rows and swept parameters as 
+            # columns
             if self.show_progress:
                 # Add a row for the progress bar
-                self.gs = GridSpec(n_measured + 1, n_swept, height_ratios = [0.2] + [3] * n_measured)
+                self.gs = GridSpec(n_measured + 1, n_swept, 
+                                   height_ratios = [0.2] + [3] * n_measured)
                 
                 # Create a special axes for the progress bar
                 self.progress_ax = self.fig.add_subplot(self.gs[0, :])
@@ -77,7 +81,8 @@ class SweepPlotter:
                 self.progress_ax.set_xlim(0, 100)
                 self.progress_ax.set_ylim(0, 1)
                 self.progress_ax.get_yaxis().set_visible(False)
-                self.progress_bar = self.progress_ax.barh(0.5, 0, height=1, color='green')[0]
+                self.progress_bar = self.progress_ax.barh(0.5, 0, height = 1, 
+                                                          color = 'green')[0]
                 
                 # Adjust the starting row for the data plots
                 start_row = 1
@@ -97,7 +102,8 @@ class SweepPlotter:
                     self.axes[(swept, measured)] = ax
             
         elif self.plot_layout == 'matrix':
-            # Create a matrix layout where each parameter (swept and measured) is plotted against every other
+            # Create a matrix layout where each parameter (swept and measured) 
+            # is plotted against every other
             all_params = self.swept_names + self.measured_names
             n_params = len(all_params)
             
@@ -112,7 +118,8 @@ class SweepPlotter:
                 self.progress_ax.set_ylim(0, 1)
                 self.progress_ax.set_xlabel("Percent Complete")
                 self.progress_ax.get_yaxis().set_visible(False)
-                self.progress_bar = self.progress_ax.barh(0.5, 0, height=0.5, color='green')[0]
+                self.progress_bar = self.progress_ax.barh(0.5, 0, height = 1, 
+                                                          color = 'green')[0]
                 
                 # Adjust the starting row for the data plots
                 start_row = 1
@@ -135,11 +142,13 @@ class SweepPlotter:
         
         self.fig.tight_layout(rect=[0, 0, 1, 1])
         
-    def update_callback(self, index: int, swept_values: np.ndarray, measured_values: np.ndarray):
+    def update_callback(self, index: int, swept_values: np.ndarray, 
+                                        measured_values: np.ndarray):
         """
         Callback function to update plots during a sweep.
         
-        This function is designed to be used as the post_callback in sweepMeasureCut.
+        This function is designed to be used as the post_callback in 
+        sweepMeasureCut.
         
         Parameters:
         -----------
@@ -162,7 +171,9 @@ class SweepPlotter:
             pass
         
         # Update plots at specified intervals or when we get the last point
-        if index % self.update_interval == 0 or (self.n_points_total is not None and index == self.n_points_total - 1):
+        if index % self.update_interval == 0 or \
+            (self.n_points_total is not None and \
+            index == self.n_points_total - 1):
             self._update_plots(index)
     
     def _update_plots(self, current_index: int):
@@ -175,7 +186,9 @@ class SweepPlotter:
         if self.show_progress:
             progress_percent = (current_index + 1) / self.n_points_total * 100
             self.progress_bar.set_width(progress_percent)
-            self.progress_ax.set_title(f"Parameter Sweep Progress: {progress_percent:.1f}%")
+            self.progress_ax.set_title(
+                f"Parameter Sweep Progress: {progress_percent:.1f}%"
+                )
         
         # Update data plots based on layout
         if self.plot_layout == 'grid':

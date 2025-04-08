@@ -4,7 +4,7 @@ import numpy as np
 import itertools
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, IO, List, Optional, Tuple, Union
 
 """
 SweepMeasureCutConfig
@@ -61,27 +61,36 @@ class SweepMeasureCutConfig:
                                 float                       # ending value
                             ]
                         ]
-    fname           : Optional[float]   # path to output file
-    measured_name   : Optional[         # names of measured parameters
+    file            : Optional[Union[IO, str]] = None       # output file-like object or string
+    measured_name   : Optional[             # names of measured parameters
                             Union[
                                 Tuple[str, ...],
                                 str
                             ]
-                        ]
+                        ] = None
     swept_name      : Optional[         # names of swept parameters
                             Union[
                                 Tuple[str, ...],
                                 str
                             ]
-                        ]
-    logger          : Optional[object]  # logger
-    pre_callback    : Optional[Callable[[int, np.ndarray], Any]]
-    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
+                        ] = None
+    logger          : Optional[object] = None   # logger
+    pre_callback    : Optional[Callable[[int, np.ndarray], Any]] = None
+    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
 
 def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
     # values in a tuple and validate input dimensions
-    if (C.logger or C.fname) and not (C.swept_name and C.measured_name):
+
+    if type(C.file) == str:
+        with open(C.file, 'w') as f:
+            fname = C.file
+            C.file = f
+            res = sweepMeasureCut(C)
+            C.file = fname
+            return res
+
+    if (C.logger or C.file) and not (C.swept_name and C.measured_name):
         raise ValueError(
             "swept_name and measured_name are required for file or console logging."
         )
@@ -108,11 +117,10 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
                      fill_value = np.nan)
 
     # write the header for the output file
-    if C.fname:
-        with open(C.fname, 'w') as f:
-            msg = f"{''.join(f"{p}, " for p in C.swept_name)}"
-            msg += f"{''.join(f"{p}, " for p in C.measured_name)[:-2]}\n"
-            f.write(msg)
+    if C.file:
+        msg = f"{''.join(f"{p}, " for p in C.swept_name)}"
+        msg += f"{''.join(f"{p}, " for p in C.measured_name)[:-2]}\n"
+        C.file.write(msg)
 
     # log the swept parameters
     if C.logger:
@@ -148,11 +156,10 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
             result[n, i] = C.measurement[i]()
         
         # write the result to the ouput file if provided
-        if C.fname:
-            with open(C.fname, 'a') as f:
-                msg = f"{''.join([f"{x}, " for x in biases])}"
-                msg += f"{''.join(f"{r}, " for r in result[n])[:-2]}\n"
-                f.write(msg)
+        if C.file:
+            msg = f"{''.join([f"{x}, " for x in biases])}"
+            msg += f"{''.join(f"{r}, " for r in result[n])[:-2]}\n"
+            C.file.write(msg)
 
         # log the result
         if C.logger:
@@ -212,27 +219,36 @@ class SweepMeasureConfig:
                                         # (number of distinct points,
                                         #  dimensions of the parameter space)
     time_per_point  : float             # wait time per point
-    fname           : Optional[float]   # path to output file
+    file            : Optional[Union[IO, str]] = None   # output file-like
     measured_name   : Optional[         # names of measured parameters
                             Union[
                                 Tuple[str, ...],
                                 str
                             ]
-                        ]
+                        ] = None
     swept_name      : Optional[         # names of swept parameters
                             Union[
                                 Tuple[str, ...],
                                 str
                             ]
-                        ]
-    logger          : Optional[object]  # logger
-    pre_callback    : Optional[Callable[[int, np.ndarray], Any]]
-    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
+                        ] = None
+    logger          : Optional[object] = None   # logger
+    pre_callback    : Optional[Callable[[int, np.ndarray], Any]] = None
+    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
 
 def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
     # values in a tuple and validate input dimensions
-    if (C.logger or C.fname) and not (C.swept_name and C.measured_name):
+    
+    if type(C.file) == str:
+        with open(C.file, 'w') as f:
+            fname = C.file
+            C.file = f
+            res = sweepMeasureCut(C)
+            C.file = fname
+            return res
+    
+    if (C.logger or C.file) and not (C.swept_name and C.measured_name):
         raise ValueError(
             "swept_name and measured_name are required for file or console logging."
         )
@@ -267,11 +283,10 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
                      fill_value = np.nan)
 
     # write the header for the output file
-    if C.fname:
-        with open(C.fname, 'w') as f:
-            msg = f"{''.join(f"{p}, " for p in C.swept_name)}"
-            msg += f"{''.join(f"{p}, " for p in C.measured_name)[:-2]}\n"
-            f.write(msg)
+    if C.file:
+        msg = f"{''.join(f"{p}, " for p in C.swept_name)}"
+        msg += f"{''.join(f"{p}, " for p in C.measured_name)[:-2]}\n"
+        C.file.write(msg)
 
     # log the swept parameters
     if C.logger:
@@ -306,11 +321,10 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
             result[n, i] = C.measurement[i]()
         
         # write the result to the ouput file if provided
-        if C.fname:
-            with open(C.fname, 'a') as f:
-                msg = f"{''.join([f"{x}, " for x in biases])}"
-                msg += f"{''.join(f"{r}, " for r in result[n])[:-2]}\n"
-                f.write(msg)
+        if C.file:
+            msg = f"{''.join([f"{x}, " for x in biases])}"
+            msg += f"{''.join(f"{r}, " for r in result[n])[:-2]}\n"
+            C.file.write(msg)
 
         # log the result
         if C.logger:
@@ -365,25 +379,33 @@ class SweepMeasureProductConfig:
                         ]
     axes            : Tuple[np.ndarray] # axes over which to sweep parameters
     time_per_point  : float             # wait time per point
-    fname           : Optional[float]   # path to output file
+    file            : Optional[Union[IO, str]] = None   # output file-like
     measured_name   : Optional[         # names of measured parameters
                             Union[
                                 Tuple[str, ...],
                                 str
                             ]
-                        ]
+                        ] = None
     swept_name      : Optional[         # names of swept parameters
                             Tuple[str, ...]
-                        ]
-    logger          : Optional[object]  # logger
-    pre_callback    : Optional[Callable[[int, np.ndarray], Any]]
-    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]]
+                        ] = None
+    logger          : Optional[object] = None   # logger
+    pre_callback    : Optional[Callable[[int, np.ndarray], Any]] = None
+    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
 
 def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
-
     # For parameters that can be either single values or tuples, wrap the single
     # values in a tuple and validate input dimensions
-    if (C.logger or C.fname) and not (C.swept_name and C.measured_name):
+    
+    if type(C.file) == str:
+        with open(C.file, 'w') as f:
+            fname = C.file
+            C.file = f
+            res = sweepMeasureCut(C)
+            C.file = fname
+            return res
+    
+    if (C.logger or C.file) and not (C.swept_name and C.measured_name):
         raise ValueError(
             "swept_name and measured_name are required for file or console logging."
         )
@@ -414,11 +436,10 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
                      fill_value = np.nan)
 
     # write the header for the output file
-    if C.fname:
-        with open(C.fname, 'w') as f:
-            msg = f"{''.join(f"{p}, " for p in C.swept_name)}"
-            msg += f"{''.join(f"{p}, " for p in C.measured_name)[:-2]}\n"
-            f.write(msg)
+    if C.file:
+        msg = f"{''.join(f"{p}, " for p in C.swept_name)}"
+        msg += f"{''.join(f"{p}, " for p in C.measured_name)[:-2]}\n"
+        C.file.write(msg)
 
     # log the swept parameters
     if C.logger:
@@ -451,11 +472,10 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
             result[i, *ind] = C.measurement[i]()
         
         # write the result to the ouput file if provided
-        if C.fname:
-            with open(C.fname, 'a') as f:
-                msg = f"{''.join([f"{x}, " for x in biases])}"
-                msg += f"{''.join(f"{r}, " for r in result[:, *ind])[:-2]}\n"
-                f.write(msg)
+        if C.file:
+            msg = f"{''.join([f"{x}, " for x in biases])}"
+            msg += f"{''.join(f"{r}, " for r in result[:, *ind])[:-2]}\n"
+            C.file.write(msg)
 
         # log the result
         if C.logger:
