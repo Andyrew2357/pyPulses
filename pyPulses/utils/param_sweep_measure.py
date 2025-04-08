@@ -244,7 +244,7 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
         with open(C.file, 'w') as f:
             fname = C.file
             C.file = f
-            res = sweepMeasureCut(C)
+            res = sweepMeasure(C)
             C.file = fname
             return res
     
@@ -401,7 +401,7 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
         with open(C.file, 'w') as f:
             fname = C.file
             C.file = f
-            res = sweepMeasureCut(C)
+            res = sweepMeasureProduct(C)
             C.file = fname
             return res
     
