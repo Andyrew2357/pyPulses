@@ -44,8 +44,10 @@ class SweepPlotter:
             Total number of points in the sweep. If provided, a progress bar will be shown.
             If None, no progress bar will be displayed.
         """
-        self.swept_names        = swept_names
-        self.measured_names     = measured_names
+        self.swept_mask         = [n is not None for n in swept_names]
+        self.measured_mask      = [n is not None for n in measured_names]
+        self.swept_names        = [n for n in swept_names if n is not None]
+        self.measured_names     = [n for n in measured_names if n is not None]
         self.plot_layout        = plot_layout
         self.update_interval    = update_interval
         self.figsize            = figsize
@@ -160,8 +162,8 @@ class SweepPlotter:
             Values of the measured parameters at this point
         """
         # Store the data
-        self.swept_data.append(swept_values)
-        self.measured_data.append(measured_values)
+        self.swept_data.append(swept_values[self.swept_mask])
+        self.measured_data.append(measured_values[self.measured_mask])
         
         # If total points wasn't specified and we're using a progress bar,
         # try to infer it from the indices
