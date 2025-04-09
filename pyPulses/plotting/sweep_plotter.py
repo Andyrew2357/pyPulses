@@ -1,28 +1,38 @@
 """
-A class for dynamically plotting data from parameter sweeps.
-Designed to work with the sweepMeasureCut and related functions as a callback to
-visualize data as it's being collected.
+An improved class for dynamically plotting data from parameter sweeps using Bokeh.
+Uses asynchronous updates to minimize impact on measurement time.
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
-from IPython.display import display, clear_output
-from typing import List, Optional, Tuple
 from collections import deque
+from typing import List, Optional, Tuple
+import threading
+import time
+import queue
 
-class SweepPlotter:    
+from IPython.display import display
+
+# Bokeh imports
+from bokeh.plotting import figure, show, output_notebook
+from bokeh.layouts import gridplot, column
+from bokeh.models import ColumnDataSource, Div, HoverTool
+from bokeh.io import push_notebook
+from bokeh.palettes import Category10
+
+from jupyter_bokeh.widgets import BokehModel
+
+class SweepPlotter:
     def __init__(self, 
-                 swept_names    : List[str], 
-                 measured_names : List[str],
-                 plot_layout    : str = 'grid',
-                 update_interval: int = 1,
-                 figsize        : Tuple[int, int] = (12, 8),
-                 display_mode   : str = 'jupyter',
-                 max_history    : Optional[int] = None,
-                 total_points   : Optional[int] = None):
+                 swept_names: List[str], 
+                 measured_names: List[str],
+                 plot_layout: str = 'grid',
+                 update_interval: float = 0.1,  # Time-based throttling (seconds)
+                 plot_width: int = 350, 
+                 plot_height: int = 300,
+                 max_history: Optional[int] = None,
+                 total_points: Optional[int] = None):
         """
-        Initialize the SweepPlotter.
+        Initialize the AsyncSweepPlotter.
         
         Parameters:
         -----------
@@ -31,177 +41,283 @@ class SweepPlotter:
         measured_names  : List[str]
             Names of the measured parameters
         plot_layout     : str, optional
-            Layout style for plots ('grid' or 'matrix'). 
-            'grid' shows each measurement vs each swept parameter.
-            'matrix' shows all pairs of measurements and swept parameters.
-        update_interval : int, optional
-            Update the plot every N points
-        figsize         : tuple, optional
-            Figure size (width, height) in inches
-        display_mode    : str, optional
-            'jupyter' for Jupyter notebook display or 'window' for normal matplotlib window
+            Layout style for plots ('grid' or 'matrix')
+        update_interval : float, optional
+            Minimum time between plot updates (seconds)
+        plot_width      : int, optional
+            Width of each plot in pixels
+        plot_height     : int, optional
+            Height of each plot in pixels
+        max_history     : int, optional
+            Maximum number of data points to keep (for memory management)
         total_points    : int, optional
-            Total number of points in the sweep. If provided, a progress bar will be shown.
-            If None, no progress bar will be displayed.
+            Total number of points in the sweep (for progress indicator)
         """
-        self.swept_mask         = [n is not None for n in swept_names]
-        self.measured_mask      = [n is not None for n in measured_names]
-        self.swept_names        = [n for n in swept_names if n is not None]
-        self.measured_names     = [n for n in measured_names if n is not None]
-        self.plot_layout        = plot_layout
-        self.update_interval    = update_interval
-        self.figsize            = figsize
-        self.display_mode       = display_mode
-        self.n_points_total     = total_points
-        self.show_progress      = total_points is not None
+        # Clean up parameter names and create masks
+        self.swept_names = [n for n in swept_names if n is not None]
+        self.measured_names = [n for n in measured_names if n is not None]
+        self.swept_mask = [n is not None for n in swept_names]
+        self.measured_mask = [n is not None for n in measured_names]
+        
+        # Configuration
+        self.plot_layout = plot_layout
+        self.update_interval = update_interval
+        self.plot_width = plot_width
+        self.plot_height = plot_height
+        self.total_points = total_points
+        self.show_progress = total_points is not None
         
         # Data storage
-        self.swept_data = deque(maxlen = max_history)
-        self.measured_data = deque(maxlen = max_history)
+        self.swept_data = deque(maxlen=max_history)
+        self.measured_data = deque(maxlen=max_history)
         
-        # Create figure and axes based on layout
-        self._setup_figure()
+        # Async update mechanism
+        self.update_queue = queue.Queue()
+        self.last_update_time = 0
+        self.handle = None
+        self.plots_initialized = False
         
-    def _setup_figure(self):
-        """Create the figure and axes based on the selected layout."""
-        self.fig = plt.figure(figsize = self.figsize)
+        # Initialize Bokeh for Jupyter
+        try:
+            output_notebook(hide_banner=True)
+        except:
+            pass
+
+        # Create data sources and plots
+        self._create_data_sources()
+        self._setup_plots()
         
-        n_swept = len(self.swept_names)
-        n_measured = len(self.measured_names)
+        # Start the update thread
+        self.stop_thread = False
+        self.update_thread = threading.Thread(target=self._update_thread_function)
+        self.update_thread.daemon = True
+        self.update_thread.start()
+    
+    def _create_data_sources(self):
+        """Create Bokeh data sources for plots."""
+        self.sources = {}
+        self.last_points = {}
         
         if self.plot_layout == 'grid':
-            # Create a grid with measurements as rows and swept parameters as 
-            # columns
-            if self.show_progress:
-                # Add a row for the progress bar
-                self.gs = GridSpec(n_measured + 1, n_swept, 
-                                   height_ratios = [0.2] + [3] * n_measured)
-                
-                # Create a special axes for the progress bar
-                self.progress_ax = self.fig.add_subplot(self.gs[0, :])
-                self.progress_ax.set_title("Progress: 0%")
-                self.progress_ax.set_xlim(0, 100)
-                self.progress_ax.set_ylim(0, 1)
-                self.progress_ax.get_yaxis().set_visible(False)
-                self.progress_bar = self.progress_ax.barh(0.5, 0, height = 1, 
-                                                          color = 'green')[0]
-                
-                # Adjust the starting row for the data plots
-                start_row = 1
-            else:
-                # No progress bar, just the data plots
-                self.gs = GridSpec(n_measured, n_swept)
-                start_row = 0
+            # Grid layout: each measurement vs each swept parameter
+            for swept in self.swept_names:
+                for measured in self.measured_names:
+                    self.sources[(swept, measured)] = ColumnDataSource({
+                        'x': [], 
+                        'y': []
+                    })
+                    self.last_points[(swept, measured)] = ColumnDataSource({
+                        'x': [], 
+                        'y': []
+                    })
+        elif self.plot_layout == 'matrix':
+            # Matrix layout: all parameters vs all other parameters
+            all_params = self.swept_names + self.measured_names
+            for param1 in all_params:
+                for param2 in all_params:
+                    if param1 != param2:
+                        self.sources[(param1, param2)] = ColumnDataSource({
+                            'x': [], 
+                            'y': []
+                        })
+                        self.last_points[(param1, param2)] = ColumnDataSource({
+                            'x': [], 
+                            'y': []
+                        })
+        
+        # Progress indicator source
+        if self.show_progress:
+            self.progress_source = ColumnDataSource({
+                'value': [0],
+                'percent': ['0%']
+            })
+    
+    def _setup_plots(self):
+        """Create the Bokeh plot layout."""
+        self.plots = {}
+        plot_grid = []
+        colors = Category10[10]
+        
+        # Setup tools and hover tooltips
+        tools = "pan,wheel_zoom,box_zoom,reset,save"
+        tooltips = [("x", "@x{0.0000}"), ("y", "@y{0.0000}")]
+        
+        # Create progress indicator if needed
+        if self.show_progress:
+            self.progress_div = Div(
+                text=f"<h3>Parameter Sweep Progress: 0%</h3>",
+                width=self.plot_width * len(self.swept_names) if self.swept_names else 400,
+            )
             
-            # Create the grid of plot axes
-            self.axes = {}
-            for i, measured in enumerate(self.measured_names):
+            self.progress_plot = figure(
+                height=50,
+                width=self.plot_width * len(self.swept_names) if self.swept_names else 400,
+                tools="",
+                x_range=(0, 100),
+                y_range=(0, 1),
+                toolbar_location=None
+            )
+            self.progress_plot.xaxis.visible = True
+            self.progress_plot.yaxis.visible = False
+            self.progress_plot.grid.visible = False
+            self.progress_plot.outline_line_color = None
+            self.progress_bar = self.progress_plot.hbar(
+                y=0.5, left=0, right='value', height=0.8,
+                source=self.progress_source,
+                color="#009E73"
+            )
+        
+        # Create plots based on layout type
+        if self.plot_layout == 'grid':
+            rows = []
+            for measured in self.measured_names:
+                row_plots = []
                 for j, swept in enumerate(self.swept_names):
-                    ax = self.fig.add_subplot(self.gs[i+start_row, j])
-                    ax.set_xlabel(swept)
-                    ax.set_ylabel(measured)
-                    ax.grid(True)
-                    self.axes[(swept, measured)] = ax
+                    p = figure(
+                        width=self.plot_width,
+                        height=self.plot_height,
+                        tools=tools,
+                        x_axis_label=swept,
+                        y_axis_label=measured,
+                        title=f"{measured} vs {swept}"
+                    )
+                    
+                    # Add hover tool
+                    hover = HoverTool(tooltips=tooltips)
+                    p.add_tools(hover)
+                    
+                    # Add line and points
+                    line = p.line('x', 'y', source=self.sources[(swept, measured)],
+                                 line_width=2, color=colors[j % len(colors)])
+                    scatter = p.scatter('x', 'y', source=self.sources[(swept, measured)],
+                                      size=6, color=colors[j % len(colors)], alpha=0.5)
+                    
+                    # Highlight the latest point
+                    latest = p.scatter('x', 'y', source=self.last_points[(swept, measured)],
+                                      size=10, color=colors[j % len(colors)], alpha=1.0)
+                    
+                    p.grid.grid_line_alpha = 0.3
+                    self.plots[(swept, measured)] = p
+                    row_plots.append(p)
+                
+                rows.append(row_plots)
+            
+            plot_grid = rows
             
         elif self.plot_layout == 'matrix':
-            # Create a matrix layout where each parameter (swept and measured) 
-            # is plotted against every other
+            # Matrix layout for correlation plots
             all_params = self.swept_names + self.measured_names
             n_params = len(all_params)
+            matrix = [[None for _ in range(n_params)] for _ in range(n_params)]
             
-            if self.show_progress:
-                # Create a matrix with an extra row for the progress bar
-                self.gs = GridSpec(n_params + 1, n_params)
-                
-                # Create a special axes for the progress bar spanning the top
-                self.progress_ax = self.fig.add_subplot(self.gs[0, :])
-                self.progress_ax.set_title("Progress")
-                self.progress_ax.set_xlim(0, 100)
-                self.progress_ax.set_ylim(0, 1)
-                self.progress_ax.set_xlabel("Percent Complete")
-                self.progress_ax.get_yaxis().set_visible(False)
-                self.progress_bar = self.progress_ax.barh(0.5, 0, height = 1, 
-                                                          color = 'green')[0]
-                
-                # Adjust the starting row for the data plots
-                start_row = 1
-            else:
-                # No progress bar
-                self.gs = GridSpec(n_params, n_params)
-                self.fig.suptitle("Parameter Sweep", fontsize=16)
-                start_row = 0
-            
-            # Create the matrix of plot axes
-            self.axes = {}
             for i, param1 in enumerate(all_params):
                 for j, param2 in enumerate(all_params):
                     if i != j:  # Skip diagonals
-                        ax = self.fig.add_subplot(self.gs[i+start_row, j])
-                        ax.set_xlabel(param2)
-                        ax.set_ylabel(param1)
-                        ax.grid(True)
-                        self.axes[(param2, param1)] = ax
+                        p = figure(
+                            width=self.plot_width,
+                            height=self.plot_height,
+                            tools=tools,
+                            x_axis_label=param2,
+                            y_axis_label=param1,
+                            title=f"{param1} vs {param2}"
+                        )
+                        
+                        # Add hover tool
+                        hover = HoverTool(tooltips=tooltips)
+                        p.add_tools(hover)
+                        
+                        # Add line and points
+                        line = p.line('x', 'y', source=self.sources[(param2, param1)],
+                                     line_width=2, color=colors[i % len(colors)])
+                        scatter = p.scatter('x', 'y', source=self.sources[(param2, param1)],
+                                          size=6, color=colors[i % len(colors)], alpha=0.5)
+                        
+                        # Highlight the latest point
+                        latest = p.scatter('x', 'y', source=self.last_points[(param2, param1)],
+                                          size=10, color=colors[i % len(colors)], alpha=1.0)
+                        
+                        p.grid.grid_line_alpha = 0.3
+                        self.plots[(param2, param1)] = p
+                        matrix[i][j] = p
+            
+            # Filter out None values and create compact grid
+            plot_grid = []
+            for row in matrix:
+                filtered_row = [p for p in row if p is not None]
+                if filtered_row:
+                    plot_grid.append(filtered_row)
         
-        self.fig.tight_layout(rect=[0, 0, 1, 1])
-        
-    def update_callback(self, index: int, swept_values: np.ndarray, 
-                                        measured_values: np.ndarray):
-        """
-        Callback function to update plots during a sweep.
-        
-        This function is designed to be used as the post_callback in 
-        sweepMeasureCut.
-        
-        Parameters:
-        -----------
-        index           : int
-            Current point index
-        swept_values    : np.ndarray
-            Values of the swept parameters at this point
-        measured_values : np.ndarray
-            Values of the measured parameters at this point
-        """
-        # Store the data
-        self.swept_data.append(swept_values[self.swept_mask])
-        self.measured_data.append(measured_values[self.measured_mask])
-        
-        # If total points wasn't specified and we're using a progress bar,
-        # try to infer it from the indices
-        if self.n_points_total is None:
-            # Can infer total points if we're using an index that starts at 0
-            # and increments by 1, but we'd need additional heuristics to be sure
-            pass
-        
-        # Update plots at specified intervals or when we get the last point
-        if index % self.update_interval == 0 or \
-            (self.n_points_total is not None and \
-            index == self.n_points_total - 1):
-            self._update_plots(index)
+        # Create the layout
+        if plot_grid:
+            self.grid = gridplot(plot_grid, toolbar_location="right")
+            
+            if self.show_progress:
+                self.layout = column(self.progress_div, self.progress_plot, self.grid)
+            else:
+                self.layout = self.grid
+                
+            # Display the layout
+            self.handle = display(BokehModel(self.layout))
+            self.plots_initialized = True
     
-    def _update_plots(self, current_index: int):
-        """Update all plots with current data."""
-        # Convert stored data to numpy arrays for easier slicing
+    def _update_thread_function(self):
+        """Background thread function for asynchronous plot updates."""
+        while not self.stop_thread:
+            # Check if we need to update
+            current_time = time.time()
+            time_since_last_update = current_time - self.last_update_time
+            
+            # Update if enough time has passed and there's new data
+            if time_since_last_update >= self.update_interval and not self.update_queue.empty():
+                self._process_update_queue()
+                self.last_update_time = current_time
+            
+            # Small sleep to prevent CPU hogging
+            time.sleep(0.1)
+
+    def _process_update_queue(self):
+        """Process all pending updates in the queue."""
+
+        # Process a limited number of updates at once to avoid blocking
+        max_updates = 10
+        updates_processed = 0
+        
+        while not self.update_queue.empty() and updates_processed < max_updates:
+            try:
+                # Just get the item - we don't need the value
+                self.update_queue.get(block=False)
+                updates_processed += 1
+            except queue.Empty:
+                break
+        
+        # Skip if no data
+        if len(self.swept_data) == 0:
+            return
+        
+        # Get the current data
         swept_array = np.array(self.swept_data)
         measured_array = np.array(self.measured_data)
         
-        # Update progress bar and title if we're showing progress
-        if self.show_progress:
-            progress_percent = (current_index + 1) / self.n_points_total * 100
-            self.progress_bar.set_width(progress_percent)
-            self.progress_ax.set_title(
-                f"Parameter Sweep Progress: {progress_percent:.1f}%"
-                )
-        
-        # Update data plots based on layout
+        # Update plot data sources
         if self.plot_layout == 'grid':
             for i, measured_name in enumerate(self.measured_names):
                 for j, swept_name in enumerate(self.swept_names):
-                    ax = self.axes[(swept_name, measured_name)]
-                    ax.clear()
-                    ax.plot(swept_array[:, j], measured_array[:, i], 'o-')
-                    ax.set_xlabel(swept_name)
-                    ax.set_ylabel(measured_name)
-                    ax.grid(True)
+                    if (swept_name, measured_name) in self.sources:
+                        # Update full dataset
+                        x_data = swept_array[:, j].tolist()
+                        y_data = measured_array[:, i].tolist()
+                        
+                        self.sources[(swept_name, measured_name)].data = {
+                            'x': x_data,
+                            'y': y_data
+                        }
+                        
+                        # Update latest point source
+                        if len(x_data) > 0:
+                            self.last_points[(swept_name, measured_name)].data = {
+                                'x': [x_data[-1]],
+                                'y': [y_data[-1]]
+                            }
         
         elif self.plot_layout == 'matrix':
             all_names = self.swept_names + self.measured_names
@@ -209,33 +325,93 @@ class SweepPlotter:
             
             for i, name1 in enumerate(all_names):
                 for j, name2 in enumerate(all_names):
-                    if i != j and (name2, name1) in self.axes:
-                        ax = self.axes[(name2, name1)]
-                        ax.clear()
-                        ax.plot(all_data[:, j], all_data[:, i], 'o-')
-                        ax.set_xlabel(name2)
-                        ax.set_ylabel(name1)
-                        ax.grid(True)
+                    if i != j and (name2, name1) in self.sources:
+                        # Update full dataset
+                        x_data = all_data[:, j].tolist()
+                        y_data = all_data[:, i].tolist()
+                        
+                        self.sources[(name2, name1)].data = {
+                            'x': x_data,
+                            'y': y_data
+                        }
+                        
+                        # Update latest point source
+                        if len(x_data) > 0:
+                            self.last_points[(name2, name1)].data = {
+                                'x': [x_data[-1]],
+                                'y': [y_data[-1]]
+                            }
         
-        # Display the updated figure
-        if self.display_mode == 'jupyter':
-            display(self.fig)
-            clear_output(wait=True)
-        else:
-            self.fig.canvas.draw()
-            plt.pause(0.01)
+        # Update progress if enabled
+        if self.show_progress and self.total_points is not None:
+            current_index = len(self.swept_data) - 1
+            progress_percent = min(100, (current_index + 1) / self.total_points * 100)
+            
+            self.progress_source.data = {
+                'value': [progress_percent],
+                'percent': [f"{progress_percent:.1f}%"]
+            }
+            
+            self.progress_div.text = f"<h3>Parameter Sweep Progress: {progress_percent:.1f}%</h3>"
+    
+    def update_callback(self, index: int, swept_values: np.ndarray, measured_values: np.ndarray):
+        """
+        Callback function to update plots during a sweep.
+        
+        This function is designed to be used as the post_callback in sweepMeasureCut.
+        """
+
+        # Apply masks if needed
+        swept_filtered = swept_values[self.swept_mask]
+        measured_filtered = measured_values[self.measured_mask]
+        
+        # Store the data
+        self.swept_data.append(swept_filtered)
+        self.measured_data.append(measured_filtered)
+        
+        # Queue an update request (thread-safe)
+        self.update_queue.put(index)
+        
+        # If this is the first point, ensure we update immediately
+        if index == 0:
+            self.last_update_time = 0
     
     def reset(self):
         """Reset the plotter to start a new sweep."""
-        self.swept_data = []
-        self.measured_data = []
-        plt.close(self.fig)
-        self._setup_figure()
-    
-    def save_figure(self, filename: str):
-        """Save the current figure to a file."""
-        self.fig.savefig(filename, dpi=300, bbox_inches='tight')
+        
+        # Clear data
+        self.swept_data.clear()
+        self.measured_data.clear()
+        
+        # Clear the update queue
+        while not self.update_queue.empty():
+            try:
+                self.update_queue.get(block=False)
+            except queue.Empty:
+                break
+        
+        # Reset progress
+        if self.show_progress:
+            self.progress_source.data = {'value': [0], 'percent': ['0%']}
+            self.progress_div.text = "<h3>Parameter Sweep Progress: 0%</h3>"
+        
+        # Reset all data sources
+        for source in self.sources.values():
+            source.data = {'x': [], 'y': []}
+        
+        for source in self.last_points.values():
+            source.data = {'x': [], 'y': []}
     
     def get_data(self) -> Tuple[np.ndarray, np.ndarray]:
         """Return the collected data as numpy arrays."""
         return np.array(self.swept_data), np.array(self.measured_data)
+    
+    def stop(self):
+        """Stop the update thread."""
+        self.stop_thread = True
+        if self.update_thread and self.update_thread.is_alive():
+            self.update_thread.join(timeout=1.0)
+    
+    def force_update(self):
+        """Force an immediate update of all plots."""
+        self._process_update_queue()
