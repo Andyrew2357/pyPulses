@@ -1,3 +1,5 @@
+# largely depricated since the asynchronous implementation
+
 """
 A class for dynamically plotting data from parameter sweeps.
 Designed to work with the sweepMeasureCut and related functions as a callback to
@@ -22,7 +24,7 @@ class SynchronousSweepPlotter:
                  max_history    : Optional[int] = None,
                  total_points   : Optional[int] = None):
         """
-        Initialize the SweepPlotter.
+        Initialize the SynchronousSweepPlotter.
         
         Parameters:
         -----------

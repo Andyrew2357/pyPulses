@@ -13,26 +13,25 @@ import queue
 from IPython.display import display
 
 # Bokeh imports
-from bokeh.plotting import figure, show, output_notebook
+from bokeh.plotting import figure, output_notebook
 from bokeh.layouts import gridplot, column
 from bokeh.models import ColumnDataSource, Div, HoverTool
-from bokeh.io import push_notebook
 from bokeh.palettes import Category10
 
 from jupyter_bokeh.widgets import BokehModel
 
 class SweepPlotter:
     def __init__(self, 
-                 swept_names: List[str], 
-                 measured_names: List[str],
-                 plot_layout: str = 'grid',
+                 swept_names    : List[str], 
+                 measured_names : List[str],
+                 plot_layout    : str = 'grid',
                  update_interval: float = 0.1,  # Time-based throttling (seconds)
-                 plot_width: int = 350, 
-                 plot_height: int = 300,
-                 max_history: Optional[int] = None,
-                 total_points: Optional[int] = None):
+                 plot_width     : int = 350, 
+                 plot_height    : int = 300,
+                 max_history    : Optional[int] = None,
+                 total_points   : Optional[int] = None):
         """
-        Initialize the AsyncSweepPlotter.
+        Initialize the SweepPlotter.
         
         Parameters:
         -----------
