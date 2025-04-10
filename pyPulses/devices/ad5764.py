@@ -18,7 +18,7 @@ class ad5764(pyvisaDevice):
 
         # configurations for pyvisa resource manager
         self.config = {
-            "resource_name" : "ASRL3::INSTR",
+            "resource_name" : "ASRL5::INSTR",
             "baud_rate"     : 115200,
             "data_bits"     : 8,
             "parity"        : pyvisa.constants.Parity.none,
