@@ -21,7 +21,7 @@ measurements at each point.
     sweep           : tuple or list of tuples describing the sweep in each
                       dimension of parameter space. These tuples take the form:
                         (setter, starting value, ending value)
-    fname           : Optional; path to output file
+    file            : Optional; path to output file or a file-like object
     measured_name   : string or tuple of strings naming the measured parameters
                       for purposes of logging or writing the ouput
     swept_name      : string or tuple of strings naming the swept parameters for
@@ -187,7 +187,7 @@ the array 'points', taking measurements at each step.
                       parameters) listing the points in parameter space at which
                       to take measurements.
     time_per_point  : Time to wait before taking a measurement at each point
-    fname           : Optional; path to output file
+    file            : Optional; path to output file or a file-like object
     measured_name   : string or tuple of strings naming the measured parameters
                       for purposes of logging or writing the ouput
     swept_name      : string or tuple of strings naming the swept parameters for
@@ -350,7 +350,7 @@ each point.
                         (tuple of callables)
     axes            : Tuple of ndarrays representing the axes for each parameter
     time_per_point  : Time to wait before taking a measurement at each point
-    fname           : Optional; path to output file
+    file            : Optional; path to output file or a file-like object
     measured_name   : string or tuple of strings naming the measured parameters
                       for purposes of logging or writing the ouput
     swept_name      : tuple of strings naming the swept parameters for purposes
@@ -366,6 +366,8 @@ each point.
                       the swept paramters at that point, and a 1d array of 
                       measurement results at that point for use by the callback
                       function.
+    space_mask      : Optional; called before moving to a new point to determine
+                      whether we take a point there.
 """
 
 @dataclass
@@ -392,6 +394,7 @@ class SweepMeasureProductConfig:
     logger          : Optional[object] = None   # logger
     pre_callback    : Optional[Callable[[int, np.ndarray], Any]] = None
     post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
+    space_mask      : Optional[Callable[[int, np.ndarray], bool]] = None
 
 def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -453,6 +456,9 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
     for ind in itertools.product(*(range(ax.size) for ax in C.axes)):
         biases = np.array([C.axes[d][ind[d]] 
                            for d in range(len(C.sweep))])
+        
+        if (C.space_mask is not None) and (not C.space_mask(ind, biases)):
+            continue
         
         # log the bias point coordinates
         if C.logger:
