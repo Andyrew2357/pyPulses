@@ -1,7 +1,7 @@
 from ..utils import balance1d, BalanceConfig, RootFinderStatus, RootFinderState
 from dataclasses import dataclass
 import numpy as np
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union
 
 @dataclass
 class PulsedR():

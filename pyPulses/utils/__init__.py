@@ -7,6 +7,7 @@ from .get_quick_logger import getQuickLogger, clearLoggers
 from .plot_sweep import plotSweep
 from .param_sweep_measure import SweepMeasureConfig, sweepMeasure
 from .param_sweep_measure import SweepMeasureCutConfig, sweepMeasureCut
+from .param_sweep_measure import SweepMeasureParallelepipedConfig, sweepMeasureParallelepiped
 from .param_sweep_measure import SweepMeasureProductConfig, sweepMeasureProduct
 from .R_predictor import RPredictor
 from .rootfinder import RootFinderState, RootFinderStatus
@@ -30,6 +31,8 @@ __all__ = [
     SweepMeasureConfig,
     sweepMeasureCut,
     SweepMeasureCutConfig,
+    sweepMeasureParallelepiped,
+    SweepMeasureParallelepipedConfig,
     sweepMeasureProduct,
     SweepMeasureProductConfig,
     tandemSweep

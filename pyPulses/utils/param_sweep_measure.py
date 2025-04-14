@@ -128,7 +128,8 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
             f"Sweeping: {''.join(f"{p}, " for p in C.swept_name)[:-2]}"
         )
         C.logger.info(
-            f"Measuring: {''.join(f"{p}, " for p in C.measured_name)[:-2]}")
+            f"Measuring: {''.join(f"{p}, " for p in C.measured_name)[:-2]}"
+        )
 
     # move everything to the start of the sweep
     for setter, start, _ in C.sweep:
@@ -294,7 +295,8 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
             f"Sweeping: {''.join(f"{p}, " for p in C.swept_name)[:-2]}"
         )
         C.logger.info(
-            f"Measuring: {''.join(f"{p}, " for p in C.measured_name)[:-2]}")
+            f"Measuring: {''.join(f"{p}, " for p in C.measured_name)[:-2]}"
+        )
 
     # move everything to the start of the sweep
     for d, setter in enumerate(C.sweep):
@@ -392,9 +394,9 @@ class SweepMeasureProductConfig:
                             Tuple[str, ...]
                         ] = None
     logger          : Optional[object] = None   # logger
-    pre_callback    : Optional[Callable[[int, np.ndarray], Any]] = None
-    post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
-    space_mask      : Optional[Callable[[int, np.ndarray], bool]] = None
+    pre_callback    : Optional[Callable[[np.ndarray, np.ndarray], Any]] = None
+    post_callback   : Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], Any]] = None
+    space_mask      : Optional[Callable[[np.ndarray, np.ndarray], bool]] = None
 
 def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -412,9 +414,6 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
         raise ValueError(
             "swept_name and measured_name are required for file or console logging."
         )
-
-    if not type(C.sweep) in [tuple, list]:
-        C.sweep = (C.sweep,)
 
     if not type(C.measurement) in [tuple, list]:
         C.measurement = (C.measurement,)
@@ -450,7 +449,8 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
             f"Sweeping: {''.join(f"{p}, " for p in C.swept_name)[:-2]}"
         )
         C.logger.info(
-            f"Measuring: {''.join(f"{p}, " for p in C.measured_name)[:-2]}")
+            f"Measuring: {''.join(f"{p}, " for p in C.measured_name)[:-2]}"
+        )
 
     # step through each bias point
     for ind in itertools.product(*(range(ax.size) for ax in C.axes)):
@@ -469,6 +469,177 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
         # move to the bias point, wait some time, then measure
         for d, setter in enumerate(C.sweep):
             setter(C.axes[d][ind[d]])
+
+        if C.pre_callback:
+            C.pre_callback(ind, biases.flatten())
+        
+        time.sleep(C.time_per_point)
+        for i in range(len(C.measurement)):
+            result[i, *ind] = C.measurement[i]()
+        
+        # write the result to the ouput file if provided
+        if C.file:
+            msg = f"{''.join([f"{x}, " for x in biases])}"
+            msg += f"{''.join(f"{r}, " for r in result[:, *ind])[:-2]}\n"
+            C.file.write(msg)
+
+        # log the result
+        if C.logger:
+            msg = f"Result = "
+            msg += f"{''.join(f"{r:.5f}, " for r in result[:, *ind])[:-2]}"
+            C.logger.info(msg)
+
+        if C.post_callback:
+            C.post_callback(ind, biases.flatten(), result[:, *ind].flatten())
+
+    return result
+
+"""
+SweepMeasureParallelepipedConfig
+sweepMeasureParallelepiped
+
+Sweep parameters over the product space of provided axes, taking measurements at
+each point.
+
+    measurement     : Getter(s) for measured parameter(s) 
+                        (callable or tuple of callables)
+    sweep           : Setters for swept parameters
+                        (tuple of callables)
+    origin          : starting corner of the parallelepiped
+    endpoints       : ndarray for the other corners of the parallelepiped, the
+                      rows each being a respective endpoints. The fastest swept
+                      direction is last.
+    shape           : list representing the number of points along each axis
+    time_per_point  : Time to wait before taking a measurement at each point
+    file            : Optional; path to output file or a file-like object
+    measured_name   : string or tuple of strings naming the measured parameters
+                      for purposes of logging or writing the ouput
+    swept_name      : tuple of strings naming the swept parameters for purposes
+                      of logging or writing the ouput
+    logger          : Optional; logger object
+    pre_callback    : Optional; generic callback function called before the
+                      measurement is taken at each point. The function passes
+                      back the index of the current point in the sweep, and a 1d
+                      array of the swept parameters at that point.
+    post_callback   : Optional; generic callback function called after the 
+                      result is updated at each point. The function passes back
+                      the index of the current point in the sweep, a 1d array of
+                      the swept paramters at that point, and a 1d array of 
+                      measurement results at that point for use by the callback
+                      function.
+    space_mask      : Optional; called before moving to a new point to determine
+                      whether we take a point there.
+"""
+
+@dataclass
+class SweepMeasureParallelepipedConfig:
+    measurement     : Union[            # getter(s) for measurement
+                            Tuple[Callable[[], float], ...], 
+                            Callable[[], float]
+                        ]
+    sweep           : Tuple[            # setter(s) for parameters to sweep
+                            Callable[[float], Any]
+                        ]
+    origin          : List[float]       # starting corner of the parallelepiped
+    endpoints       : np.ndarray        # other corners (fastest direction last)
+    shape           : List[int]         # number of points for each axis
+    time_per_point  : float             # wait time per point
+    file            : Optional[Union[IO, str]] = None   # output file-like
+    measured_name   : Optional[         # names of measured parameters
+                            Union[
+                                Tuple[str, ...],
+                                str
+                            ]
+                        ] = None
+    swept_name      : Optional[         # names of swept parameters
+                            Tuple[str, ...]
+                        ] = None
+    logger          : Optional[object] = None   # logger
+    pre_callback    : Optional[Callable[[np.ndarray, np.ndarray], Any]] = None
+    post_callback   : Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], Any]] = None
+    space_mask      : Optional[Callable[[np.ndarray, np.ndarray], bool]] = None
+
+def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig) -> np.ndarray:
+    # For parameters that can be either single values or tuples, wrap the single
+    # values in a tuple and validate input dimensions
+    
+    if type(C.file) == str:
+        with open(C.file, 'w') as f:
+            fname = C.file
+            C.file = f
+            res = sweepMeasureParallelepiped(C)
+            C.file = fname
+            return res
+    
+    if (C.logger or C.file) and not (C.swept_name and C.measured_name):
+        raise ValueError(
+            "swept_name and measured_name are required for file or console logging."
+        )
+
+    if not type(C.measurement) in [tuple, list]:
+        C.measurement = (C.measurement,)
+    
+    if C.swept_name and C.measured_name:
+        if type(C.swept_name) == str:
+            C.swept_name = (C.swept_name,)
+        
+        if type(C.measured_name) == str:
+            C.measured_name = (C.measured_name,)
+
+        if not (len(C.swept_name) == len(C.sweep) and \
+                len(C.measured_name) == len(C.measurement)):
+            raise ValueError("Dimension mismatch in parameters and names.")
+
+    Ncorners, Nsetters = C.endpoints.shape
+
+    if not len(C.shape) == Ncorners:
+        raise ValueError("shape does not match the rows in endpoints.")
+    
+    if not len(C.origin) == Nsetters:
+        raise ValueError("origin does not match columns in endpoints.")
+    
+    if not len(C.sweep) == Nsetters:
+        raise ValueError("sweep does not match columns in endpoints.")
+    
+    C.origin = np.array(C.origin)
+    
+    # result array
+    result = np.full(shape = (len(C.measurement), *C.shape), 
+                     fill_value = np.nan)
+
+    # write the header for the output file
+    if C.file:
+        msg = f"{''.join(f"{p}, " for p in C.swept_name)}"
+        msg += f"{''.join(f"{p}, " for p in C.measured_name)[:-2]}\n"
+        C.file.write(msg)
+
+    # log the swept parameters
+    if C.logger:
+        C.logger.info(
+            f"Sweeping: {''.join(f"{p}, " for p in C.swept_name)[:-2]}"
+        )
+        C.logger.info(
+            f"Measuring: {''.join(f"{p}, " for p in C.measured_name)[:-2]}"
+        )
+
+    A = (C.endpoints - C.origin.reshape(1, -1)).T
+    for ind in itertools.product(*(range(p) for p in C.shape)):
+        norm_coords = np.array([ind[i] / (C.shape[i] - 1) 
+                                for i in range(len(C.shape))])
+        biases = C.origin + (A @ norm_coords)
+
+        if (C.space_mask is not None) and (not C.space_mask(ind, biases)):
+            continue
+        
+        # log the bias point coordinates
+        if C.logger:
+            C.logger.info(
+                f"Biases: {''.join([f"{x:.5f}, " for x in biases])[:-2]}"
+            )
+
+        # move to the bias point, wait some time, then measure
+        for d, setter in enumerate(C.sweep):
+            setter(biases[d])
 
         if C.pre_callback:
             C.pre_callback(ind, biases.flatten())
