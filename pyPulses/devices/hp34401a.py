@@ -1,12 +1,11 @@
 """This class is an interface to the HP34401A digital multimeter"""
 
 from ._registry import DeviceRegistry
-import pyvisa.constants
+from .pyvisa_device import pyvisaDevice
 from typing import Optional
 
-class hp34401a:
-    def __init__(self, logger: Optional[str] = None,
-                 instrument_id: Optional[str] = None):
+class hp34401a(pyvisaDevice):
+    def __init__(self, logger = None, instrument_id: Optional[str] = None):
         
         self.config = {
             "resource_name" : "",
