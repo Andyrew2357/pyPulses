@@ -32,6 +32,8 @@ class ad9854(pyvisaDevice):
         super().__init__(self.config, logger)
         DeviceRegistry.register_device(self.config["resource_name"], self)
         
+        self.master_reset()
+
         # Device parameters
         self.vmax = 0.120   # Maximum amplitude [V]
         self.refclk = 25    # Reference clock [MHz]

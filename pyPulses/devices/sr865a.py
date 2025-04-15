@@ -95,6 +95,7 @@ class sr865a(pyvisaDevice):
     def get_input_range(self) -> float:
         """Get the input signal range in volts."""
         idx = int(self.device.query("IRNG?"))
+        return self._input_range_value(idx)
 
     def set_input_range(self, range_v: float):
         """
