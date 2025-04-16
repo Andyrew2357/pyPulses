@@ -1,3 +1,5 @@
+# Ought to reformat some of the repeated parts into functions. This is a bit verbose.
+
 """Various functions for sweeping parameters and measuring at each step."""
 
 import numpy as np
@@ -5,6 +7,27 @@ import itertools
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, IO, List, Optional, Tuple, Union
+
+from .tandem_sweep import tandemSweep
+
+def set_swept_params(setters    : List[Callable[[float], Any]], 
+                     prev       : np.ndarray,
+                     targets    : np.ndarray, 
+                     ramp_wait  : Optional[float], 
+                     ramp_steps : List[float]):
+    """Utility function to smoothly integrate tandemSweep functionality."""
+
+    if ramp_wait is not None:
+        tandemSweep(
+            wait = ramp_wait,
+            sweeps = [
+                (setters[i], prev[i], targets[i], ramp_steps[i])
+                for i in range(len(setters))
+            ]
+        )
+    else:
+        for i in range(len(setters)):
+            setters[i](targets[i])
 
 """
 SweepMeasureCutConfig
@@ -37,6 +60,14 @@ measurements at each point.
                       the swept paramters at that point, and a 1d array of 
                       measurement results at that point for use by the callback
                       function.
+    ramp_wait       : Optional; wait time if using tandem sweep (important for
+                      safely sweeping in some circumstances)
+    ramp_step       : Optional; list of maximum step sizes for each parameter if
+                      using controlled tandem sweeping. Otherwise, this should
+                      be handled by passing the dedicated sweep function for
+                      that parameter (this only matters for parameters that need
+                      to be swept simultaneously to avoid issue, such as top and
+                      bottom gates for VdW systems)
 """
 
 @dataclass
@@ -77,6 +108,10 @@ class SweepMeasureCutConfig:
     logger          : Optional[object] = None   # logger
     pre_callback    : Optional[Callable[[int, np.ndarray], Any]] = None
     post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
+    
+    # If tandem sweeping is desired, need to provide these
+    ramp_wait       : Optional[float]       # wait time between steps when ramping
+    ramp_steps      : Optional[List[float]] # maximum step sizes
 
 def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -135,6 +170,9 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
     for setter, start, _ in C.sweep:
         setter(start)
 
+    setters = [s[0] for s in C.sweep]
+    prev = [start for _, start, stop in C.sweep]
+
     # step through each bias point
     for n in range(C.npoints):
         biases = [start + (stop - start) * n / (C.npoints - 1) 
@@ -146,8 +184,8 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
             )
 
         # move to the bias point, wait some time, then measure
-        for setter, start, stop in C.sweep:
-            setter(start + (stop - start) * n / (C.npoints - 1))
+        set_swept_params(setters, prev, biases, C.ramp_wait, C.ramp_steps)
+        prev = biases
 
         if C.pre_callback:
             C.pre_callback(n, np.array(biases))
@@ -204,6 +242,14 @@ the array 'points', taking measurements at each step.
                       the swept paramters at that point, and a 1d array of 
                       measurement results at that point for use by the callback
                       function.
+    ramp_wait       : Optional; wait time if using tandem sweep (important for
+                      safely sweeping in some circumstances)
+    ramp_step       : Optional; list of maximum step sizes for each parameter if
+                      using controlled tandem sweeping. Otherwise, this should
+                      be handled by passing the dedicated sweep function for
+                      that parameter (this only matters for parameters that need
+                      to be swept simultaneously to avoid issue, such as top and
+                      bottom gates for VdW systems)
 """
 
 @dataclass
@@ -236,6 +282,10 @@ class SweepMeasureConfig:
     logger          : Optional[object] = None   # logger
     pre_callback    : Optional[Callable[[int, np.ndarray], Any]] = None
     post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
+
+    # If tandem sweeping is desired, need to provide these
+    ramp_wait       : Optional[float]       # wait time between steps when ramping
+    ramp_steps      : Optional[List[float]] # maximum step sizes
 
 def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -302,6 +352,8 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
     for d, setter in enumerate(C.sweep):
         setter(C.points[0, d])
 
+    prev = C.points[0, :]
+
     # step through each bias point
     for n in range(npoints):
         biases = C.points[n, :]
@@ -312,8 +364,8 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
             )
 
         # move to the bias point, wait some time, then measure
-        for d, setter in enumerate(C.sweep):
-            setter(C.points[n, d])
+        set_swept_params(C.sweep, prev, biases, C.ramp_wait, C.ramp_steps)
+        prev = biases
 
         if C.pre_callback:
             C.pre_callback(n, biases.flatten())
@@ -370,6 +422,14 @@ each point.
                       function.
     space_mask      : Optional; called before moving to a new point to determine
                       whether we take a point there.
+    ramp_wait       : Optional; wait time if using tandem sweep (important for
+                      safely sweeping in some circumstances)
+    ramp_step       : Optional; list of maximum step sizes for each parameter if
+                      using controlled tandem sweeping. Otherwise, this should
+                      be handled by passing the dedicated sweep function for
+                      that parameter (this only matters for parameters that need
+                      to be swept simultaneously to avoid issue, such as top and
+                      bottom gates for VdW systems)
 """
 
 @dataclass
@@ -397,6 +457,10 @@ class SweepMeasureProductConfig:
     pre_callback    : Optional[Callable[[np.ndarray, np.ndarray], Any]] = None
     post_callback   : Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], Any]] = None
     space_mask      : Optional[Callable[[np.ndarray, np.ndarray], bool]] = None
+
+    # If tandem sweeping is desired, need to provide these
+    ramp_wait       : Optional[float]       # wait time between steps when ramping
+    ramp_steps      : Optional[List[float]] # maximum step sizes
 
 def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -452,6 +516,8 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
             f"Measuring: {''.join(f"{p}, " for p in C.measured_name)[:-2]}"
         )
 
+    prev = np.array([C.axes[d][*[0]*len(C.axes)] for d in range(len(C.sweep))])
+
     # step through each bias point
     for ind in itertools.product(*(range(ax.size) for ax in C.axes)):
         biases = np.array([C.axes[d][ind[d]] 
@@ -467,8 +533,8 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
             )
 
         # move to the bias point, wait some time, then measure
-        for d, setter in enumerate(C.sweep):
-            setter(C.axes[d][ind[d]])
+        set_swept_params(C.sweep, prev, biases, C.ramp_wait, C.ramp_steps)
+        prev = biases
 
         if C.pre_callback:
             C.pre_callback(ind, biases.flatten())
@@ -529,6 +595,14 @@ each point.
                       function.
     space_mask      : Optional; called before moving to a new point to determine
                       whether we take a point there.
+    ramp_wait       : Optional; wait time if using tandem sweep (important for
+                      safely sweeping in some circumstances)
+    ramp_step       : Optional; list of maximum step sizes for each parameter if
+                      using controlled tandem sweeping. Otherwise, this should
+                      be handled by passing the dedicated sweep function for
+                      that parameter (this only matters for parameters that need
+                      to be swept simultaneously to avoid issue, such as top and
+                      bottom gates for VdW systems)
 """
 
 @dataclass
@@ -558,6 +632,10 @@ class SweepMeasureParallelepipedConfig:
     pre_callback    : Optional[Callable[[np.ndarray, np.ndarray], Any]] = None
     post_callback   : Optional[Callable[[np.ndarray, np.ndarray, np.ndarray], Any]] = None
     space_mask      : Optional[Callable[[np.ndarray, np.ndarray], bool]] = None
+
+    # If tandem sweeping is desired, need to provide these
+    ramp_wait       : Optional[float]       # wait time between steps when ramping
+    ramp_steps      : Optional[List[float]] # maximum step sizes
 
 def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -623,6 +701,8 @@ def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig) -> np.ndarra
         )
 
     A = (C.endpoints - C.origin.reshape(1, -1)).T
+    prev = C.origin
+
     for ind in itertools.product(*(range(p) for p in C.shape)):
         norm_coords = np.array([ind[i] / (C.shape[i] - 1) 
                                 for i in range(len(C.shape))])
@@ -638,8 +718,8 @@ def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig) -> np.ndarra
             )
 
         # move to the bias point, wait some time, then measure
-        for d, setter in enumerate(C.sweep):
-            setter(biases[d])
+        set_swept_params(C.sweep, prev, biases, C.ramp_wait, C.ramp_steps)
+        prev = biases
 
         if C.pre_callback:
             C.pre_callback(ind, biases.flatten())
