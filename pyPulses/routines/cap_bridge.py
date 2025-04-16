@@ -18,21 +18,21 @@ class BalanceCapBridgeConfig:
     Vex_gain    : Optional[float] = 1       # gain associated with Vex
     Vstd_gain   : Optional[float] = 1       # gain associated with Vstd
     Cstd        : Optional[float] = 1       # standard capacitor Cstd
-    wait        : Optional[float] = 10      # time to wait after changing voltage
+    wait        : Optional[float] = 3       # time to wait after changing voltage
     samples     : Optional[int] = 100       # number of averages to use  
     logger      : Optional[object] = None   # logger
     callback    : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
     ignore_warning: Optional[bool] = False
 
     def __str__(self):
-        s  = f"small_step: {self.small_step:.5f}"
-        s += f"small_step: {self.large_step:.5f}"
-        s += f"       Vex: {self.Vex:.5f} V_rms"
-        s += f"Vstd_range: {self.Vstd_range:.5f} V_rms"
-        s += f"  Vex_gain: {self.Vex_gain:.5f}"
-        s += f" Vstd_gain: {self.Vstd_gain:.5f}"
-        s += f"      Cstd: {self.Cstd:.5f}"
-        s += f"      wait: {self.wait:.5f} s"
+        s  = f"small_step: {self.small_step[0]}, {self.small_step[1]}\n"
+        s += f"large_step: {self.large_step[0]}, {self.large_step[1]}\n"
+        s += f"       Vex: {self.Vex} V_rms\n"
+        s += f"Vstd_range: {self.Vstd_range} V_rms\n"
+        s += f"  Vex_gain: {self.Vex_gain}\n"
+        s += f" Vstd_gain: {self.Vstd_gain}\n"
+        s += f"      Cstd: {self.Cstd}\n"
+        s += f"      wait: {self.wait} s\n"
         s += f"   samples: {self.samples}"
         return s
 
@@ -54,17 +54,18 @@ class CapBridgeBalance:
     def __str__(self):
         s  = f"        status: {'balanced' if self.status else 'unbalanced'}\n"
         s += f"balance_matrix: " + \
-                ''.join([f"{e:.5f}   " for e in self.balance_matrix]) + '\n'
-        s += f"           Cex: {self.Cex:.5f}\n"
-        s += f"         Closs: {self.Closs:.5f}\n"
-        s += f"     Vc0 / Vex: {self.Vc0Vex:.5f}\n"
-        s += f"     Vr0 / Vex: {self.Vr0Vex:.5f}\n"
-        s += f"             R: {self.R:.5f}\n"
-        s += f"         phase: {self.phase:.5f}\n"
-        s += f"       error_X: {self.error[0]:.5f}\n"
-        s += f"       error_Y: {self.error[1]:.5f}\n"
-        s += f"           Vex: {self.Vex:.5f}\n"
-        s += f"          Cstd: {self.Cstd:.5f}"
+                ''.join([f"{e}   " for e in self.balance_matrix]) + '\n'
+        s += f"           Cex: {self.Cex}\n"
+        s += f"         Closs: {self.Closs}\n"
+        s += f"     Vc0 / Vex: {self.Vc0Vex}\n"
+        s += f"     Vr0 / Vex: {self.Vr0Vex}\n"
+        s += f"             R: {self.R}\n"
+        s += f"         phase: {self.phase}\n"
+        if self.error is not None:
+            s += f"       error_X: {self.error[0]}\n"
+            s += f"       error_Y: {self.error[1]}\n"
+        s += f"           Vex: {self.Vex}\n"
+        s += f"          Cstd: {self.Cstd}"
         return s
 
 """Balances the capacitance bridge. Run once before capacitance measurements"""
@@ -97,8 +98,8 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
     dvc, dvr    = C.large_step
     
     if not C.ignore_warning:
-        Vhi = C.Vstd_range * max(np.sqrt(vr^2 + (vc + dvc)^2), 
-                                 np.sqrt(vc^2 + (vr + dvr)^2))
+        Vhi = C.Vstd_range * max(np.sqrt(vr**2 + (vc + dvc)**2), 
+                                 np.sqrt(vc**2 + (vr + dvr)**2))
         if Vhi > 2:
             msg  = f"WARNING: Balance Cancelled.\n"
             msg += f"Standard voltage will reach {Vhi:.5f} V.\n"
@@ -119,8 +120,8 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
         C.logger.info("Balancing...")
     
     for n in range(3):
-        R = np.sqrt(Vcs(n)^2 + Vrs(n)^2)
-        phase = 180 - np.arctan2(Vrs(n), Vcs(n))    # 4-quadrant tangent function
+        R = np.sqrt(Vcs[n]**2 + Vrs[n]**2)
+        phase = 180 - np.degrees(np.arctan2(Vrs[n], Vcs[n])) # 4-quadrant tangent function
         set_Vstd(R/C.Vstd_gain)
         set_Vstd_ph(phase)
         time.sleep(C.wait)
@@ -129,9 +130,10 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
             L[1, n, m] = get_Y()
 
             if C.callback:
-                C.callback(n * C.samples + m, 
-                           np.ndarray([L[0, n, m]]), 
-                           np.ndarray([L[1, n, m]]))
+                C.callback(
+                    n * C.samples + m, np.array([n * C.samples + m]), 
+                    L[:, n, m].flatten()
+                )
 
     L = np.mean(L, axis = 2)
 
@@ -142,13 +144,13 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
     dVc = C.Vstd_range * dvc
 
     # the algorithmic part; see Ashoori thesis
-    Kr1 = (L[1,2] - L[1,1]) / dVr   # real voltage units (K's are dimensionless)
-    Kc1 = (L[1,3] - L[1,1]) / dVc
-    Kr2 = (L[2,2] - L[2,1]) / dVr
-    Kc2 = (L[2,3] - L[2,1]) / dVc
+    Kr1 = (L[0,1] - L[0,0]) / dVr   # real voltage units (K's are dimensionless)
+    Kc1 = (L[0,2] - L[0,0]) / dVc
+    Kr2 = (L[1,1] - L[1,0]) / dVr
+    Kc2 = (L[1,2] - L[1,0]) / dVc
     P   = 1 / (1 - (Kc1 * Kr2) / (Kr1 * Kc2))
-    Vr0 = Vr + (P / Kr1) * ((Kc1 / Kc2) * L[2,1] - L[1,1]) # all rms voltages
-    Vc0 = Vc + (P / Kc2) * ((Kr2 / Kr1) * L[1,1] - L[2,1])
+    Vr0 = Vr + (P / Kr1) * ((Kc1 / Kc2) * L[1,0] - L[0,0]) # all rms voltages
+    Vc0 = Vc + (P / Kc2) * ((Kr2 / Kr1) * L[0,0] - L[1,0])
 
     # calculate device capacitance (rms voltages)
     Cex     = C.Cstd * Vc0 / C.Vex
@@ -159,9 +161,7 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
     Vr0Vex = Vr0/C.Vex
 
     balance_matrix = np.array([Kc1, Kc2, Kr1, Kr2, Vc0, Vr0])
-    phase = 180 - np.arctan2(Vr0, Vc0)  # 4-quadrant tangent function
-    set_Vstd(R / C.Vstd_gain)
-    set_Vstd_ph(phase)
+    phase = 180 - np.degrees(np.arctan2(Vr0, Vc0)) # 4-quadrant tangent function
     R = np.sqrt(Vc0**2 + Vr0**2)
 
     out = CapBridgeBalance(
@@ -192,6 +192,9 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
         return out
     
     else:
+        set_Vstd(R / C.Vstd_gain)
+        set_Vstd_ph(phase)
+
         time.sleep(C.wait)
         if C.logger:
             C.logger.info("Balanced.")

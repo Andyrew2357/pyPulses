@@ -61,6 +61,7 @@ class ad9854(pyvisaDevice):
         bytes_ = [(ftw >> (8*i)) & 0xFF for i in range(5, -1, -1)]
         command = bytes([255, 254, 253, 12, 2] + bytes_)
         self._write_command(command)
+        self.freq = f
 
         self.info(f"Set frequency to {f} Hz")
         return f
@@ -79,6 +80,7 @@ class ad9854(pyvisaDevice):
         pw1, pw2 = (ptw >> 8) & 0xFF, ptw & 0xFF
         command = bytes([255, 254, 253, chip, 0, pw1, pw2, 0, 0, 0, 0])
         self._write_command(command)
+        self.phase = phase
 
         self.info(f"Set phase offset to {phase} degrees.")
         return phase
@@ -105,6 +107,7 @@ class ad9854(pyvisaDevice):
         vw1, vw2 = (vtw >> 8) & 0xFF, vtw & 0xFF
         command = bytes([255, 254, 253, chip, chnum, vw1, vw2, 0, 0, 0, 0])
         self._write_command(command)
+        self.amplitudes[(chip, channel)] = amplitude
 
         self.info(f"Set {channel}{chip} amplitude to {amplitude} V rms.")
         return amplitude
