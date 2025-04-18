@@ -7,16 +7,21 @@ from .nivisa_utils import visa_dll
 from .abstract_device import abstractDevice
 import pyvisa.constants
 import pyvisa
-import time
 import re
 
 class pyvisaDevice(abstractDevice):
     def __init__(self, pyvisa_config, logger = None):
         """Standard initialization, calling ResourceManager.open_resource."""
         super().__init__(logger)
-        # rm = pyvisa.ResourceManager(visa_dll)
-        # self.device = rm.open_resource(**pyvisa_config)
+
         self.pyvisa_config = pyvisa_config
+        # for debugging purposes, we can connect to an object that mimics a
+        # pyvisa resource but just logs the messages it recieves. The user may
+        # also pre-program responses from the dummy resource for testing. 
+        if pyvisa_config['resource_name'] == 'DEBUG':
+            self.device = dummyResource()
+            return
+        
         self.connect()
 
     def connect(self):
@@ -117,5 +122,62 @@ class pyvisaDevice(abstractDevice):
 
     def refresh(self):
         """Close and reopen the device."""
+        if self.pyvisa_config['resource_name'] == 'DEBUG':
+            return
+
         self.device.close()
         self.connect()
+
+"""
+This is a dummy class for debugging instruments without actually sending 
+commands (important for testing things like magnet power supplies).
+
+There exist far more sophisticated ways of modeling instruments that take SCPI
+commands, but not all of ours operate this way (some are arduino controlled),
+and this is far easier to implement. The user just has to preprogram certain
+responses.
+"""
+class dummyResource():
+    def __init__(self):
+        self.history = []
+        self.output = ""
+
+    def receive(self, cmd, *args, **kwargs):
+        event = {'command': cmd, 'args': args, 'kwargs': kwargs}
+        msg = f"{cmd}: args = {args}, kwargs = {kwargs}"
+        self.history.append(event)
+        self.debug(msg)
+
+    def response(self):
+        s = self.output
+        self.output = ""
+        return s
+
+    def parse(self, command, *args, **kwargs):
+        pass
+
+    def add_command(self):
+        pass
+
+    """functions used by the instrument control class."""
+
+    def write(self, *args, **kwargs):
+        self.receive('write', *args, **kwargs)
+        self.parse(*args, **kwargs)
+
+    def write_raw(self, *args, **kwargs):
+        self.receive('write_raw', *args, **kwargs)
+        self.parse(*args, **kwargs)
+
+    def flush(self, *args, **kwargs):
+        self.receive('flush', *args, **kwargs)
+        self.output = ""
+
+    def read_raw(self, *args, **kwargs):
+        self.receive('read_raw', *args, **kwargs)
+        return self.response()
+
+    def query(self, *args, **kwargs):
+        self.receive('query', *args, **kwargs)
+        self.parse(*args, **kwargs)
+        return self.response()
