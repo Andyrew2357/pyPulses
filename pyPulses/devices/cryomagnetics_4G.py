@@ -183,3 +183,96 @@ class cryomagnetics4G(pyvisaDevice):
             time.sleep(1.0)
 
         self.info("Finished pause.")
+
+if __name__ == '__main__':
+    """Example test of the magnet power supply using dummyResource"""
+
+    import logging
+    import sys
+
+    logger = logging.getLogger("logger")
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    magnet = cryomagnetics4G(logger, instrument_id = 'DEBUG')
+
+    magnet.device.attr['IMAG'] = '0.0kG\n'
+    def get_IMAG(obj):
+        return obj.attr['IMAG']
+    magnet.device.add_command(r'IMAG\?', get_IMAG)
+
+    magnet.device.attr['PSHTR'] = '0\n'
+    def get_PSHTR(obj):
+        return obj.attr['PSHTR']
+    magnet.device.add_command(r'PSHTR\?', get_PSHTR)
+    def set_PSHTR(obj, arg):
+        if arg in ['1', 'ON']:
+            obj.attr['PSHTR'] = '1\n'
+        elif arg in ['0', 'OFF']:
+            obj.attr['PSHTR'] = '0\n'
+    magnet.device.add_command(r'PSHTR (.+)$', set_PSHTR)
+
+    magnet.device.attr['ULIM'] = '0.0kG\n'
+    def get_ULIM(obj):
+        return obj.attr['ULIM']
+    magnet.device.add_command(r'ULIM\?', get_ULIM)
+    def set_ULIM(obj, H):
+        obj.attr['ULIM'] = f'{H}kG\n'
+    magnet.device.add_command(r'ULIM (\d+\.?\d*)', set_ULIM)
+
+    magnet.device.attr['LLIM'] = '0.0kG\n'
+    def get_LLIM(obj):
+        return obj.attr['LLIM']
+    magnet.device.add_command(r'LLIM\?', get_LLIM)
+    def set_LLIM(obj, H):
+        obj.attr['LLIM'] = f'{H}kG\n'
+    magnet.device.add_command(r'LLIM (\d+\.?\d*)', set_LLIM)
+
+    magnet.device.attr['IOUT'] = '0.0kG\n'
+    def get_IOUT(obj):
+        return obj.attr['IOUT']
+    magnet.device.add_command(r'IOUT\?', get_IOUT)
+
+    def sweep(obj, direction, speed):
+        match direction:
+            case 'ZERO':
+                iout = '0.0kG\n'
+            case 'UP':
+                iout = get_ULIM(obj)
+            case 'DOWN':
+                iout = get_LLIM(obj)
+        
+        obj.attr['IOUT'] = iout
+        if obj.attr['PSHTR'] == '1\n':
+            obj.attr['IMAG'] = iout
+
+    magnet.device.add_command(r"SWEEP (\S+) ?(\S*)", sweep)
+
+    print("MAGNET POWER SUPPLY STATE:")
+    for a in magnet.device.attr:
+        print(f"{a}: {magnet.device.attr[a]}")
+
+    print("HISTORY:")
+    for h in magnet.device.history:
+        print(h)
+
+    print("CALLING get_H")
+    print(f"result = {magnet.get_H()}")
+
+    print("TESTING SWEEP TO 500 mT")
+    magnet.sweep_H(500e-3)
+
+    print("MAGNET POWER SUPPLY STATE:")
+    for a in magnet.device.attr:
+        print(f"{a}: {magnet.device.attr[a]}")
+
+    print("HISTORY:")
+    for h in magnet.device.history:
+        print(h)
+
+    print("CALLING get_H")
+    print(f"result = {magnet.get_H()}")

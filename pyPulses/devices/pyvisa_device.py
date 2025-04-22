@@ -136,11 +136,18 @@ There exist far more sophisticated ways of modeling instruments that take SCPI
 commands, but not all of ours operate this way (some are arduino controlled),
 and this is far easier to implement. The user just has to preprogram certain
 responses.
+
+See cryomagnetics_4G.py for a good example of how to use this, including adding
+various commands and dealing with simulated attributes.
 """
-class dummyResource():
-    def __init__(self):
+class dummyResource(abstractDevice):
+    def __init__(self, logger = None):
+        super().__init__(logger)
         self.history = []
         self.output = ""
+        self.commands = {}
+
+        self.attr = {}
 
     def receive(self, cmd, *args, **kwargs):
         event = {'command': cmd, 'args': args, 'kwargs': kwargs}
@@ -154,10 +161,17 @@ class dummyResource():
         return s
 
     def parse(self, command, *args, **kwargs):
-        pass
+        for expression in self.commands:
+            hit = re.match(expression, command)
+            if hit:
+                arguments = hit.groups()
+                res = self.commands[expression](self, *arguments, 
+                                                *args, **kwargs)
+                if res is not None:
+                    self.output = res
 
-    def add_command(self):
-        pass
+    def add_command(self, regular_expression, function):
+        self.commands[regular_expression] = function
 
     """functions used by the instrument control class."""
 
