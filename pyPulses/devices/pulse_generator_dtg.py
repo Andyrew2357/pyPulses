@@ -5,7 +5,6 @@ without the pulse shaper box.
 
 from ._registry import DeviceRegistry
 from .abstract_device import abstractDevice
-from .ad5764 import ad5764
 from .dtg5274 import dtg5274
 from typing import Optional
 

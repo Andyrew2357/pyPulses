@@ -110,8 +110,8 @@ class SweepMeasureCutConfig:
     post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
     
     # If tandem sweeping is desired, need to provide these
-    ramp_wait       : Optional[float]       # wait time between steps when ramping
-    ramp_steps      : Optional[List[float]] # maximum step sizes
+    ramp_wait       : Optional[float] = None        # wait time between steps when ramping
+    ramp_steps      : Optional[List[float]] = None  # maximum step sizes
 
 def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -284,8 +284,8 @@ class SweepMeasureConfig:
     post_callback   : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
 
     # If tandem sweeping is desired, need to provide these
-    ramp_wait       : Optional[float]       # wait time between steps when ramping
-    ramp_steps      : Optional[List[float]] # maximum step sizes
+    ramp_wait       : Optional[float] = None        # wait time between steps when ramping
+    ramp_steps      : Optional[List[float]] = None  # maximum step sizes
 
 def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -459,8 +459,8 @@ class SweepMeasureProductConfig:
     space_mask      : Optional[Callable[[np.ndarray, np.ndarray], bool]] = None
 
     # If tandem sweeping is desired, need to provide these
-    ramp_wait       : Optional[float]       # wait time between steps when ramping
-    ramp_steps      : Optional[List[float]] # maximum step sizes
+    ramp_wait       : Optional[float] = None        # wait time between steps when ramping
+    ramp_steps      : Optional[List[float]] = None  # maximum step sizes
 
 def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -634,8 +634,8 @@ class SweepMeasureParallelepipedConfig:
     space_mask      : Optional[Callable[[np.ndarray, np.ndarray], bool]] = None
 
     # If tandem sweeping is desired, need to provide these
-    ramp_wait       : Optional[float]       # wait time between steps when ramping
-    ramp_steps      : Optional[List[float]] # maximum step sizes
+    ramp_wait       : Optional[float] = None        # wait time between steps when ramping
+    ramp_steps      : Optional[List[float]] = None  # maximum step sizes
 
 def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single

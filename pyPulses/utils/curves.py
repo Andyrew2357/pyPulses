@@ -6,24 +6,26 @@ inversion, smoothing, etc.
 from typing import Callable, Optional, Tuple, Union
 import numpy as np
 
-def prune_unique(x: Union[np.ndarray, list], 
-                 y: Union[np.ndarray, list]) -> Tuple[np.ndarray, np.ndarray]:
-    """Remove duplicate x values from a curve"""
-    x = np.array(x)
-    y = np.array(y)
-
-    idx = np.unique(x, return_index=True)[1]
-    return x[idx], y[idx]
-
 def prune_sort(x: Union[np.ndarray, list],
                     y: Union[np.ndarray, list]) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Remove duplicate x values and sort so that x is strictly increasing
+    Remove non, monotonic values in x so that x is strictly increasing or 
+    decreasing. Then sort so that x is increasing. Whether we assume decreasing 
+    or increasing is determined by the first two elements.
     """
     x = np.array(x)
     y = np.array(y)
-    xn, yn = prune_unique(x, y)
-    idx = np.argsort(xn)
+    xn = x.copy()
+    yn = y.copy()
+    s = 1 if x[0] < x[1] else -1
+    
+    idx = [0, 1]
+    xp = xn[1]
+    for i in range(2, xn.size):
+        if s*xn[i] > s*xp:
+            idx.append(i)
+            xp = xn[i]
+
     return xn[idx], yn[idx]
 
 def pchip(xs: Union[np.ndarray, list], 
@@ -36,6 +38,25 @@ def pchip(xs: Union[np.ndarray, list],
 
     It takes in xt and yt, the x and y values of the data points, and returns a
     function that maps x values to interpolated y and dy/dx values.
+
+    See wikipedia.org/wiki/Monotone_cubic_interpolation for the algorithm and
+    JavaScript implementation on which this is based.
+    """
+
+    # calculate the interpolation parameters
+    xs, ys, c1s, c2s, c3s = pchip_params(xs, ys)
+    return pchip_interp_from_params(xs, ys, c1s, c2s, c3s)
+
+def pchip_params(xs: Union[np.ndarray, list], 
+                 ys: Union[np.ndarray, list]
+                ) -> Callable[[float], Tuple[float, float]]:
+    """
+    Implementation of shape preserving PCHIP (Piecewise Cubic Hermite 
+    Interpolating Polynomial) interpolation. Notably, this interpolation method
+    preserves the monotonicity of the underlying data.
+
+    It takes in xt and yt, the x and y values of the data points, and returns a
+    set of parameters describing the interpolation.
 
     See wikipedia.org/wiki/Monotone_cubic_interpolation for the algorithm and
     JavaScript implementation on which this is based.
@@ -94,10 +115,19 @@ def pchip(xs: Union[np.ndarray, list],
         c2s[i] = (m_ - c1 - common_) * inv_dx
         c3s[i] = common_ * inv_dx * inv_dx
 
-    # return interpolant function
+    return xs, ys, c1s, c2s, c3s
+
+def pchip_interp_from_params(xs, ys, c1s, c2s, c3s):
+    """
+    Interpolation functiom compatible with numpy arrays that returns both
+    the interpolated value and interpolated derivative
+    """
+    length = len(xs)
+
+    @np.vectorize
     def interp(x):
         # handle out-of-bounds x values
-        if xs < xs[0]:
+        if x < xs[0]:
             i = 0
         elif x > xs[-1]:
             i = length - 2
@@ -115,5 +145,59 @@ def pchip(xs: Union[np.ndarray, list],
         dval = c1s[i] + diff * (2.0 * c2s[i] + diff * 3.0 * c3s[i])
 
         return rval, dval
+    
+    return interp
+
+def pchip_rval_from_params(xs, ys, c1s, c2s, c3s):
+    """Interpolation function compatible with numpy arrays"""
+
+    length = len(xs)
+    @np.vectorize
+    def interp(x):
+        # handle out-of-bounds x values
+        if x < xs[0]:
+            i = 0
+        elif x > xs[-1]:
+            i = length - 2
+        else:
+            # Binary search to find the interval that contains x
+            i = np.searchsorted(xs, x, side = 'right') - 1
+
+        # If x is one of the original points
+        if x == xs[i]:
+            return ys[i]
+        
+        # perform interpolation
+        diff = x - xs[i]
+        rval = ys[i] + diff * (c1s[i] + diff * (c2s[i] + diff * c3s[i]))
+
+        return rval
+    
+    return interp
+
+def pchip_dval_from_params(xs, ys, c1s, c2s, c3s):
+    """Derivative interpolation function compatible with numpy arrays"""
+    
+    length = len(xs)
+    @np.vectorize
+    def interp(x):
+        # handle out-of-bounds x values
+        if x < xs[0]:
+            i = 0
+        elif x > xs[-1]:
+            i = length - 2
+        else:
+            # Binary search to find the interval that contains x
+            i = np.searchsorted(xs, x, side = 'right') - 1
+
+        # If x is one of the original points
+        if x == xs[i]:
+            return c1s[i]
+        
+        # perform interpolation
+        diff = x - xs[i]
+        dval = c1s[i] + diff * (2.0 * c2s[i] + diff * 3.0 * c3s[i])
+
+        return dval
     
     return interp
