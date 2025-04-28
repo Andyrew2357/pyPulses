@@ -295,7 +295,7 @@ class GapExtractor():
 
         if include_uncertainty:
             CQ, AR, D = self.cq(chi_re, chi_im, state_mask, 
-                                mode = 'tl_model', derivatives = True)
+                                mode = mode, derivatives = True)
 
             mu = self.calc_gap(vt[state_mask], vb[state_mask], CQ)
             err = self.calc_gap_uncertainty(vt[state_mask], vb[state_mask], CQ, 
@@ -304,7 +304,7 @@ class GapExtractor():
         
         else:
             CQ, AR = self.cq(chi_re, chi_im, state_mask, 
-                             mode = 'tl_model', derivatives = False)
+                             mode = mode, derivatives = False)
 
             mu = self.calc_gap(vt[state_mask], vb[state_mask], CQ)
             return mu
