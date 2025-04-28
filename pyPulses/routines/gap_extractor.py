@@ -20,7 +20,7 @@ class GapExtractor():
         self.var_chi_g = var_chi_g
         self.var_chi_b = var_chi_b
 
-        self.q = 1.60217663e-19
+        # self.q = 1.60217663e-19
 
         self.inv_coeff_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), r'ztan_inv_coeff.npy'
@@ -188,14 +188,20 @@ class GapExtractor():
         return cq, AR
 
     def calc_gap(self, vt, vb, cq):
-        """Integrate to determine the gap in eV"""
+        """
+        Integrate to determine the gap in eV. Because of the integration method
+        I'm using, the number of points returned will be one fewer than those 
+        passed.
+        """
 
         mt = (1 + cq/self.ct)**-1
         mb = (1 + cq/self.cb)**-1
 
-        return self.q*(np.trapezoid(mt, vt) + np.trapezoid(mb, vb))
+        return 0.5*np.cumsum((np.diff(vt)*(mt[1:] + mt[:-1]) + 
+                                     np.diff(vb)*(mb[1:] + mb[:-1])))
     
-    def calc_gap_uncertainty(self, vt, vb, cq, derivatives, cov_chi):
+    def calc_gap_uncertainty(self, vt, vb, cq, derivatives, 
+                             var_chi_re, var_chi_im = 0):
         """
         Calculate the uncertainty for an integrated gap using error propagation
         """
@@ -203,8 +209,103 @@ class GapExtractor():
         # derivatives = dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b
         mt2 = (1 + cq/self.ct)**-2
         mb2 = (1 + cq/self.cb)**-2
-        dmt_dchi_r, dmt_dchi_i, dmt_dchi_g, dmt_dchi_b = [-d*mt2/self.ct for d in derivatives]
-        dmb_dchi_r, dmb_dchi_i, dmb_dchi_g, dmb_dchi_b = [-d*mb2/self.cb for d in derivatives]
-        chi_g_part = self.var_chi_g*(np.trapezoid(dmt_dchi_g, vt) + np.trapezoid(dmb_dchi_g, vb))**2
-        chi_b_part = self.var_chi_b*(np.trapezoid(dmt_dchi_b, vt) + np.trapezoid(dmb_dchi_b, vb))**2
+        dmt_dchi_r, dmt_dchi_i, dmt_dchi_g, dmt_dchi_b = [-d*mt2/self.ct 
+                                                          for d in derivatives]
+        dmb_dchi_r, dmb_dchi_i, dmb_dchi_g, dmb_dchi_b = [-d*mb2/self.cb 
+                                                          for d in derivatives]
+    
+        chi_g_part  = self.var_chi_g*(0.5*np.cumsum(
+            np.diff(vt)*(dmt_dchi_g[1:] + dmt_dchi_g[:-1]) + \
+            np.diff(vb)*(dmb_dchi_g[1:] + dmb_dchi_g[:-1])
+            ))**2
+        chi_b_part  = self.var_chi_g*(0.5*np.cumsum(
+            np.diff(vt)*(dmt_dchi_b[1:] + dmt_dchi_b[:-1]) + \
+            np.diff(vb)*(dmb_dchi_b[1:] + dmb_dchi_b[:-1])
+            ))**2
+        
+        # note, the square being inside for this one is intentional. See my
+        # document for notes on how this works out (note I am ignoring 
+        # covariance terms here). If you want to include both real and imaginary
+        # variances in chi, as I do here, the covariance terms will also have
+        # real and imaginary cross terms. The whole thing becomes a mess, and I
+        # don't think that the covariance terms do much in practice, so I ignore
+        # them here.
 
+        chi_re_part = var_chi_re*(np.cumsum(
+            (np.diff(vt)*(dmt_dchi_r[1:] + dmt_dchi_r[:-1]) + \
+             np.diff(vb)*(dmb_dchi_r[1:] + dmb_dchi_r[:-1]))**2
+            ))
+        
+        chi_im_part = var_chi_im*(np.cumsum(
+            (np.diff(vt)*(dmt_dchi_i[1:] + dmt_dchi_i[:-1]) + \
+             np.diff(vb)*(dmb_dchi_i[1:] + dmb_dchi_i[:-1]))**2
+            ))
+
+        return np.sqrt(chi_g_part + chi_b_part + chi_re_part + chi_im_part)
+
+    def phase_correct(self, chi_re_uncor, chi_im_uncor, X_spurious, Y_spurious):
+        theta = np.arctan2(Y_spurious, X_spurious)
+        chi_re = np.cos(theta)*chi_re_uncor - np.sin(theta)*chi_im_uncor
+        chi_im = np.sin(theta)*chi_re_uncor + np.cos(theta)*chi_im_uncor
+        return chi_re, chi_im
+
+    def cq(self, chi_re, chi_im, state_mask = None, 
+           mode = 'tl_model', derivatives = False):
+        """
+        Calculate cq, AR, and (maybe) derivatives given a mask for the nearby
+        band and the state itself.
+        """
+
+        if state_mask is None:
+            state_mask = np.full_like(chi_re, True)
+
+        if derivatives:
+            INV = [self.calc_cq_AR(chi_re[state_mask][i], chi_im[state_mask][i], 
+                mode = mode, derivatives = True) for i in range(state_mask.sum())]
+            CQ, AR, D_nested = zip(*INV)
+            D = tuple(map(list, zip(*D_nested)))
+            CQ = np.array(CQ)
+            AR = np.array(AR)
+            D = np.array(D)
+            return CQ, AR, D
+        
+        else:
+
+            INV = [self.calc_cq_AR(chi_re[state_mask][i], chi_im[state_mask][i], 
+                mode = mode, derivatives = False) for i in range(state_mask.sum())]
+            CQ, AR = zip(*INV)
+            CQ = np.array(CQ)
+            AR = np.array(AR)
+            return CQ, AR
+
+    def gap(self, vt, vb, chi_re, chi_im, band_mask, state_mask, 
+            mode = 'tl_model', include_uncertainty = True):
+        """
+        Calculate the gap given some mask for the nearby band and the state 
+        itself
+        """
+
+        # determine the local variation in chi, along with the local chi_b
+        band_r = chi_re[band_mask]
+        band_i = chi_im[band_mask]
+        var_chi_re = band_r.std()**2
+        var_chi_im = band_i.std()**2
+        self.chi_b = band_r.mean()
+        self.var_chi_b = var_chi_re/band_r.size
+
+        if include_uncertainty:
+            CQ, AR, D = self.cq(chi_re, chi_im, state_mask, 
+                                mode = 'tl_model', derivatives = True)
+
+            mu = self.calc_gap(vt[state_mask], vb[state_mask], CQ)
+            err = self.calc_gap_uncertainty(vt[state_mask], vb[state_mask], CQ, 
+                                            D, var_chi_re, var_chi_im)
+            return mu, err
+        
+        else:
+            CQ, AR = self.cq(chi_re, chi_im, state_mask, 
+                             mode = 'tl_model', derivatives = False)
+
+            mu = self.calc_gap(vt[state_mask], vb[state_mask], CQ)
+            return mu
+        
