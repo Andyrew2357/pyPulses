@@ -188,17 +188,14 @@ class GapExtractor():
         return cq, AR
 
     def calc_gap(self, vt, vb, cq):
-        """
-        Integrate to determine the gap in eV. Because of the integration method
-        I'm using, the number of points returned will be one fewer than those 
-        passed.
-        """
+        """Integrate to determine the gap in eV."""
 
         mt = (1 + cq/self.ct)**-1
         mb = (1 + cq/self.cb)**-1
 
-        return 0.5*np.cumsum((np.diff(vt)*(mt[1:] + mt[:-1]) + 
-                                     np.diff(vb)*(mb[1:] + mb[:-1])))
+        # prepend 0 to get back to the right array size and reflect nf = ni
+        return np.r_[0, 0.5*np.cumsum((np.diff(vt)*(mt[1:] + mt[:-1]) + 
+                                       np.diff(vb)*(mb[1:] + mb[:-1])))]
     
     def calc_gap_uncertainty(self, vt, vb, cq, derivatives, 
                              var_chi_re, var_chi_im = 0):
@@ -241,12 +238,13 @@ class GapExtractor():
              np.diff(vb)*(dmb_dchi_i[1:] + dmb_dchi_i[:-1]))**2
             ))
 
-        return np.sqrt(chi_g_part + chi_b_part + chi_re_part + chi_im_part)
+        # prepend 0 to get back to the right array size and reflect nf = ni
+        return np.r_[0, np.sqrt(chi_g_part + chi_b_part + chi_re_part + chi_im_part)]
 
     def phase_correct(self, chi_re_uncor, chi_im_uncor, X_spurious, Y_spurious):
         theta = np.arctan2(Y_spurious, X_spurious)
-        chi_re = np.cos(theta)*chi_re_uncor - np.sin(theta)*chi_im_uncor
-        chi_im = np.sin(theta)*chi_re_uncor + np.cos(theta)*chi_im_uncor
+        chi_re = np.cos(theta)*chi_re_uncor + np.sin(theta)*chi_im_uncor
+        chi_im = -np.sin(theta)*chi_re_uncor + np.cos(theta)*chi_im_uncor
         return chi_re, chi_im
 
     def cq(self, chi_re, chi_im, state_mask = None, 
