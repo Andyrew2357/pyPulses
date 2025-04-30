@@ -13,8 +13,9 @@ from .tandem_sweep import tandemSweep
 def set_swept_params(setters    : List[Callable[[float], Any]], 
                      prev       : np.ndarray,
                      targets    : np.ndarray, 
-                     ramp_wait  : Optional[float], 
-                     ramp_steps : List[float]):
+                     ramp_wait  : Optional[float] = None, 
+                     ramp_steps : Optional[List[float]] = None,
+                     ramp_kwargs: Optional[dict] = None):
     """Utility function to smoothly integrate tandemSweep functionality."""
 
     if ramp_wait is not None:
@@ -23,7 +24,8 @@ def set_swept_params(setters    : List[Callable[[float], Any]],
             sweeps = [
                 (setters[i], prev[i], targets[i], ramp_steps[i])
                 for i in range(len(setters))
-            ]
+            ],
+            **ramp_kwargs
         )
     else:
         for i in range(len(setters)):
@@ -68,6 +70,10 @@ measurements at each point.
                       that parameter (this only matters for parameters that need
                       to be swept simultaneously to avoid issue, such as top and
                       bottom gates for VdW systems)
+    ramp_kwargs     : Optional; keyword arguments for tandem sweep (particularly
+                      important for 'min_step', which tells the sweep to ignore
+                      trivial changes in a swept parameter that cost unecessary
+                      time.)
 """
 
 @dataclass
@@ -112,6 +118,7 @@ class SweepMeasureCutConfig:
     # If tandem sweeping is desired, need to provide these
     ramp_wait       : Optional[float] = None        # wait time between steps when ramping
     ramp_steps      : Optional[List[float]] = None  # maximum step sizes
+    ramp_kwargs     : Optional[dict] = None         # keyword arguments for tandem sweep
 
 def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -184,7 +191,8 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> np.ndarray:
             )
 
         # move to the bias point, wait some time, then measure
-        set_swept_params(setters, prev, biases, C.ramp_wait, C.ramp_steps)
+        set_swept_params(setters, prev, biases, 
+                         C.ramp_wait, C.ramp_steps, C.ramp_kwargs)
         prev = biases
 
         if C.pre_callback:
@@ -250,6 +258,10 @@ the array 'points', taking measurements at each step.
                       that parameter (this only matters for parameters that need
                       to be swept simultaneously to avoid issue, such as top and
                       bottom gates for VdW systems)
+    ramp_kwargs     : Optional; keyword arguments for tandem sweep (particularly
+                      important for 'min_step', which tells the sweep to ignore
+                      trivial changes in a swept parameter that cost unecessary
+                      time.)
 """
 
 @dataclass
@@ -286,6 +298,7 @@ class SweepMeasureConfig:
     # If tandem sweeping is desired, need to provide these
     ramp_wait       : Optional[float] = None        # wait time between steps when ramping
     ramp_steps      : Optional[List[float]] = None  # maximum step sizes
+    ramp_kwargs     : Optional[dict] = None         # keyword arguments for tandem sweep
 
 def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -364,7 +377,8 @@ def sweepMeasure(C: SweepMeasureConfig) -> np.ndarray:
             )
 
         # move to the bias point, wait some time, then measure
-        set_swept_params(C.sweep, prev, biases, C.ramp_wait, C.ramp_steps)
+        set_swept_params(C.sweep, prev, biases, 
+                         C.ramp_wait, C.ramp_steps, C.ramp_kwargs)
         prev = biases
 
         if C.pre_callback:
@@ -430,6 +444,10 @@ each point.
                       that parameter (this only matters for parameters that need
                       to be swept simultaneously to avoid issue, such as top and
                       bottom gates for VdW systems)
+    ramp_kwargs     : Optional; keyword arguments for tandem sweep (particularly
+                      important for 'min_step', which tells the sweep to ignore
+                      trivial changes in a swept parameter that cost unecessary
+                      time.)
 """
 
 @dataclass
@@ -461,6 +479,7 @@ class SweepMeasureProductConfig:
     # If tandem sweeping is desired, need to provide these
     ramp_wait       : Optional[float] = None        # wait time between steps when ramping
     ramp_steps      : Optional[List[float]] = None  # maximum step sizes
+    ramp_kwargs     : Optional[dict] = None         # keyword arguments for tandem sweep
 
 def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -533,7 +552,8 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> np.ndarray:
             )
 
         # move to the bias point, wait some time, then measure
-        set_swept_params(C.sweep, prev, biases, C.ramp_wait, C.ramp_steps)
+        set_swept_params(C.sweep, prev, biases, 
+                         C.ramp_wait, C.ramp_steps, C.ramp_kwargs)
         prev = biases
 
         if C.pre_callback:
@@ -603,6 +623,10 @@ each point.
                       that parameter (this only matters for parameters that need
                       to be swept simultaneously to avoid issue, such as top and
                       bottom gates for VdW systems)
+    ramp_kwargs     : Optional; keyword arguments for tandem sweep (particularly
+                      important for 'min_step', which tells the sweep to ignore
+                      trivial changes in a swept parameter that cost unecessary
+                      time.)
 """
 
 @dataclass
@@ -636,6 +660,7 @@ class SweepMeasureParallelepipedConfig:
     # If tandem sweeping is desired, need to provide these
     ramp_wait       : Optional[float] = None        # wait time between steps when ramping
     ramp_steps      : Optional[List[float]] = None  # maximum step sizes
+    ramp_kwargs     : Optional[dict] = None         # keyword arguments for tandem sweep
 
 def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig) -> np.ndarray:
     # For parameters that can be either single values or tuples, wrap the single
@@ -718,7 +743,8 @@ def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig) -> np.ndarra
             )
 
         # move to the bias point, wait some time, then measure
-        set_swept_params(C.sweep, prev, biases, C.ramp_wait, C.ramp_steps)
+        set_swept_params(C.sweep, prev, biases, 
+                         C.ramp_wait, C.ramp_steps, C.ramp_kwargs)
         prev = biases
 
         if C.pre_callback:
