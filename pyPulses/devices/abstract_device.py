@@ -26,12 +26,12 @@ class abstractDevice:
         if self.logger:
             self.logger.error(msg)
 
-    def kill(self):
+    def __del__(self):
         """
         Anything that should happen when the device is unregistered. By default,
         it just removes all the handlers from the associated logger. If a
         particular device should have additional behavior, this can be achieved
-        by decorating the kill function.
+        by decorating the __del__ function.
         """
         if self.logger:
             while self.logger.hasHandlers():

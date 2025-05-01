@@ -40,7 +40,6 @@ class DeviceRegistry:
         """Unregister a device."""
         if instrument_name in cls._active_devices:
             cls._active_devices[instrument_name].device.close()
-            cls._active_devices[instrument_name].kill()
             del cls._active_devices[instrument_name]
 
     @classmethod
