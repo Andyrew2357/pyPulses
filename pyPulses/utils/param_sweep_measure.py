@@ -149,24 +149,24 @@ def set_swept_params(C: ParamSweepMeasureConfig,
     """Utility function to smoothly integrate tandemSweep functionality."""
     if C.ramp_wait is not None:
         tandemSweep(
-            wait = C.ramp_wait,
-            sweeps = [
+            C.ramp_wait,
+            *[
                 (C.setters[i], prev[i], targets[i], C.ramp_steps[i])
                 for i in range(len(C.setters))
             ],
             **C.ramp_kwargs
         )
     else:
-        for i in range(C.setters):
-            C.setters[i](prev, targets)
+        for i in range(len(C.setters)):
+            C.setters[i](targets[i])
 
 def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
                      prev:np.ndarray, targets: np.ndarray) -> np.ndarray:
     """Move to a given point in parameter space, and measure there."""
 
     # If we are outside the mask, don't measure
-    if not C.space_mask(ind, prev):
-        return np.full_like(targets, fill_value = np.nan)
+    if not C.space_mask(ind, targets):
+        return np.full(len(C.getters), fill_value = np.nan)
 
     # log the target coordinates    
     if C.logger:
@@ -262,7 +262,7 @@ def sweepMeasure(C: SweepMeasureConfig) -> Optional[np.ndarray]:
         C.setters[i](C.points[0, i])
 
     # step through each bias point
-    prev = C.points[0, :]
+    prev = C.points[0, :].copy()
     for n in range(npoints):
         targets = C.points[n, :]
         
@@ -270,7 +270,7 @@ def sweepMeasure(C: SweepMeasureConfig) -> Optional[np.ndarray]:
         if C.retain_return:
             result[n, :] = measured
 
-        prev = targets
+        prev = targets.copy()
 
     if C.retain_return:
         return result
@@ -299,10 +299,13 @@ class SweepMeasureCutConfig(ParamSweepMeasureConfig):
 
         # check the dimensionality of start, end, and setters match
         if (len(self.start) != len(self.setters)) or \
-            (len(self.end) != self.end):
+            (len(self.end) != len(self.setters)):
             raise ValueError(
                 "start and end dimensions to not match the number of setters."
             )
+        
+        self.start = np.array(self.start)
+        self.end = np.array(self.end)
 
 @safe_file_handling
 def sweepMeasureCut(C: SweepMeasureCutConfig) -> Optional[np.ndarray]:
@@ -319,7 +322,7 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> Optional[np.ndarray]:
         C.setters[i](C.start[i])
 
     # step through each bias point
-    prev = C.start
+    prev = C.start.copy()
     for n in range(C.npoints):
         targets = C.start + (C.end - C.start)*n/(C.npoints - 1)
         
@@ -327,7 +330,7 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> Optional[np.ndarray]:
         if C.retain_return:
             result[n, :] = measured
 
-        prev = targets
+        prev = targets.copy()
 
     if C.retain_return:
         return result
@@ -376,7 +379,7 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> Optional[np.ndarray]:
         if C.retain_return:
             result[*ind, :] = measured
 
-        prev = targets
+        prev = targets.copy()
 
     if C.retain_return:
         return result
@@ -434,7 +437,7 @@ def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig
 
     # step through each point
     A = (C.endpoints - C.origin.reshape(1, -1)).T
-    prev = C.origin
+    prev = C.origin.copy()
     for ind in itertools.product(*(range(d) for d in C.shape)):
         norm_coords = np.array([ind[i] / (C.shape[i] - 1) 
                                 for i in range(len(C.shape))])
@@ -444,7 +447,7 @@ def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig
         if C.retain_return:
             result[*ind, :] = measured
 
-        prev = targets
+        prev = targets.copy()
 
     if C.retain_return:
         return result

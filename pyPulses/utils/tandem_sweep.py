@@ -53,7 +53,7 @@ def tandemSweep(wait: float,
         new_settings = [start + step * (target - start) / min_steps
                         for _, start, target, _ in instructions]
         for i in range(len(instructions)):
-            if new_settings[i] - prev_settings[i] <= min_step:
+            if abs(new_settings[i] - prev_settings[i]) <= min_step[i]:
                 new_settings[i] = prev_settings[i]
 
         for i in range(len(instructions)):

@@ -1,6 +1,6 @@
 from .balance_1d import balance1d, BalanceConfig
 from .brent_solver import BrentSolver
-import decorators
+from . import decorators
 from .dummy_predictor import DummyPred, DummyPredFunc
 from .extrap_predictor1d import ExtrapPred1d
 from .extrap_predictorNd import ExtrapPredNd
