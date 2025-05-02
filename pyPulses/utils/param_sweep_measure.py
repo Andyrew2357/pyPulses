@@ -166,7 +166,7 @@ def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
 
     # If we are outside the mask, don't measure
     if not C.space_mask(ind, targets):
-        return np.full(len(C.getters), fill_value = np.nan)
+        return False, np.full(len(C.getters), fill_value = np.nan)
 
     # log the target coordinates    
     if C.logger:
@@ -203,7 +203,7 @@ def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
     if C.post_callback:
         C.post_callback(ind, targets, measured)
 
-    return measured
+    return True, measured
 
 def initialize_sweep(C: ParamSweepMeasureConfig):
     """Start off a sweep by writing to an output file, and logging."""
@@ -266,11 +266,12 @@ def sweepMeasure(C: SweepMeasureConfig) -> Optional[np.ndarray]:
     for n in range(npoints):
         targets = C.points[n, :]
         
-        measured = measure_at_point(C, n, prev, targets)
+        included, measured = measure_at_point(C, n, prev, targets)
         if C.retain_return:
             result[n, :] = measured
 
-        prev = targets.copy()
+        if included:
+            prev = targets.copy()
 
     if C.retain_return:
         return result
@@ -326,11 +327,12 @@ def sweepMeasureCut(C: SweepMeasureCutConfig) -> Optional[np.ndarray]:
     for n in range(C.npoints):
         targets = C.start + (C.end - C.start)*n/(C.npoints - 1)
         
-        measured = measure_at_point(C, n, prev, targets)
+        included, measured = measure_at_point(C, n, prev, targets)
         if C.retain_return:
             result[n, :] = measured
 
-        prev = targets.copy()
+        if included:
+            prev = targets.copy()
 
     if C.retain_return:
         return result
@@ -375,14 +377,29 @@ def sweepMeasureProduct(C: SweepMeasureProductConfig) -> Optional[np.ndarray]:
     for ind in itertools.product(*[range(d) for d in space_dim]):
         targets = np.array([C.axes[d][ind[d]] for d in range(len(C.axes))])
 
-        measured = measure_at_point(C, ind, prev, targets)
+        included, measured = measure_at_point(C, ind, prev, targets)
         if C.retain_return:
             result[*ind, :] = measured
 
-        prev = targets.copy()
+        if included:
+            prev = targets.copy()
 
     if C.retain_return:
         return result
+
+"""
+SweepMeasureParallelepipedConfig
+sweepMeasureParallelepiped
+
+Sweep parameters over the product space of provided axes, taking measurements at
+each point.
+
+    origin      : starting corner of the parallelepiped
+    endpoints   : ndarray for the other corners of the parallelepiped, the
+                  rows each being a respective endpoints. The fastest swept
+                  direction is last.
+    shape       : list representing the number of points along each axis
+"""
 
 @dataclass(kw_only=True)
 class SweepMeasureParallelepipedConfig(ParamSweepMeasureConfig):
@@ -407,20 +424,6 @@ class SweepMeasureParallelepipedConfig(ParamSweepMeasureConfig):
         
         self.origin = np.array(self.origin)
 
-"""
-SweepMeasureParallelepipedConfig
-sweepMeasureParallelepiped
-
-Sweep parameters over the product space of provided axes, taking measurements at
-each point.
-
-    origin      : starting corner of the parallelepiped
-    endpoints   : ndarray for the other corners of the parallelepiped, the
-                  rows each being a respective endpoints. The fastest swept
-                  direction is last.
-    shape       : list representing the number of points along each axis
-"""
-
 @safe_file_handling
 def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig
                                ) -> Optional[np.ndarray]:
@@ -443,11 +446,12 @@ def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig
                                 for i in range(len(C.shape))])
         targets = C.origin + (A @ norm_coords)
 
-        measured = measure_at_point(C, ind, prev, targets)
+        included, measured = measure_at_point(C, ind, prev, targets)
         if C.retain_return:
             result[*ind, :] = measured
 
-        prev = targets.copy()
+        if included:
+            prev = targets.copy()
 
     if C.retain_return:
         return result
