@@ -1,4 +1,5 @@
-# Deprecated - This is all implemented with far better templating in param_sweep_measure.py
+# pyPulses.utils
+# # Deprecated - This is all implemented with far better templating in param_sweep_measure.py
 """Various functions for sweeping parameters and measuring at each step."""
 
 import numpy as np
@@ -7,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, IO, List, Optional, Tuple, Union
 
-from .tandem_sweep import tandemSweep
+from ..pyPulses.utils.tandem_sweep import tandemSweep
 
 def set_swept_params(setters    : List[Callable[[float], Any]], 
                      prev       : np.ndarray,

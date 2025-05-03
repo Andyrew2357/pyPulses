@@ -1,3 +1,4 @@
+# pyPulses.utils
 # Note: I've opted to use a modified Brent-Dekker method instead for our
 # purposes. The usage of that solver is slightly different from this one, so if
 # one wishes to use this for balancing procedures, they should modify it to
