@@ -1,6 +1,7 @@
 from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 from typing import Optional, Tuple
+from collections import defaultdict
 import numpy as np
 from math import log2
 import time
@@ -19,9 +20,10 @@ class sr865a(pyvisaDevice):
         DeviceRegistry.register_device(self.config["resource_name"], self)
 
         # initialize data acquisition parameters
-        self.currsamp   = 0
-        self.sampint    = 0         # sampling interval in seconds
-        self.buffer_sizes = [0, 0]  # buffer sizes for data channels 1/2
+        self.currsamp    = 0
+        self.sampint     = 0        # sampling interval in seconds
+        self.buffer_size = 0        # size of the buffer in kB
+        self.data_config = 'XY'     # data format (X, XY, RT, XYRT)
 
         x = [5e-9, 2e-9, 1e-9]
         self.sens_vals = np.array(
@@ -103,6 +105,7 @@ class sr865a(pyvisaDevice):
     def get_input_range(self) -> float:
         """Get the input signal range in volts."""
         idx = int(self.device.query("IRNG?"))
+        self.settings['irng_ind'] = idx
         return self._input_range_value(idx)
 
     def set_input_range(self, range_v: float):
@@ -121,6 +124,7 @@ class sr865a(pyvisaDevice):
     def get_sensitivity(self) -> float:
         """Get the current sensitivity in volts."""
         idx = int(self.device.query("SCAL?"))
+        self.settings['sens_ind'] = idx
         return self._sens_value(idx)
     
     def set_sensitivity(self, sensitivity: float):
@@ -218,86 +222,125 @@ class sr865a(pyvisaDevice):
         return int(self.device.query("ILVL?"))
     
     # DATA ACQUISITION
-    def setup_data_acquisition(self, buffer_size: int, sample_rate: float, 
-                               sync_sampling: Optional[bool] = False) -> float:
+    def setup_data_acquisition(self, buffer_size: int, config: str = 'XY',
+                               sample_rate: Optional[float] = None) -> float:
         """
         Configure the data acquisition system.
 
-        buffer_size = number of samples to store in each buffer
+        buffer_size = size of the buffer in kilobytes
         sample_rate = desired sample rate in Hz
-        sync_sampling = if true, use synchronized sampling
+        config = 'X', 'XY', 'RT' or 'XYRT', describing the data format
 
         Returns the actual sample rate used.
         """
-        if sync_sampling:
-            n = 14
-        else:
-            n = round(log2(sample_rate)) + 4
-            sample_rate = 2**(n - 4)
 
-            if n < 0 or n > 13:
+        if not config in ['X', 'XY', 'RT', 'XYRT']:
+            raise ValueError(
+                "Unsupported config; must be 'X', 'XY', 'RT' or 'XYRT'."
+            )
+        
+        if buffer_size < 1 or buffer_size > 4096:
+            raise ValueError(
+                "Buffer size must be between 1 and 4096 kB."
+            )
+
+        self.device.write(f"CAPTURECFG {config}")
+        self.device.write(f"CAPTURELEN {buffer_size}")
+
+        max_sample_rate = float(self.device.query("CAPTURERATEMAX?"))
+        if sample_rate is not None:
+            n = int(log2(max_sample_rate / sample_rate))
+            if n < 0 or n > 20:
                 raise ValueError(
-                    f"Sample rate {sample_rate} Hz is not supported by SR865A"
+                    f"Sample rate {sample_rate} is out of range."
                 )
-            
-        self.device.write(f"REST; SEND 1; TSTR 1; SRAT {n}")
-        time.sleep(0.1)
+        else:
+            n = 0
+
+        sample_rate = max_sample_rate / (2**n)
+        self.device.write(f"CAPTURERATE {n}")
+
+        self.buffer_size = buffer_size
         self.currsamp = 0
         self.sampint = 1/sample_rate
-        self.buffer_sizes = [buffer_size, buffer_size]
+        self.data_config = config
 
         self.info(f"SR865A: Setup data acquisition with parameters:")
-        self.info(f"    buffer_size = {buffer_size}")
+        self.info(f"    config      = {config}")
+        self.info(f"    buffer_size = {buffer_size} kB")
         self.info(f"    sample_rate = {sample_rate} Hz")
-        self.info(f"    sync_sampling {'on' if sync_sampling else 'off'}")
         return sample_rate
     
     def start_acquisition(self):
         """Start data acquisition."""
-        self.device.write("STRT")
+        self.device.write("CAPTURESTART ONE, IMM")
         self.info("SR865A: Started data acquisition.")
 
-    def reset_acquisition(self):
-        """Reset data acquisition buffers."""
-        self.device.write("REST")
-        self.currsamp = 0
-        time.sleep(0.1) # give instrument time before next trigger
-        self.info("SR865A: Reset data acquisition.")
+    def stop_acquisition(self):
+        """Stop data acquisition."""
+        self.device.write("CAPTURESTOP")
+        self.info("SR865A: Stopped data acquisition.")
 
-    def get_buffered_data(self, ch: int) -> np.ndarray:
+    def get_buffered_data(self) -> np.ndarray:
         """
-        Get buffered data from the specified channel.
-        ch must be 1 or 2
+        Get buffered data.
         Returns a numpy ndarray of acquired data points
         """
-        if ch not in [1, 2]:
-            raise ValueError("Channel must be 1 or 2.")
-        
-        npts = self.buffer_sizes[ch - 1]
-
         # wait until enough points are available
+        seen = defaultdict(int)
         while True:
-            navail = int(self.device.query("SPTS?"))
-            if navail >= npts + self.currsamp:
+            n = int(self.device.query("CAPTUREBYTES?"))
+            if n >= 1000*self.buffer_size:
                 break
-            else:
-                wait_time = 0.8 * (npts + self.currsamp - navail) * self.sampint
-                time.sleep(wait_time)
+
+            # If no progress is being made, we should stop waiting
+            seen[n] += 1
+            if seen[n] > 3:
+                self.error(f"SR865A: No progess waiting for acquisition.")
+                break
+            
+            # calculate time to wait
+            delay = max((1000*self.buffer_size - n) * self.sampint / 4, 0.1)
+            time.sleep(delay)
+            self.info(f"SR865A: Waiting for {delay:.2f} s to acquire data.")
+
+        # end the acquisition and request data
+        self.stop_acquisition()
+        self.device.write(f"CAPTUREGET? 0,{self.buffer_size}")
+        time.sleep(0.1) # wait for the data to be ready
         
-        # fetch the data
-        cmd = f"TRCB? {ch}, {self.currsamp}, {self.currsamp + npts}"
-        self.device.write(cmd)
+        # read in and parse the binary data. Then reshape
+        raw = self.device.read_raw()
+        data = self.parse_binary_block(raw)
+        match self.data_config:
+            case 'X':
+                data = data.reshape(-1, 1)
+            case 'XY':
+                data = data.reshape(-1, 2)
+            case 'RT':
+                data = data.reshape(-1, 2)
+            case 'XYRT':
+                data = data.reshape(-1, 4)
 
-        # read binary data (implementation depends on the VISA library)
-        # this uses PyVISA's read_binary_values method
-        val = self.device.read_binary_values('f')[:npts]
-        self.currsamp += npts
-
-        self.info(f"SR865A: Retrieved buffered data from channel {ch}.")
-
-        return np.array(val)
+        self.info(f"SR865A: Retrieved buffered data.")
+        return data.T
 
     # UTILITY
+
+    def parse_binary_block(self, data: bytes) -> np.ndarray:
+        if not data.startswith(b'#'):
+            raise ValueError("Invalid binary block format.")
+        
+        n = int(data[1:2]) # number of digits in length
+        len_start = 2
+        len_end = len_start + n
+        length = int(data[len_start:len_end])
+        binary_data = data[len_end:len_end + length]
+
+        if len(binary_data) != length:
+            raise ValueError("Invalid binary block length.")
+        
+        return np.frombuffer(binary_data, dtype = '<f4') # little-endian float32
 
     def _sens_value(self, sens_index: int) -> float:
         """Convert sensitivity index to actual value in volts."""
@@ -386,13 +429,15 @@ class sr865a(pyvisaDevice):
             return True
         return False
 
-    def auto_rescale(self, margin: float = 0.4, max_iters: int = 5) -> float:
+    def auto_rescale(self, margin: float = 0.5, max_iters: int = 5
+                     ) -> Tuple[float, float, float]:
         """
         Adjust sensitivity (and, if desired, input range) so that the current
         vector (X, Y) sits at about 'margin' of full scale.
 
         margin: fraction of full-scale you'd like to occupy
         max_iters: how many times to try before giving up
+        returns the current R, sensitivity and input range
         """
 
         tau = self.settings['time_const']
@@ -402,7 +447,6 @@ class sr865a(pyvisaDevice):
         for _ in range(max_iters):
             r = self.get_r()
             #current sensitivity
-            fs = self._input_range_index(self.settings['irng_ind'])
 
             target_span = max(r / margin, self.sens_vals.min())
             self.set_sensitivity(target_span)
@@ -412,7 +456,7 @@ class sr865a(pyvisaDevice):
                 break
 
             # if overloaded, step input range
-            if not self.increment_input_range():
+            if not self.decrement_input_range():
                 self.warn(
                     'auto_rescale max input range reached; still overloading'
                 )
@@ -424,11 +468,12 @@ class sr865a(pyvisaDevice):
             self.warn('auto_rescale failed to find non-overloaded setting')
 
         r = self.get_r()
-        fs = self._input_range_index(self.settings['irng_ind'])
-        return r / fs
+        irng = self._input_range_value(self.settings['irng_ind'])
+        sens = self._sens_value(self.settings['sens_ind'])
+        return r, sens, irng
 
     def get_average(self, 
-                   autoRescale: bool = False,
+                   auto_rescale: bool = False,
                    rescale_args = (), rescale_kwargs = {}) -> np.ndarray:
         """
         Sample X,Y some desired number of times and return an average along with
@@ -439,17 +484,11 @@ class sr865a(pyvisaDevice):
 
         # adjust the lock-in range so that the signal fills some prescribed
         # portion of the range
-        if autoRescale:
+        if auto_rescale:
             self.auto_rescale(*rescale_args, **rescale_kwargs)
 
-
         # take the acquisition
-        self.reset_acquisition()
         self.start_acquisition()
         samps = self.get_buffered_data()
 
-        # need to check what the actual format of this data is...
-        return samps
-        mean = samps.mean(axis = 0)
-
-        #ULTIMATELY NEEDS TO RETURN MEANS OF X, Y AND A COVARIANCE MATRIX
+        return samps.mean(axis = 1), np.cov(samps)/samps.shape[0]
