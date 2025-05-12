@@ -38,6 +38,14 @@ class sr865a(pyvisaDevice):
 
         self.irng_vals = np.array([1, 0.3, 0.1, 0.03, 0.01])
 
+        # internal state to avoid wasteful querying while automatically setting 
+        # range
+        self.settings = {
+            'sens_ind'  : None,
+            'irng_ind'  : None,
+            'time_const': None
+        }
+
     # INPUT RELATED
 
     def get_x(self) -> float:
@@ -105,6 +113,7 @@ class sr865a(pyvisaDevice):
         """ 
         idx = self._input_range_index(range_v)
         self.device.write(f"IRNG {idx}")
+        self.settings['irng_ind'] = idx
         self.info(
             f"SR865A: Set input range to {self._input_range_value(idx)} V."
         )
@@ -121,11 +130,13 @@ class sr865a(pyvisaDevice):
         """
         idx = self._sens_index(sensitivity)
         self.device.write(f"SCAL {idx}")
+        self.settings['sens_ind'] = idx
         self.info(f"SR865A: Set sensitivity to {self._sens_value(idx)} V.")
 
     def get_time_const(self) -> float:
         """Get the time constant in seconds."""
         idx = int(self.device.query("OFLT?"))
+        self.settings['time_const'] = self._tau_value(idx)
         return self._tau_value(idx)
     
     def set_time_const(self, time_const: float):
@@ -135,6 +146,7 @@ class sr865a(pyvisaDevice):
         """
         idx = self._tau_index(time_const)
         self.device.write(f"OFLT {idx}")
+        self.settings['time_const'] = self._tau_value(idx)
         self.info(f"SR865A: Set time constant to {self._tau_value(idx)} s.")
 
     # SYNC FILTER CONTROL
@@ -310,3 +322,134 @@ class sr865a(pyvisaDevice):
     def _input_range_index(self, irng_val: float) -> int:
         """Convert input range value to index (rounds to closest value)."""
         return np.argmin(np.abs(self.irng_vals - irng_val))
+
+    # HIGHER LEVEL ROUTINES, RELEVANT FOR pyPulses.routines.kap_bridge
+
+    def upd_internal_state(self):
+        self.get_sensitivity()
+        self.get_input_range()
+        self.get_time_const()
+
+    def increment_sensitivity(self):
+        idx = self.settings['sens_ind']
+        if idx is None:
+            idx = self._sens_index(self.get_sensitivity())
+
+        if idx < len(self.sens_vals) - 1:
+            self.settings['sens_ind'] += 1
+            self.device.write(f"SCAL {idx + 1}")
+            self.info(
+                f"SR865A: Set sensitivity to {self._sens_value(idx + 1)} V."
+            )
+            return True
+        return False
+
+    def decrement_sensitivity(self):
+        idx = self.settings['sens_ind']
+        if idx is None:
+            idx = self._sens_index(self.get_sensitivity())
+
+        if idx > 0:
+            self.settings['sens_ind'] -= 1
+            self.device.write(f"SCAL {idx - 1}")
+            self.info(
+                f"SR865A: Set sensitivity to {self._sens_value(idx - 1)} V."
+            )
+            return True
+        return False
+
+    def increment_input_range(self):
+        idx = self.settings['irng_ind']
+        if idx is None:
+            idx = self._input_range_index(self.get_input_range())
+
+        if idx < len(self.irng_vals) - 1:
+            self.settings['irng_ind'] += 1
+            self.device.write(f"IRNG {idx + 1}")
+            self.info(
+                f"SR865A: Set input range to {self._input_range_value(idx + 1)} V."
+            )
+            return True
+        return False
+
+    def decrement_input_range(self):
+        idx = self.settings['irng_ind']
+        if idx is None:
+            idx = self._input_range_index(self.get_input_range())
+
+        if idx > 0:
+            self.settings['irng_ind'] -= 1
+            self.device.write(f"IRNG {idx - 1}")
+            self.info(
+                f"SR865A: Set input range to {self._input_range_value(idx - 1)} V."
+            )
+            return True
+        return False
+
+    def auto_rescale(self, margin: float = 0.4, max_iters: int = 5) -> float:
+        """
+        Adjust sensitivity (and, if desired, input range) so that the current
+        vector (X, Y) sits at about 'margin' of full scale.
+
+        margin: fraction of full-scale you'd like to occupy
+        max_iters: how many times to try before giving up
+        """
+
+        tau = self.settings['time_const']
+        if tau is None:
+            tau = self.get_time_const()
+
+        for _ in range(max_iters):
+            r = self.get_r()
+            #current sensitivity
+            fs = self._input_range_index(self.settings['irng_ind'])
+
+            target_span = max(r / margin, self.sens_vals.min())
+            self.set_sensitivity(target_span)
+
+            time.sleep(tau * 5)
+            if not self.is_input_overloaded():
+                break
+
+            # if overloaded, step input range
+            if not self.increment_input_range():
+                self.warn(
+                    'auto_rescale max input range reached; still overloading'
+                )
+                break
+
+            time.sleep(tau * 2)
+        
+        else:
+            self.warn('auto_rescale failed to find non-overloaded setting')
+
+        r = self.get_r()
+        fs = self._input_range_index(self.settings['irng_ind'])
+        return r / fs
+
+    def get_average(self, 
+                   autoRescale: bool = False,
+                   rescale_args = (), rescale_kwargs = {}) -> np.ndarray:
+        """
+        Sample X,Y some desired number of times and return an average along with
+        covariance in the measured values.
+
+        Assumes that you have already called setup_acquisition
+        """
+
+        # adjust the lock-in range so that the signal fills some prescribed
+        # portion of the range
+        if autoRescale:
+            self.auto_rescale(*rescale_args, **rescale_kwargs)
+
+
+        # take the acquisition
+        self.reset_acquisition()
+        self.start_acquisition()
+        samps = self.get_buffered_data()
+
+        # need to check what the actual format of this data is...
+        return samps
+        mean = samps.mean(axis = 0)
+
+        #ULTIMATELY NEEDS TO RETURN MEANS OF X, Y AND A COVARIANCE MATRIX

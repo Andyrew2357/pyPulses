@@ -158,7 +158,8 @@ def set_swept_params(C: ParamSweepMeasureConfig,
         )
     else:
         for i in range(len(C.setters)):
-            C.setters[i](targets[i])
+            if prev[i] != targets[i]:
+                C.setters[i](targets[i])
 
 def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
                      prev:np.ndarray, targets: np.ndarray) -> np.ndarray:

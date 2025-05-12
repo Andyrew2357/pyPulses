@@ -5,6 +5,7 @@ from .dummy_predictor import DummyPred, DummyPredFunc
 from .extrap_predictor1d import ExtrapPred1d
 from .extrap_predictorNd import ExtrapPredNd
 from .get_quick_logger import getQuickLogger, clearLoggers
+from .kalman import kalman
 from .plot_sweep import plotSweep
 from .param_sweep_measure import SweepMeasureConfig, sweepMeasure
 from .param_sweep_measure import SweepMeasureCutConfig, sweepMeasureCut
@@ -25,6 +26,7 @@ __all__ = [
     ExtrapPred1d,
     ExtrapPredNd,
     getQuickLogger,
+    kalman,
     plotSweep,
     RootFinderState,
     RootFinderStatus,
