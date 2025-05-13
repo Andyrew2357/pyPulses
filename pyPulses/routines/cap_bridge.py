@@ -13,16 +13,16 @@ from typing import Any, Callable, Optional, Tuple
 class BalanceCapBridgeConfig:
     small_step  : Optional[Tuple[float, float]] = (0.01, 0.01)  # small step in Vex/Vstd
     large_step  : Optional[Tuple[float, float]] = (0.94, 0.94)  # large step in Vex/Vstd
-    Vex         : Optional[float] = None    # Vex to use
-    Vstd_range  : Optional[float] = None    # Vstd to use
-    Vex_gain    : Optional[float] = 1       # gain associated with Vex
-    Vstd_gain   : Optional[float] = 1       # gain associated with Vstd
-    Cstd        : Optional[float] = 1       # standard capacitor Cstd
-    wait        : Optional[float] = 3       # time to wait after changing voltage
-    samples     : Optional[int] = 100       # number of averages to use  
-    logger      : Optional[object] = None   # logger
+    Vex         : Optional[float] = None                        # Vex to use
+    Vstd_range  : Optional[float] = None                        # Vstd to use
+    Vex_gain    : float = 1                                     # gain associated with Vex
+    Vstd_gain   : float = 1                                     # gain associated with Vstd
+    Cstd        : float = 1                                     # standard capacitor Cstd
+    wait        : float = 3                                     # time to wait after changing voltage
+    samples     : int = 100                                     # number of averages to use  
+    logger      : Optional[object] = None                       # logger
     callback    : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
-    ignore_warning: Optional[bool] = False
+    ignore_warning: bool = False
 
     def __str__(self):
         s  = f"small_step: {self.small_step[0]}, {self.small_step[1]}\n"

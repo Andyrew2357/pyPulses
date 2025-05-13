@@ -1,13 +1,25 @@
-# NEED TO ALTER THIS BECAUSE THE PERIODIC DEGREE ARGUMENT IN THE KALMAN FILTER
-# IS A PROBLEM.
+"""
+Balance a capacitance bridge using a Kalman filter. The game is basically to
+represent the balance matrix by a complex gain describing the lock-in response
+as a function of Vstd (understood as a complex number described by its amplitude
+and phase). Most of the time, we can directly guess the balance point by
+extrapolating from previous points. When this is not the case, we can step to
+the correct balance point by calculating what it should be based on the off-
+balance signal and the complex gain. Supposing this balance point is still 
+inadequate, we take further iterations to get to the true balance condition. As
+we take these steps and measure at different points, we gain information about
+the effective complex gain and update our estimate of the gain accordingly (this
+is where the Kalman filter comes in).
+"""
 
-
-from ..devices import sr865a
+from ..devices import sr865a, ad9854
 from ..utils import kalman
+from .cap_bridge import balanceCapBridge, BalanceCapBridgeConfig
 
 import numpy as np
+from numpy.linalg import inv
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 from collections import deque
 
 def extrap(x: np.ndarray, order: int) -> float:
@@ -22,8 +34,8 @@ class KFilter():
         self.order = order
 
         # History of balance points in terms of r and theta for Vstd
-        self.r_hist     = deque(maxlen = support)
-        self.theta_hist = deque(maxlen = support)
+        self.x_hist = deque(maxlen = support)
+        self.y_hist = deque(maxlen = support)
         
         # optimal lock-in sensitivity and input range
         self.lockin_sensitivity = None
@@ -34,39 +46,45 @@ class KFilter():
         self.sens_increment = sens_increment
 
         """
-        the state vector x is (R,Θ)
-        R is the modulus of the effective gain of the bridge setup.
-        Θ is the effective phase offset of the bridge setup.
-        Together, these characterize the complex effective gain of the bridge.
+        the state vector x is (X, Y)
+        X + iY is the complex effective gain of the capacitance bridge.
 
-        Given a step (dr, dθ) on Vstd, the response on the lockin will be:
+        Given a step (dx, dy) on Vstd, the response on the lockin will be:
                                     
-                                (R * dr, Θ + dθ)
+                            (X*dx - Y*dy, Y*dx + X*dy)
 
         f(x, u) is the predicted evolution of the state (x). In this case, we
         expect minimal variation in the effective gain, so our model for state
         evolution is f(x) = x. We also need the Jacobian, F = 1. F must also
-        return a process noise covariance matrix. In this case we assume an
-        uncertainty in R of 0.01*R and in Θ of 0.01*2pi, which we take to be
-        uncorrelated. This reflects the expected variability in the gain as we
-        change Vstd, which should be small.
+        return a process noise covariance matrix. In this case we assume
+        uncorrelated errors in the modulus and phase of the complex gain. If the
+        error in phase is dθ and the error in modulus is dR, we can represent
+        the covariance in cartesian coordinates by transforming basis under the
+        Jacobian. In this case:
+
+        Q = J Q_p J^T, J = ((cosθ,-rsinθ), (sinθ,rcosθ)), Q_p = diag(dR^2, dθ^2)
+
+        I assume dR = 0.01*R and dθ = 0.01*2pi
 
         h(x, v) is the predicted change in lock-in reading given a step
-        dv = dVstd = (dr, dθ). This is given by (R * dr, Θ + dθ), as discussed.
-        The Jacobian is H = ((R, 0), (0, 1)).
+        dv = dVstd = (dx, dy). This is given by (X*dx - Y*dy, Y*dx + X*dy), as 
+        discussed. The Jacobian is H = ((dx, -dy), (dy, dx)).
 
         For clarity, I label the state vector as A and the extra arguments for h
         as dv. I also rename f and h to predicted_gain and lockin_response.
         """
         
         def predicted_gain(A):
-            return A, np.eye(2), (0.01 * np.diag([A[0], 360]))**2
-            # process noise covariance matrix is assumed to be 
-            # diag(0.01*R, 3.6 degrees)^2
+            r = np.sum(A**2)
+            s, c = A[1]/r, A[0]/r
+            J = np.array([[c, -r*s], [s, r*c]])
+            Q = J @ np.diag(0.01*r, 0.01*(2*np.pi)) @ J.T
+            return A, np.eye(2), Q
 
         def lockin_response(A, dv):
-            return np.array([A[0]*dv[0], A[1] + dv[1]]), \
-                    np.array([[A[0], 0], [0, 1]])
+            dx, dy = dv,
+            H = np.array([[dx, -dy], [dy, dx]])
+            return H @ A, H
 
         self.kalman = kalman(
             f_F = predicted_gain,
@@ -75,32 +93,36 @@ class KFilter():
             P = P
         )
 
-    def append(self, r, theta):
-        self.r_hist.append(r)
-        self.theta_hist.append(theta)
+    def append(self, x, y):
+        self.x_hist.append(x)
+        self.y_hist.append(y)
 
     def extrapolate(self):
-        return extrap(self.r_hist, self.order), \
-                extrap(self.theta_hist, self.order)
+        return extrap(self.x_hist, self.order), extrap(self.y_hist, self.order)
 
+"""Describes a balance point reached after balancing the bridge."""
 @dataclass
 class KapBridgeBalance():
-    success : bool
-    r_b     : float
-    th_b    : float
-    r_m     : float
-    th_m    : float
-    P       : np.ndarray
-    errt    : float
-    iter    : int
-    prev_r  : float
-    prev_th : float
+    success : bool          # whether balance was successful
+    x_b     : float         # estimated true balance point (x component)
+    y_b     : float         # estimated true balance point (y component)
+    x_m     : float         # final achieved lock-in reading (x component)
+    y_m     : float         # final achieved lock-in reading (y component)
+    R       : np.ndarray    # covariance matrix for lock-in reading
+    A       : np.ndarray    # effective complex gain of the capacitance bridge
+    P       : np.ndarray    # covariance of the complex gain
+    errt    : float         # error threshold used for this point
+    iter    : int           # terminating iteration
+    prev_x_b: float         # Vstd where final measurement was taken (x component)
+    prev_y_b: float         # Vstd where final measurement was taken (y component)
 
 @dataclass
 class KapBridge():
     lockin          : sr865a                    # lock-in amplifier
-    set_Vstd        : Callable[[float], Any]    # setter for Vstd amplitude
-    set_phase       : Callable[[float], Any]    # setter for Vstd phase
+    acbox           : ad9854                    # ac box
+    acbox_channels  : Tuple[Tuple[int, str],    # (excitation, standard) channel
+                            Tuple[int, str]
+                    ] = ((1, 'X'), (2, 'X'))
     Vstd_range      : float                     # range of Vstd in volts
     buffer_size     : int = 5                   # amount of data to take in kB
     sample_rate     : float = 512               # sample rate in Hz
@@ -115,45 +137,120 @@ class KapBridge():
     logger          : Optional[object] = None   # logger
 
     def __post_init__(self):
-        self.kfilter = dict[Any, KFilter]
+        self.kfilter: Dict[Any, KFilter] = {}
 
         self.sample_rate = self.lockin.setup_data_acquisition(
             buffer_size     = self.buffer_size,
-            config = 'RT', 
+            config = 'XY', 
             sample_rate     = self.sample_rate,
         )
 
-    def add_filter(self):
-        pass
+        exc_, std_      = self.acbox_channels
+        self.set_Vex    = lambda x: self.acbox.set_amplitude(*exc_, x)
+        self.set_Vstd   = lambda x: self.acbox.set_amplitude(*std_, x)
+        self.set_phase  = lambda x: self.acbox.set_phase(exc_[0], x)
+        self.get_Vex    = lambda: self.acbox.get_amplitude(*exc_)
+        self.get_Vstd   = lambda: self.acbox.get_amplitude(*std_)
 
-    def balance(self, filter_key):
-        r_b, th_b = None, None # figure this out
+    def add_filter(self, filter_key):
+        """
+        Add a KFilter to self.kfilter
+        For this, we need to perform a raw balance measurement.
+        """
+
+        if self.logger:
+            self.logger.info(f"Adding new filter {filter_key}...")
+            self.logger.info("Performing a raw balance of the bridge")
+
+        # perform a raw balance measurement
+        balance_config = BalanceCapBridgeConfig(
+            Vstd_range = self.Vstd_range
+        )
+
+        raw_balance = balanceCapBridge(
+            balance_config,
+            set_Vex     = self.set_Vex,
+            get_Vex     = self.get_Vex,
+            set_Vstd    = self.set_Vstd,
+            get_Vstd    = self.get_Vstd,
+            set_Vstd_ph = self.set_phase,
+            get_X       = self.lockin.get_x,
+            get_Y       = self.lockin.get_y
+        )
+
+        # we establish a gain tensor from the cap_bridge parameters
+        # this also gives us our balance point guess.
+        Kc1, Kc2, Kr1, Kr2, y_b, x_b = raw_balance.balance_matrix
+        # approximately map this to an effective complex gain
+        A = np.array((Kr1 + Kc2)/2, (Kr2 - Kc1)/2)
+
+        # covariance matrix for complex gain is just assumed to look 
+        # like small uncorrelated errors in modulus and phase. See
+        # the filter for an explanation for how I convert this to
+        # Cartesian coordinates.
+        r = np.sum(A**2)
+        s, c = A[1]/r, A[0]/r
+        J = np.array([[c, -r*s], [s, r*c]])
+        P = J @ np.diag(0.01*r, 0.01*(2*np.pi)) @ J.T
+        
+        self.kfilter[filter_key] = KFilter(
+            support         = self.support, 
+            order           = self.order, 
+            sens_increment  = self.sens_increment, 
+            A               = A,
+            P               = P
+        )
+        
+        self.kfilter[filter_key].append(x_b, y_b)
+        self.kfilter[filter_key].lockin_input_range = self.lockin.get_input_range()
+        self.kfilter[filter_key].lockin_sensitivity = self.lockin.get_sensitivity()
+
+        if self.logger:
+            self.logger.info("Raw balance result:")
+            self.logger.info(raw_balance)
+            self.logger.info(f"Effective gain: {A[0]} + i{A[1]}")
+            self.logger.info(f"Balance point: {x_b:.8f} V, {y_b:.8f} V")
+
+    def balance(self, filter_key) -> KapBridgeBalance:
+        x_b, y_b = None, None
 
         if self.filter_key != filter_key:
-            if not filter_key in self.kfilter:
-                pass
+            # save the gain and sensitivity settings for the current filter
+            self.kfilter[self.filter_key].lockin_input_range = self.lockin.get_input_range()
+            self.kfilter[self.filter_key].lockin_sensitivity = self.lockin.get_sensitivity()
+
+            # make a new filter
+            if not filter_key in self.kfilter:                
+                self.add_filter(filter_key)
+
+            # restore an existing filter with a different key
             else:
                 if self.logger:
                     self.logger.info(f"Restoring filter {filter_key}")
-                pass
-        
-        ################################################################
-        else:
+                
+                self.lockin.set_input_range(self.kfilter[filter_key].lockin_input_range)
+                self.lockin.set_sensitivity(self.kfilter[filter_key].lockin_sensitivity)
 
-            # Calculate a projected balance point
-            r_b, th_b = self.kfilter[filter_key].extrapolate()
+        # calculate a projected balance point
+        x_b, y_b = self.kfilter[filter_key].extrapolate()
 
         self.filter_key = filter_key
 
         if self.logger:
             self.logger.info(
-                f"Projected r = {r_b:.7f}, theta = {th_b:.2f}"
+                f"Projected x = {r_b:.7f} V, y = {y_b:.7f} V"
             )
 
-        if r_b > self.Vstd_range or r_b < 0:
-            r_b = min(self.Vstd_range, max(0, r_b))
+        r_b = np.sqrt(x_b*x_b + y_b*y_b)
+        sb, cb = y_b/r_b, x_b/r_b
+        th_b = np.degrees(np.atan2(y_b, x_b))
+        if r_b > self.Vstd_range:
+            r_b = min(self.Vstd_range, r_b)
+            x_b = r_b*cb
+            y_b = r_b*sb
             if self.logger:
-                self.logger.info(f"Truncated to r = {r_b:.7f}")
+                self.logger.info(
+                    f"Truncated to x = {x_b:.7f} V, y = {y_b:.7f} V")
 
         # periodically increment the sensitivity and input range
         self.kfilter[filter_key].use_count +=1
@@ -176,14 +273,14 @@ class KapBridge():
                 )
 
             # lock-in reading and covariance
-            L, P = self.lockin.get_average(auto_rescale = True)
-            r_m, th_m = L
+            L, R = self.lockin.get_average(auto_rescale = True)
+            x_m, y_m = L
 
             if self.logger:
                 self.logger.info(
-                  f"Lock-in reading: R = {L[0]:.8f} V, theta = {L[1]} degrees\n"
-                + f"     Covariance: [{P[0,0]:.9f}, {P[0,1]:.9f}]\n"
-                + f"                 [{P[1,0]:.9f}, {P[1,1]:.9f}]"
+                  f"Lock-in reading: x = {L[0]:.8f} V, y = {L[1]:.8f} V\n"
+                + f"     Covariance: [{R[0,0]:.9f}, {R[0,1]:.9f}]\n"
+                + f"                 [{R[1,0]:.9f}, {R[1,1]:.9f}]"
                 )
 
             if not first_guess:
@@ -191,33 +288,26 @@ class KapBridge():
                 # setup as we take more measurements. Here we update the Kalman
                 # filter with this new information.
                 
-                # calculate the observed change in the lock-in reading in polar
-                # coordinates
-                sm, cm = np.sin(np.deg2rad(th_m)), np.cos(np.deg2rad(th_m))
-                sp, cp = np.sin(np.deg2rad(prev_th_m)), \
-                            np.cos(np.deg2rad(prev_th_m))
-                
-                dr = np.sqrt(r_m*r_m + prev_r_m*prev_r_m - \
-                             r_m*prev_r_m*(sm*cp + sp*cm))
-                dth = np.degrees(np.atan2(r_m*sm - prev_r_m*sm, 
-                                          r_m*cm - prev_r_m*cm))
-                
-                # measurement
-                z = np.array([dr, dth])
-                # measurement covariance matrix
-                # first need to calculate a jacobian for this polar vector 
-                # addition thing.
-                J = # figure this out...
-                R = # J.T @ diag(P, prev_P) @ J
-                
+                # measured change in the lock-in reading
+                dLx, dLy = x_m - prev_x_m, y_m - prev_y_m
+                # change in Vstd
+                dvx, dvy = x_b - prev_x_b, y_b - prev_y_b
+
+                # calculating the covariance matrix for z
+                R_change = R + prev_R
+
+                dL = np.array([dLx, dLy])
+                dv = np.array([dvx, dvy])
+                self.kfilter[filter_key].kalman.update(dL, R_change, dv)
+
             first_guess = False
 
             if self.logger:
                 self.logger.info(
                    "Prior to Kalman Prediction Step\n"
-                + f"Effective gain: R = {self.kfilter[filter_key].kalman.x[0]},\n"
-                + f"            Theta = {self.kfilter[filter_key].kalman.x[1]} degrees\n"
-                + f"       Covariance = {self.kfilter[filter_key].kalman.P}"
+                + f"Effective gain: x = {self.kfilter[filter_key].kalman.x[0]} V\n"
+                + f"                y = {self.kfilter[filter_key].kalman.x[1]} V\n"
+                + f"              Cov = {self.kfilter[filter_key].kalman.P}"
                 )
 
             self.kfilter[filter_key].kalman.predict()
@@ -225,32 +315,33 @@ class KapBridge():
             if self.logger:
                 self.logger.info(
                    "Predicted Bridge Gain\n"
-                + f"Effective gain: R = {self.kfilter[filter_key].kalman.x[0]},\n"
-                + f"            Theta = {self.kfilter[filter_key].kalman.x[1]} degrees\n"
-                + f"       Covariance = {self.kfilter[filter_key].kalman.P}"
+                + f"Effective gain: x = {self.kfilter[filter_key].kalman.x[0]} V\n"
+                + f"                y = {self.kfilter[filter_key].kalman.x[1]} V\n"
+                + f"              Cov = {self.kfilter[filter_key].kalman.P}"
                 )
 
-            r_g, th_g = self.kfilter[filter_key].kalman.x
-            dr = r_m/r_g
-            dth = th_m - th_g
+            # based on the gain, determine how far we are off balance
+            x_g, y_g = self.kfilter[filter_key].kalman.x
+            Z = np.array([[x_g, -y_g], [y_g, x_g]])
+            dx, dy = inv(Z) @ L
 
             # store the old state
+            prev_x_b    = x_b
+            prev_y_b    = y_b
+            prev_x_m    = x_m
+            prev_y_m    = y_m
+            prev_R      = R 
             prev_r_b    = r_b
-            prev_th_b   = th_b
-            prev_r_m    = r_m
-            prev_th_m   = th_m
-            prev_P      = P 
 
             # calculate the new projected balance point
-            sb, cb = np.sin(np.deg2rad(th_b)), np.cos(np.deg2rad(th_b))
-            sd, cd = np.sin(np.deg2rad(dth)), np.cos(np.deg2rad(dth))
-            r_b = np.sqrt(r_b*r_b + dr*dr - r_b*dr*(sb*cd + sd*cb))
-            th_b = np.degrees(np.atan2(r_b*sb - dr*sd, r_b*cb - dr*cd))
+            x_b -= dx
+            y_b -= dy
+            r_b = np.sqrt(x_b*x_b + y_b*y_b)
 
             if self.logger:
-                self.logging.info(
-                    f"Corrected balance at r = {r_b:.7f}, theta = {th_b:.2f}\n"
-                  + f"              (relative change of {100*dr/prev_r_b:.3f})"
+                self.logger.info(
+                    f"Corrected balance at x = {x_b:.7f} V, y = {y_b:.7f} V\n"
+                  + f"            (relative change of {100*r_b/prev_r_b:.3f})"
                 )
 
             # if the lock-in reading was sufficiently small, terminate.
@@ -262,7 +353,11 @@ class KapBridge():
             # This threshold is really set by the first measurement we take, and
             # later we mix it slightly with subsequent measurements. 
             
-            errmult = self.erroff + self.errmult * np.sqrt(P[0,0])
+            r_m = np.sqrt(x_m*x_m + y_m*y_m)
+            m = L.reshape((-1, 1))
+            r_m_err = np.sqrt((m.T @ R @ m)/r_m)
+
+            errmult = self.erroff + self.errmult * r_m_err
             if errt is None:
                 errt = errmult + self.erroff
             else:
@@ -277,18 +372,20 @@ class KapBridge():
                     )
 
                 # append the new balance point to the historical data
-                self.kfilter[filter_key].append(r_b, th_b)
+                self.kfilter[filter_key].append(x_b, y_b)
                 return KapBridgeBalance(
                     success = True,
-                    r_b     = r_b,
-                    th_b    = th_b,
-                    r_m     = r_m,
-                    th_m    = th_m,
-                    P       = P,
+                    x_b     = x_b,
+                    y_b     = y_b,
+                    x_m     = x_m,
+                    y_m     = y_m,
+                    R       = R,
+                    A       = self.kfilter[filter_key].kalman.x,
+                    P       = self.kfilter[filter_key].kalman.P,
                     errt    = errt,
                     iter    = iter,
-                    prev_r  = prev_r_m,
-                    prev_th = prev_th_m
+                    prev_x_b= prev_x_b,
+                    prev_y_b= prev_y_b
                 )
             
             else:
@@ -308,13 +405,16 @@ class KapBridge():
                 )
             return KapBridgeBalance(
                 success = False,
-                r_b     = r_b,
-                th_b    = th_b,
-                r_m     = r_m,
-                th_m    = th_m,
-                P       = P,
+                x_b     = x_b,
+                y_b     = y_b,
+                x_m     = x_m,
+                y_m     = y_m,
+                R       = R,
+                A       = self.kfilter[filter_key].kalman.x,
+                P       = self.kfilter[filter_key].kalman.P,
                 errt    = errt,
                 iter    = iter,
-                prev_r  = prev_r_m,
-                prev_th = prev_th_m
+                prev_x_b= prev_x_b,
+                prev_y_b= prev_y_b
             )
+        
