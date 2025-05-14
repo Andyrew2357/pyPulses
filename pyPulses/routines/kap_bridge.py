@@ -19,7 +19,7 @@ from .cap_bridge import balanceCapBridge, BalanceCapBridgeConfig
 import numpy as np
 from numpy.linalg import inv
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 from collections import deque
 
 def extrap(x: np.ndarray, order: int) -> float:
@@ -40,6 +40,9 @@ class KFilter():
         # optimal lock-in sensitivity and input range
         self.lockin_sensitivity = None
         self.lockin_input_range = None
+        
+        # excitation size
+        self.Vex = None
 
         # we periodically increase the sensitivity
         self.use_count = 0
@@ -134,6 +137,7 @@ class KapBridge():
     errmult         : float = 2.0               # error multiplier for balance  
     sens_increment  : float = 10                # push sensitivity and input 
                                                 # range every few points
+    Cstd            : float = 1.0               # capacitance of the reference
     logger          : Optional[object] = None   # logger
 
     def __post_init__(self):
@@ -174,15 +178,17 @@ class KapBridge():
             set_Vstd    = self.set_Vstd,
             get_Vstd    = self.get_Vstd,
             set_Vstd_ph = self.set_phase,
-            get_X       = self.lockin.get_x,
-            get_Y       = self.lockin.get_y
+            get_XY       = self.lockin.get_xy
         )
 
         # we establish a gain tensor from the cap_bridge parameters
         # this also gives us our balance point guess.
         Kc1, Kc2, Kr1, Kr2, y_b, x_b = raw_balance.balance_matrix
+        x_b = -x_b # subtleties related to how the balance matrix is designed
+
         # approximately map this to an effective complex gain
-        A = np.array((Kr1 + Kc2)/2, (Kr2 - Kc1)/2)
+        # chosen representation of C in terms of 2x2 matrices is ((X,-Y),(Y, X))
+        A = np.array([(Kr2 - Kc1)/2, -(Kr1 + Kc2)/2])
 
         # covariance matrix for complex gain is just assumed to look 
         # like small uncorrelated errors in modulus and phase. See
@@ -204,6 +210,7 @@ class KapBridge():
         self.kfilter[filter_key].append(x_b, y_b)
         self.kfilter[filter_key].lockin_input_range = self.lockin.get_input_range()
         self.kfilter[filter_key].lockin_sensitivity = self.lockin.get_sensitivity()
+        self.kfilter[filter_key].Vex = self.get_Vex()
 
         if self.logger:
             self.logger.info("Raw balance result:")
@@ -417,4 +424,20 @@ class KapBridge():
                 prev_x_b= prev_x_b,
                 prev_y_b= prev_y_b
             )
-        
+    
+    def measure_capacitance(self, filter_key) -> bool:
+        self.balance_state = self.balance(filter_key)
+        return self.balance_state.success
+
+    def get_param(self, field: str) -> Union[bool, float, int, np.ndarray]:
+        return getattr(self.balance_state, field)
+
+    def get_Cex(self) -> float:
+        return -self.Cstd * self.balance_state.x_b / \
+                            self.kfilter[self.filter_key].Vex
+
+    def get_Closs(self) -> float:
+        # Note that this one is lacking a negative sign to maintain consistency
+        # with the outputs of cap_bridge
+        return self.Cstd * self.balance_state.y_b / \
+                            self.kfilter[self.filter_key].Vex

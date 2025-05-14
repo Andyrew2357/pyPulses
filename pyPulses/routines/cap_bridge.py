@@ -75,8 +75,8 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
                      set_Vstd   : Optional[Callable[[float], Any]],
                      get_Vstd   : Callable[[], float],
                      set_Vstd_ph: Callable[[float], Any],
-                     get_X      : Callable[[], float],
-                     get_Y      : Callable[[], float]) -> CapBridgeBalance:
+                     get_XY      : Callable[[], Tuple[float, float]],
+                    ) -> CapBridgeBalance:
     
     # if an excitation amplitude is provided, set it
     if C.Vex is not None:
@@ -126,8 +126,7 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
         set_Vstd_ph(phase)
         time.sleep(C.wait)
         for m in range(C.samples):
-            L[0, n, m] = get_X()
-            L[1, n, m] = get_Y()
+            L[0, n, m], L[1, n, m] = get_XY()
 
             if C.callback:
                 C.callback(
@@ -199,7 +198,7 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
         if C.logger:
             C.logger.info("Balanced.")
 
-    out.error = (get_X(), get_Y())
+    out.error = get_XY()
     out.status = True
 
     if C.logger:
@@ -213,8 +212,8 @@ Generally, measure_capacitance should be called as a pre-callback for a
 parameter sweep, with the getters being used as the measured parameters
 """
 class CapBridge():
-    def __init__(self, balance: CapBridgeBalance, get_X: Callable[[], float],
-                 get_Y: Callable[[], float], logger = None):
+    def __init__(self, balance: CapBridgeBalance, 
+                 get_XY: Callable[[], Tuple[float, float]], logger = None):
         if not balance.status:
             if logger:
                 logger.warning("WARNING: Provided balance was unsuccessful.") 
@@ -224,8 +223,7 @@ class CapBridge():
                 print("         Results may be unreliable.")
 
         self.Kc1, self.Kc2, self.Kr1, self.Kr2, self.Vc0, self.Vr0 = balance.balance_matrix
-        self.get_X = get_X
-        self.get_Y = get_Y
+        self.get_XY = get_XY
         self.Vex   = balance.Vex
         self.Cstd  = balance.Cstd
 
@@ -244,8 +242,7 @@ class CapBridge():
 
     def measure_capacitance(self):
         """Pull data from the lock-in and convert to capacitance."""
-        Xoffbal = self.get_X()
-        Yoffbal = self.get_Y()
+        Xoffbal, Yoffbal = self.get_XY()
         self.Xoffbal = Xoffbal
         self.Yoffbal = Yoffbal
         self.Cex, self.Closs = self.XYtoC(Xoffbal, Yoffbal)
