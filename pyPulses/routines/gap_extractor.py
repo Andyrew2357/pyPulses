@@ -215,7 +215,7 @@ class GapExtractor():
             np.diff(vt)*(dmt_dchi_g[1:] + dmt_dchi_g[:-1]) + \
             np.diff(vb)*(dmb_dchi_g[1:] + dmb_dchi_g[:-1])
             ))**2
-        chi_b_part  = self.var_chi_g*(0.5*np.cumsum(
+        chi_b_part  = self.var_chi_b*(0.5*np.cumsum(
             np.diff(vt)*(dmt_dchi_b[1:] + dmt_dchi_b[:-1]) + \
             np.diff(vb)*(dmb_dchi_b[1:] + dmb_dchi_b[:-1])
             ))**2
