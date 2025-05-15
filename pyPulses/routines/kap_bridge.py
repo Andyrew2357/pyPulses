@@ -116,8 +116,8 @@ class KapBridgeBalance():
     P       : np.ndarray    # covariance of the complex gain
     errt    : float         # error threshold used for this point
     iter    : int           # terminating iteration
-    prev_x_b: float         # Vstd where final measurement was taken (x component)
-    prev_y_b: float         # Vstd where final measurement was taken (y component)
+    prev_x_b: float         # Vstd when last measurement was taken (x component)
+    prev_y_b: float         # Vstd when last measurement was taken (y component)
 
 @dataclass
 class KapBridge():
@@ -183,7 +183,7 @@ class KapBridge():
             set_Vstd    = self.set_Vstd,
             get_Vstd    = self.get_Vstd,
             set_Vstd_ph = self.set_phase,
-            get_XY       = self.lockin.get_xy
+            get_XY      = self.lockin.get_xy
         )
 
         # we establish a gain tensor from the cap_bridge parameters
@@ -213,8 +213,10 @@ class KapBridge():
         )
         
         self.kfilter[filter_key].append(x_b, y_b)
-        self.kfilter[filter_key].lockin_input_range = self.lockin.get_input_range()
-        self.kfilter[filter_key].lockin_sensitivity = self.lockin.get_sensitivity()
+        self.kfilter[filter_key].lockin_input_range = \
+                                                self.lockin.get_input_range()
+        self.kfilter[filter_key].lockin_sensitivity = \
+                                                self.lockin.get_sensitivity()
         self.kfilter[filter_key].Vex = self.get_Vex()
 
         if self.logger:
@@ -227,10 +229,11 @@ class KapBridge():
         x_b, y_b = None, None
 
         if self.filter_key != filter_key:
-            if self.filter_key is not None:
-                # save the gain and sensitivity settings for the current filter
-                self.kfilter[self.filter_key].lockin_input_range = self.lockin.get_input_range()
-                self.kfilter[self.filter_key].lockin_sensitivity = self.lockin.get_sensitivity()
+            # save the gain and sensitivity settings for the current filter
+            self.kfilter[self.filter_key].lockin_input_range = \
+                                                self.lockin.get_input_range()
+            self.kfilter[self.filter_key].lockin_sensitivity = \
+                                                self.lockin.get_sensitivity()
 
             # make a new filter
             if not filter_key in self.kfilter:                
@@ -241,8 +244,10 @@ class KapBridge():
                 if self.logger:
                     self.logger.info(f"Restoring filter {filter_key}")
                 
-                self.lockin.set_input_range(self.kfilter[filter_key].lockin_input_range)
-                self.lockin.set_sensitivity(self.kfilter[filter_key].lockin_sensitivity)
+                self.lockin.set_input_range(
+                    self.kfilter[filter_key].lockin_input_range)
+                self.lockin.set_sensitivity(
+                    self.kfilter[filter_key].lockin_sensitivity)
 
         # calculate a projected balance point
         x_b, y_b = self.kfilter[filter_key].extrapolate()
@@ -317,20 +322,22 @@ class KapBridge():
 
             if self.logger:
                 self.logger.info(
-                   "Prior to Kalman Prediction Step\n"
-                + f"Effective gain: x = {self.kfilter[filter_key].kalman.x[0]} V\n"
-                + f"                y = {self.kfilter[filter_key].kalman.x[1]} V\n"
-                + f"              Cov = {self.kfilter[filter_key].kalman.P}"
+                    "Prior to Kalman Prediction Step\n"
+                    + f"Effective gain: \n"
+                    + f"    x = {self.kfilter[filter_key].kalman.x[0]} V\n"
+                    + f"    y = {self.kfilter[filter_key].kalman.x[1]} V\n"
+                    + f"  Cov = {self.kfilter[filter_key].kalman.P}"
                 )
 
             self.kfilter[filter_key].kalman.predict()
 
             if self.logger:
                 self.logger.info(
-                   "Predicted Bridge Gain\n"
-                + f"Effective gain: x = {self.kfilter[filter_key].kalman.x[0]} V\n"
-                + f"                y = {self.kfilter[filter_key].kalman.x[1]} V\n"
-                + f"              Cov = {self.kfilter[filter_key].kalman.P}"
+                    "Predicted Bridge Gain\n"
+                    + f"Effective gain: \n"
+                    + f"    x = {self.kfilter[filter_key].kalman.x[0]} V\n"
+                    + f"    y = {self.kfilter[filter_key].kalman.x[1]} V\n"
+                    + f"  Cov = {self.kfilter[filter_key].kalman.P}"
                 )
 
             # based on the gain, determine how far we are off balance
