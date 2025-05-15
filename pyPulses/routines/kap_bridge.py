@@ -81,11 +81,11 @@ class KFilter():
             r = np.sum(A**2)
             s, c = A[1]/r, A[0]/r
             J = np.array([[c, -r*s], [s, r*c]])
-            Q = J @ np.diag(0.01*r, 0.01*(2*np.pi)) @ J.T
+            Q = J @ np.diag([0.01*r, 0.01*(2*np.pi)]) @ J.T
             return A, np.eye(2), Q
 
         def lockin_response(A, dv):
-            dx, dy = dv,
+            dx, dy = dv
             H = np.array([[dx, -dy], [dy, dx]])
             return H @ A, H
 
@@ -129,7 +129,7 @@ class KapBridge():
                             Tuple[int, str]
                     ] = ((1, 'X'), (2, 'X'))
     buffer_size     : int = 1                   # amount of data to take in kB
-    sample_rate     : float = 300               # sample rate in Hz
+    sample_rate     : float = 100               # sample rate in Hz
     min_tries       : int = 0                   # min tries for balancing
     max_tries       : int = 10                  # max tries for balancing
     order           : int = 2                   # order of fit for extrapolation
@@ -139,7 +139,8 @@ class KapBridge():
     sens_increment  : float = 10                # push sensitivity and input 
                                                 # range every few points
     Cstd            : float = 1.0               # capacitance of the reference
-    raw_samples     : int = 100                 # samples for a raw balance
+    raw_samples     : int = 50                  # samples for a raw balance
+    raw_wait        : float = 0.1               # wait time for a raw balance 
     logger          : Optional[object] = None   # logger
 
     def __post_init__(self):
@@ -172,8 +173,9 @@ class KapBridge():
         # perform a raw balance measurement
         balance_config = BalanceCapBridgeConfig(
             Vstd_range  = self.Vstd_range,
-            Vex_range   = self.Vex_range,
-            raw_samples = self.raw_samples
+            Vex         = self.Vex_range,
+            samples     = self.raw_samples,
+            wait        = self.raw_wait
         )
 
         raw_balance = balanceCapBridge(
@@ -202,7 +204,7 @@ class KapBridge():
         r = np.sum(A**2)
         s, c = A[1]/r, A[0]/r
         J = np.array([[c, -r*s], [s, r*c]])
-        P = J @ np.diag(0.01*r, 0.01*(2*np.pi)) @ J.T
+        P = J @ np.diag([0.01*r, 0.01*(2*np.pi)]) @ J.T
         
         self.kfilter[filter_key] = KFilter(
             support         = self.support, 
@@ -232,9 +234,9 @@ class KapBridge():
             if self.filter_key is not None:
                 # save the gain and sensitivity settings for the current filter
                 self.kfilter[self.filter_key].lockin_input_range = \
-                                                    self.lockin.get_input_range()
+                                                self.lockin.get_input_range()
                 self.kfilter[self.filter_key].lockin_sensitivity = \
-                                                    self.lockin.get_sensitivity()
+                                                self.lockin.get_sensitivity()
 
             # make a new filter
             if not filter_key in self.kfilter:                
@@ -257,7 +259,7 @@ class KapBridge():
 
         if self.logger:
             self.logger.info(
-                f"Projected x = {r_b:.7f} V, y = {y_b:.7f} V"
+                f"Projected x = {x_b:.7f} V, y = {y_b:.7f} V"
             )
 
         r_b = np.sqrt(x_b*x_b + y_b*y_b)
@@ -325,8 +327,8 @@ class KapBridge():
                 self.logger.info(
                     "Prior to Kalman Prediction Step\n"
                     + f"Effective gain: \n"
-                    + f"    x = {self.kfilter[filter_key].kalman.x[0]} V\n"
-                    + f"    y = {self.kfilter[filter_key].kalman.x[1]} V\n"
+                    + f"    x = {self.kfilter[filter_key].kalman.x[0]}\n"
+                    + f"    y = {self.kfilter[filter_key].kalman.x[1]}\n"
                     + f"  Cov = {self.kfilter[filter_key].kalman.P}"
                 )
 
@@ -336,8 +338,8 @@ class KapBridge():
                 self.logger.info(
                     "Predicted Bridge Gain\n"
                     + f"Effective gain: \n"
-                    + f"    x = {self.kfilter[filter_key].kalman.x[0]} V\n"
-                    + f"    y = {self.kfilter[filter_key].kalman.x[1]} V\n"
+                    + f"    x = {self.kfilter[filter_key].kalman.x[0]}\n"
+                    + f"    y = {self.kfilter[filter_key].kalman.x[1]}\n"
                     + f"  Cov = {self.kfilter[filter_key].kalman.P}"
                 )
 
@@ -376,7 +378,7 @@ class KapBridge():
             
             r_m = np.sqrt(x_m*x_m + y_m*y_m)
             m = L.reshape((-1, 1))
-            r_m_err = np.sqrt((m.T @ R @ m)/r_m)
+            r_m_err = np.sum(np.sqrt((m.T @ R @ m)/r_m))
 
             errmult = self.erroff + self.errmult * r_m_err
             if errt is None:
