@@ -143,6 +143,7 @@ class KapBridge():
     logger          : Optional[object] = None   # logger
 
     def __post_init__(self):
+        self.filter_key = None
         self.kfilter: Dict[Any, KFilter] = {}
 
         self.sample_rate = self.lockin.setup_data_acquisition(
@@ -226,9 +227,10 @@ class KapBridge():
         x_b, y_b = None, None
 
         if self.filter_key != filter_key:
-            # save the gain and sensitivity settings for the current filter
-            self.kfilter[self.filter_key].lockin_input_range = self.lockin.get_input_range()
-            self.kfilter[self.filter_key].lockin_sensitivity = self.lockin.get_sensitivity()
+            if self.filter_key is not None:
+                # save the gain and sensitivity settings for the current filter
+                self.kfilter[self.filter_key].lockin_input_range = self.lockin.get_input_range()
+                self.kfilter[self.filter_key].lockin_sensitivity = self.lockin.get_sensitivity()
 
             # make a new filter
             if not filter_key in self.kfilter:                

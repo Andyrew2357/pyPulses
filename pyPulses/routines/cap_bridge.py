@@ -126,7 +126,9 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
         set_Vstd_ph(phase)
         time.sleep(C.wait)
         for m in range(C.samples):
-            L[0, n, m], L[1, n, m] = get_XY()
+            x, y = get_XY()
+            L[0, n, m] = x
+            L[1, n, m] = y
 
             if C.callback:
                 C.callback(
