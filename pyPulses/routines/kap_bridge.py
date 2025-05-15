@@ -123,12 +123,13 @@ class KapBridgeBalance():
 class KapBridge():
     lockin          : sr865a                    # lock-in amplifier
     acbox           : ad9854                    # ac box
+    Vstd_range      : float                     # range of Vstd in volts
+    Vex_range       : float                     # range of Vex in volts
     acbox_channels  : Tuple[Tuple[int, str],    # (excitation, standard) channel
                             Tuple[int, str]
                     ] = ((1, 'X'), (2, 'X'))
-    Vstd_range      : float                     # range of Vstd in volts
-    buffer_size     : int = 5                   # amount of data to take in kB
-    sample_rate     : float = 512               # sample rate in Hz
+    buffer_size     : int = 1                   # amount of data to take in kB
+    sample_rate     : float = 300               # sample rate in Hz
     min_tries       : int = 0                   # min tries for balancing
     max_tries       : int = 10                  # max tries for balancing
     order           : int = 2                   # order of fit for extrapolation
@@ -138,6 +139,7 @@ class KapBridge():
     sens_increment  : float = 10                # push sensitivity and input 
                                                 # range every few points
     Cstd            : float = 1.0               # capacitance of the reference
+    raw_samples     : int = 100                 # samples for a raw balance
     logger          : Optional[object] = None   # logger
 
     def __post_init__(self):
@@ -168,7 +170,9 @@ class KapBridge():
 
         # perform a raw balance measurement
         balance_config = BalanceCapBridgeConfig(
-            Vstd_range = self.Vstd_range
+            Vstd_range  = self.Vstd_range,
+            Vex_range   = self.Vex_range,
+            raw_samples = self.raw_samples
         )
 
         raw_balance = balanceCapBridge(

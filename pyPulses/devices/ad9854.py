@@ -11,7 +11,7 @@ up to ~ 50 MHz with 48 bit resolution.
 from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
-from math import modf
+from math import floor
 from typing import Optional
 
 class ad9854(pyvisaDevice):
@@ -33,6 +33,7 @@ class ad9854(pyvisaDevice):
         DeviceRegistry.register_device(self.config["resource_name"], self)
         
         self.master_reset()
+        self.configure_control_register()
 
         # Device parameters
         self.vmax = 0.120   # Maximum amplitude [V]
@@ -75,8 +76,8 @@ class ad9854(pyvisaDevice):
             self.error(f"Chip ({chip}) must be either 1 or 2.")
             return
         
-        phase = modf(phase/360)[0] * 360  # Wrap to [0, 360)
-        ptw = int((phase / 360) * 2**self.Nphase)
+        phase = phase % 360 # Wrap to [0, 360)
+        ptw = int(floor(phase / 360 * 2**self.Nphase))
         pw1, pw2 = (ptw >> 8) & 0xFF, ptw & 0xFF
         command = bytes([255, 254, 253, chip, 0, pw1, pw2, 0, 0, 0, 0])
         self._write_command(command)
@@ -121,24 +122,30 @@ class ad9854(pyvisaDevice):
 
     def master_reset(self):
         """Perform master reset of the system."""
-        self._write_command(bytes([255, 254, 253, 12, 55, 1, 2, 3, 4, 5, 6]))
+        # this has something to do with setting the reference clock.
+        # won't think about it too much until we have to build a new box...
+        self._write_command(bytes([255, 254, 253, 12, 55, 1, 2, 3, 4, 5, 6]),
+                            speedy = False)
         self.info("Perfomed master reset of AC box.")
 
     def configure_control_register(self):
         """Configure device control registers."""
-        self._write_command(bytes([255, 254, 253, 12, 7, 16, 68, 0, 32, 0, 0]))
+        self._write_command(bytes([255, 254, 253, 12, 7, 16, 68, 0, 32, 0, 0]),
+                            speedy = False)
         self.info("Configured AC box control register.")
 
-    def _write_command(self, command: bytes):
+    def _write_command(self, command: bytes, speedy: bool = True):
         """Internal method to handle command writing with error recovery."""
         try:
             self.device.write_raw(command)
-            self._flush_buffers()
+            if not speedy: 
+                self._flush_buffers()
         except Exception as e:
             self.error(f"Write error: {e}, attempting reconnect...")
             self.refresh()
             self.device.write_raw(command)
-            self._flush_buffers()
+            if not speedy:
+                self._flush_buffers()
 
     def _flush_buffers(self):
         """Clear communication buffers."""
