@@ -131,7 +131,7 @@ class KapBridge():
                     ] = ((1, 'X'), (2, 'X'))
     time_const      : float = 1e-3              # time constant for lock-in
     buffer_size     : int = 1                   # amount of data to take in kB
-    sample_rate     : float = 60                # sample rate in Hz
+    sample_rate     : float = 300               # sample rate in Hz
     min_tries       : int = 0                   # min tries for balancing
     max_tries       : int = 10                  # max tries for balancing
     order           : int = 2                   # order of fit for extrapolation
@@ -143,7 +143,7 @@ class KapBridge():
     Cstd            : float = 1.0               # capacitance of the reference
     raw_samples     : int = 100                 # samples for a raw balance
     raw_wait        : float = 3                 # wait time for a raw balance
-    raw_time_const  : float = 0.3               # time constant (raw balance)
+    raw_time_const  : float = 0.01              # time constant (raw balance)
     logger          : Optional[object] = None   # logger
 
     def __post_init__(self):
@@ -184,6 +184,7 @@ class KapBridge():
 
         # perform a raw balance measurement
         balance_config = BalanceCapBridgeConfig(
+            time_const  = self.raw_time_const,
             samples     = self.raw_samples,
             wait        = self.raw_wait
         )
@@ -234,8 +235,8 @@ class KapBridge():
         if self.logger:
             self.logger.info("Raw balance result:")
             self.logger.info(raw_balance)
-            self.logger.info(f"Effective gain: {A[0]} + {A[1]}i")
-            self.logger.info(f"Balance point: {x_b:.8f} V, {y_b:.8f} V")
+            self.logger.info(f"Effective gain: {A[0]:.5e} + {A[1]:.5e}i")
+            self.logger.info(f"Balance point: {x_b:.5e} V, {y_b:.5e} V")
             self.logger.info(f"lowering time constant to {self.time_const} s")
         self.lockin.set_time_const(self.time_const)
         time.sleep(0.1)
@@ -272,7 +273,7 @@ class KapBridge():
 
         if self.logger:
             self.logger.info(
-                f"Projected x = {x_b:.7f} V, y = {y_b:.7f} V"
+                f"Projected x = {x_b:.5e} V, y = {y_b:.5e} V"
             )
 
         r_b = np.sqrt(x_b*x_b + y_b*y_b)
@@ -284,7 +285,7 @@ class KapBridge():
             y_b = r_b*sb
             if self.logger:
                 self.logger.info(
-                    f"Truncated to x = {x_b:.7f} V, y = {y_b:.7f} V")
+                    f"Truncated to x = {x_b:.5e} V, y = {y_b:.5e} V")
 
         # periodically increment the sensitivity and input range
         self.kfilter[filter_key].use_count +=1
@@ -298,24 +299,26 @@ class KapBridge():
         errt = None
         for iter in range(self.max_tries):
             
+            if self.logger:
+                self.logger.info("="*50)
+
             self.set_Vstd(r_b)
             self.set_phase(th_b)
 
             if self.logger:
                 self.logger.info(
-                    f"Set r = {r_b:.7f}, theta = {th_b:.2f}"
+                    f"Set r = {r_b:.5e}, theta = {th_b:.5e}"
                 )
 
             # lock-in reading and covariance
             L, R = self.lockin.get_average(auto_rescale = True)
-            R*= 1000
             x_m, y_m = L
 
             if self.logger:
                 self.logger.info(
-                  f"Lock-in reading: x = {L[0]:.8f} V, y = {L[1]:.8f} V\n"
-                + f"     Covariance: [{R[0,0]:.9f}, {R[0,1]:.9f}]\n"
-                + f"                 [{R[1,0]:.9f}, {R[1,1]:.9f}]"
+                  f"Lock-in reading: x = {L[0]:.5e} V, y = {L[1]:.5e} V\n"
+                + f"     Covariance: [{R[0,0]:.5e}, {R[0,1]:.5e}]\n"
+                + f"                 [{R[1,0]:.5e}, {R[1,1]:.5e}]"
                 )
 
             if not first_guess:
@@ -333,8 +336,8 @@ class KapBridge():
                 if self.logger:
                     self.logger.info(
                         f"Covariance matrix for measured z: \n"
-                      + f"    [{R_change[0,0]:.9f}, {R_change[0,1]:.9f}]\n"
-                      + f"    [{R_change[1,0]:.9f}, {R_change[1,1]:.9f}]"
+                      + f"    [{R_change[0,0]:.5e}, {R_change[0,1]:.5e}]\n"
+                      + f"    [{R_change[1,0]:.5e}, {R_change[1,1]:.5e}]"
                     )
 
                 dL = np.array([dLx, dLy])
@@ -347,8 +350,8 @@ class KapBridge():
                 self.logger.info(
                     "Prior to Kalman Prediction Step\n"
                     + f"Effective gain: \n"
-                    + f"    x = {self.kfilter[filter_key].kalman.x[0]}\n"
-                    + f"    y = {self.kfilter[filter_key].kalman.x[1]}\n"
+                    + f"    x = {self.kfilter[filter_key].kalman.x[0]:.5e}\n"
+                    + f"    y = {self.kfilter[filter_key].kalman.x[1]:.5e}\n"
                     + f"  Cov = {self.kfilter[filter_key].kalman.P}"
                 )
 
@@ -358,8 +361,8 @@ class KapBridge():
                 self.logger.info(
                     "Predicted Bridge Gain\n"
                     + f"Effective gain: \n"
-                    + f"    x = {self.kfilter[filter_key].kalman.x[0]}\n"
-                    + f"    y = {self.kfilter[filter_key].kalman.x[1]}\n"
+                    + f"    x = {self.kfilter[filter_key].kalman.x[0]:.5e}\n"
+                    + f"    y = {self.kfilter[filter_key].kalman.x[1]:.5e}\n"
                     + f"  Cov = {self.kfilter[filter_key].kalman.P}"
                 )
 
@@ -384,8 +387,8 @@ class KapBridge():
 
             if self.logger:
                 self.logger.info(
-                    f"Corrected balance at x = {x_b:.7f} V, y = {y_b:.7f} V\n"
-                  + f"            (relative change of {100*r_b/prev_r_b:.3f})"
+                    f"Corrected balance at x = {x_b:.5e} V, y = {y_b:.5e} V\n"
+                  + f"      (relative change of {100*(r_b/prev_r_b - 1):.5e} %)"
                 )
 
             # if the lock-in reading was sufficiently small, terminate.
@@ -398,8 +401,8 @@ class KapBridge():
             # later we mix it slightly with subsequent measurements. 
             
             r_m = np.sqrt(x_m*x_m + y_m*y_m)
-            m = L.reshape((-1, 1))
-            r_m_err = np.sum(np.sqrt((m.T @ R @ m)/r_m))
+            m = L.reshape(-1, 1)
+            r_m_err = np.sum(np.sqrt((m.T @ R @ m) / (r_m * r_m)))
 
             errmult = self.erroff + self.errmult * r_m_err
             if errt is None:
@@ -411,8 +414,8 @@ class KapBridge():
                 if self.logger:
                     self.logger.info(
                         f"Balanced on iteration {iter}\n"
-                      + f"  Error Tolerance: {errt:.9f} V\n"
-                      + f"  Lock-in Reading: {r_m:.9f} V"
+                      + f"  Error Tolerance: {errt:.5e} V\n"
+                      + f"  Lock-in Reading: {r_m:.5e} V"
                     )
 
                 # append the new balance point to the historical data
@@ -436,8 +439,8 @@ class KapBridge():
                 if self.logger:
                     self.logger.info(
                         f"Not balanced on iteration {iter}\n"
-                      + f"  Error Tolerance: {errt:.9f} V\n"
-                      + f"  Lock-in Reading: {r_m:.9f} V\n"
+                      + f"  Error Tolerance: {errt:.5e} V\n"
+                      + f"  Lock-in Reading: {r_m:.5e} V\n"
                       + f"Continuing to iteration {iter + 1}..."
                     )
         

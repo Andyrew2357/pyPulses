@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional, Tuple
 """Configuration dataclass for balanceCapBridge function"""
 @dataclass
 class BalanceCapBridgeConfig:
+    time_const  : float                                         # time constant for lock-in
     small_step  : Optional[Tuple[float, float]] = (0.01, 0.01)  # small step in Vex/Vstd
     large_step  : Optional[Tuple[float, float]] = (0.94, 0.94)  # large step in Vex/Vstd
     Vex         : Optional[float] = None                        # Vex to use
@@ -25,15 +26,15 @@ class BalanceCapBridgeConfig:
     ignore_warning: bool = False
 
     def __str__(self):
-        s  = f"small_step: {self.small_step[0]}, {self.small_step[1]}\n"
-        s += f"large_step: {self.large_step[0]}, {self.large_step[1]}\n"
-        s += f"       Vex: {self.Vex} V_rms\n"
-        s += f"Vstd_range: {self.Vstd_range} V_rms\n"
-        s += f"  Vex_gain: {self.Vex_gain}\n"
-        s += f" Vstd_gain: {self.Vstd_gain}\n"
-        s += f"      Cstd: {self.Cstd}\n"
-        s += f"      wait: {self.wait} s\n"
-        s += f"   samples: {self.samples}"
+        s  = f"small_step: {self.small_step[0]:.5e}, {self.small_step[1]:.5e}\n"
+        s += f"large_step: {self.large_step[0]:.5e}, {self.large_step[1]:.5e}\n"
+        s += f"       Vex: {self.Vex:.5e} V_rms\n"
+        s += f"Vstd_range: {self.Vstd_range:.5e} V_rms\n"
+        s += f"  Vex_gain: {self.Vex_gain:.5e}\n"
+        s += f" Vstd_gain: {self.Vstd_gain:.5e}\n"
+        s += f"      Cstd: {self.Cstd:.5e}\n"
+        s += f"      wait: {self.wait:.5e} s\n"
+        s += f"   samples: {self.samples:.5e}"
         return s
 
 """Output for balanceCapBridge function, also used for CapBridge object"""
@@ -54,18 +55,18 @@ class CapBridgeBalance:
     def __str__(self):
         s  = f"        status: {'balanced' if self.status else 'unbalanced'}\n"
         s += f"balance_matrix: " + \
-                ''.join([f"{e}   " for e in self.balance_matrix]) + '\n'
-        s += f"           Cex: {self.Cex}\n"
-        s += f"         Closs: {self.Closs}\n"
-        s += f"     Vc0 / Vex: {self.Vc0Vex}\n"
-        s += f"     Vr0 / Vex: {self.Vr0Vex}\n"
-        s += f"             R: {self.R}\n"
-        s += f"         phase: {self.phase}\n"
+                ''.join([f"{e:.5e}   " for e in self.balance_matrix]) + '\n'
+        s += f"           Cex: {self.Cex:.5e}\n"
+        s += f"         Closs: {self.Closs:.5e}\n"
+        s += f"     Vc0 / Vex: {self.Vc0Vex:.5e}\n"
+        s += f"     Vr0 / Vex: {self.Vr0Vex:.5e}\n"
+        s += f"             R: {self.R:.5e}\n"
+        s += f"         phase: {self.phase:5e}\n"
         if self.error is not None:
-            s += f"       error_X: {self.error[0]}\n"
-            s += f"       error_Y: {self.error[1]}\n"
-        s += f"           Vex: {self.Vex}\n"
-        s += f"          Cstd: {self.Cstd}"
+            s += f"       error_X: {self.error[0]:.5e}\n"
+            s += f"       error_Y: {self.error[1]:.5e}\n"
+        s += f"           Vex: {self.Vex:.5e}\n"
+        s += f"          Cstd: {self.Cstd:.5e}"
         return s
 
 """Balances the capacitance bridge. Run once before capacitance measurements"""
@@ -125,7 +126,10 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
         set_Vstd(R/C.Vstd_gain)
         set_Vstd_ph(phase)
         time.sleep(C.wait)
+
         for m in range(C.samples):
+
+            time.sleep(3*C.time_const)
             x, y = get_XY()
             L[0, n, m] = x
             L[1, n, m] = y
@@ -180,7 +184,7 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
     
     # set excitation to balance point
     if R > C.Vstd_range:
-        msg  = f"WARNING: Balanced Vstd ({R} V) is outside available range."
+        msg  = f"WARNING: Balanced Vstd ({R:.5e} V) is outside available range."
         msg += f"To proceed, run with higher Vstd_range or  lower Vex."
         if C.logger:
             C.logger.warning(msg)
