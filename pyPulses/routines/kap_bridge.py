@@ -16,6 +16,7 @@ from ..devices import sr865a, ad9854
 from ..utils import kalman
 from .cap_bridge import balanceCapBridge, BalanceCapBridgeConfig
 
+import time
 import numpy as np
 from numpy.linalg import inv
 from dataclasses import dataclass
@@ -124,12 +125,13 @@ class KapBridge():
     lockin          : sr865a                    # lock-in amplifier
     acbox           : ad9854                    # ac box
     Vstd_range      : float                     # range of Vstd in volts
-    Vex_range       : float                     # range of Vex in volts
+    Vex             : float                     # Vex in volts
     acbox_channels  : Tuple[Tuple[int, str],    # (excitation, standard) channel
                             Tuple[int, str]
                     ] = ((1, 'X'), (2, 'X'))
+    time_const      : float = 1e-3              # time constant for lock-in
     buffer_size     : int = 1                   # amount of data to take in kB
-    sample_rate     : float = 100               # sample rate in Hz
+    sample_rate     : float = 60                # sample rate in Hz
     min_tries       : int = 0                   # min tries for balancing
     max_tries       : int = 10                  # max tries for balancing
     order           : int = 2                   # order of fit for extrapolation
@@ -139,8 +141,9 @@ class KapBridge():
     sens_increment  : float = 10                # push sensitivity and input 
                                                 # range every few points
     Cstd            : float = 1.0               # capacitance of the reference
-    raw_samples     : int = 50                  # samples for a raw balance
-    raw_wait        : float = 0.1               # wait time for a raw balance 
+    raw_samples     : int = 100                 # samples for a raw balance
+    raw_wait        : float = 3                 # wait time for a raw balance
+    raw_time_const  : float = 0.3               # time constant (raw balance)
     logger          : Optional[object] = None   # logger
 
     def __post_init__(self):
@@ -156,7 +159,7 @@ class KapBridge():
         exc_, std_      = self.acbox_channels
         self.set_Vex    = lambda x: self.acbox.set_amplitude(*exc_, x)
         self.set_Vstd   = lambda x: self.acbox.set_amplitude(*std_, x)
-        self.set_phase  = lambda x: self.acbox.set_phase(exc_[0], x)
+        self.set_phase  = lambda x: self.acbox.set_phase(std_[0], x)
         self.get_Vex    = lambda: self.acbox.get_amplitude(*exc_)
         self.get_Vstd   = lambda: self.acbox.get_amplitude(*std_)
 
@@ -168,12 +171,19 @@ class KapBridge():
 
         if self.logger:
             self.logger.info(f"Adding new filter {filter_key}...")
+            self.logger.info(f"Upping time constant to {self.raw_time_const} s")
             self.logger.info("Performing a raw balance of the bridge")
+
+        self.lockin.set_time_const(self.raw_time_const)
+        self.lockin.upd_internal_state()
+        self.set_Vstd(self.Vstd_range)
+        self.set_Vex(self.Vex)
+        self.set_phase(0.0)
+        time.sleep(0.5)
+        self.lockin.auto_rescale()
 
         # perform a raw balance measurement
         balance_config = BalanceCapBridgeConfig(
-            Vstd_range  = self.Vstd_range,
-            Vex         = self.Vex_range,
             samples     = self.raw_samples,
             wait        = self.raw_wait
         )
@@ -190,12 +200,12 @@ class KapBridge():
 
         # we establish a gain tensor from the cap_bridge parameters
         # this also gives us our balance point guess.
-        Kc1, Kc2, Kr1, Kr2, y_b, x_b = raw_balance.balance_matrix
+        Kc1, Kc2, Kr1, Kr2, x_b, y_b = raw_balance.balance_matrix
         x_b = -x_b # subtleties related to how the balance matrix is designed
 
         # approximately map this to an effective complex gain
         # chosen representation of C in terms of 2x2 matrices is ((X,-Y),(Y, X))
-        A = np.array([(Kr2 - Kc1)/2, -(Kr1 + Kc2)/2])
+        A = np.array([Kr2 - Kc1, -Kc2 - Kr1]) / 2
 
         # covariance matrix for complex gain is just assumed to look 
         # like small uncorrelated errors in modulus and phase. See
@@ -224,8 +234,11 @@ class KapBridge():
         if self.logger:
             self.logger.info("Raw balance result:")
             self.logger.info(raw_balance)
-            self.logger.info(f"Effective gain: {A[0]} + i{A[1]}")
+            self.logger.info(f"Effective gain: {A[0]} + {A[1]}i")
             self.logger.info(f"Balance point: {x_b:.8f} V, {y_b:.8f} V")
+            self.logger.info(f"lowering time constant to {self.time_const} s")
+        self.lockin.set_time_const(self.time_const)
+        time.sleep(0.1)
 
     def balance(self, filter_key) -> KapBridgeBalance:
         x_b, y_b = None, None
@@ -295,6 +308,7 @@ class KapBridge():
 
             # lock-in reading and covariance
             L, R = self.lockin.get_average(auto_rescale = True)
+            R*= 1000
             x_m, y_m = L
 
             if self.logger:
@@ -316,6 +330,12 @@ class KapBridge():
 
                 # calculating the covariance matrix for z
                 R_change = R + prev_R
+                if self.logger:
+                    self.logger.info(
+                        f"Covariance matrix for measured z: \n"
+                      + f"    [{R_change[0,0]:.9f}, {R_change[0,1]:.9f}]\n"
+                      + f"    [{R_change[1,0]:.9f}, {R_change[1,1]:.9f}]"
+                    )
 
                 dL = np.array([dLx, dLy])
                 dv = np.array([dvx, dvy])
@@ -360,6 +380,7 @@ class KapBridge():
             x_b -= dx
             y_b -= dy
             r_b = np.sqrt(x_b*x_b + y_b*y_b)
+            th_b = np.degrees(np.atan2(y_b, x_b))
 
             if self.logger:
                 self.logger.info(

@@ -48,6 +48,8 @@ class sr865a(pyvisaDevice):
             'time_const': None
         }
 
+        self.upd_internal_state()
+
     # INPUT RELATED
 
     def get_x(self) -> float:
@@ -490,4 +492,4 @@ class sr865a(pyvisaDevice):
         self.start_acquisition()
         samps = self.get_buffered_data()
 
-        return samps.mean(axis = 1), np.cov(samps)/samps.shape[0]
+        return samps.mean(axis = 1), np.cov(samps) # / samps.shape[0]
