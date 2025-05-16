@@ -156,6 +156,10 @@ class KapBridge():
             sample_rate     = self.sample_rate,
         )
 
+        if self.logger:
+            self.logger.info(f"Sample rate set to {self.sample_rate} Hz")
+            self.logger.info(f"Buffer size set to {self.buffer_size} kB")
+
         exc_, std_      = self.acbox_channels
         self.set_Vex    = lambda x: self.acbox.set_amplitude(*exc_, x)
         self.set_Vstd   = lambda x: self.acbox.set_amplitude(*std_, x)

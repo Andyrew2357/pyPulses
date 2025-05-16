@@ -303,8 +303,8 @@ class sr865a(pyvisaDevice):
             
             # calculate time to wait
             delay = max((1000*self.buffer_size - n) * self.sampint / 4, 0.1)
-            time.sleep(delay)
             self.info(f"SR865A: Waiting for {delay:.2f} s to acquire data.")
+            time.sleep(delay)
 
         # end the acquisition and request data
         self.stop_acquisition()
