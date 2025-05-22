@@ -2,7 +2,6 @@
 This class is an interface for communicating with the Keithley 2400 SMU.
 """
 
-from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
 from typing import Optional
@@ -16,7 +15,7 @@ class keithley2400(pyvisaDevice):
                  wait: Optional[float] = 0.1, 
                  instrument_id: Optional[str] = None):
         
-        self.config = {
+        self.pyvisa_config = {
             "resource_name" : "GPIB0::24::INSTR",
 
             "output_buffer_size" : 512,
@@ -24,11 +23,8 @@ class keithley2400(pyvisaDevice):
             "gpib_eos_char"     : ord('\n'),
             "gpib_eoi_mode"     : True,
         }
-        if instrument_id: 
-            self.config["resource_name"] = instrument_id
 
-        super().__init__(self.config, logger)
-        DeviceRegistry.register_device(self.config["resource_name"], self)
+        super().__init__(self.pyvisa_config, logger, instrument_id)
 
         self.max_step = max_step
         self.wait = wait

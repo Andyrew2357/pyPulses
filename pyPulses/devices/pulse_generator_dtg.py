@@ -40,8 +40,7 @@ class pulseGeneratorDTG(abstractDevice):
         self.Vy2    = tuple(config["Vy2"])
         self.trig   = tuple(config["trig"])
 
-        dtg_address     = config["dtg_address"]
-
+        dtg_address = config["dtg_address"]
         self.dtg = DeviceRegistry.get_device(dtg_address)
         if self.dtg is None:
             self.dtg = dtg5274(dtg_logger, instrument_id = dtg_address)

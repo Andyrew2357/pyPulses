@@ -3,7 +3,6 @@ This class is an interface to the Cryomagnetics 4G Superconducting Magnet Power
 Supply.
 """
 
-from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 from typing import Optional
 import time
@@ -14,7 +13,7 @@ class cryomagnetics4G(pyvisaDevice):
                  wait: Optional[float] = 0.1, 
                  instrument_id: Optional[str] = None):
         
-        self.config = {
+        self.pyvisa_config = {
             "resource_name" : "GPIB0::25::INSTR",
 
             "output_buffer_size" : 512,
@@ -22,11 +21,8 @@ class cryomagnetics4G(pyvisaDevice):
             "gpib_eos_char"     : ord('\n'),
             "gpib_eoi_mode"     : True,
         }
-        if instrument_id: 
-            self.config["resource_name"] = instrument_id
 
-        super().__init__(self.config, logger)
-        DeviceRegistry.register_device(self.config["resource_name"], self)
+        super().__init__(self.pyvisa_config, logger, instrument_id)
 
         self.H_tol_kG    = 1e-3 # finite-precision field strength tolerance
         self.H_sweep_tol = 0.01

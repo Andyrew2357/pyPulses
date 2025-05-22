@@ -8,7 +8,6 @@ phases can be controlled independently. The amplitude range is 0 to 120 mV with
 up to ~ 50 MHz with 48 bit resolution. 
 """
 
-from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
 from math import floor
@@ -16,7 +15,7 @@ from typing import Optional
 
 class ad9854(pyvisaDevice):
     def __init__(self, logger=None, instrument_id: Optional[str] = None):
-        self.config = {
+        self.pyvisa_config = {
             "resource_name": "ASRL3::INSTR",
             "baud_rate": 19200,
             "data_bits": 8,
@@ -25,12 +24,8 @@ class ad9854(pyvisaDevice):
             "flow_control": pyvisa.constants.VI_ASRL_FLOW_NONE,
             "write_buffer_size": 512
         }
-        
-        if instrument_id:
-            self.config["resource_name"] = instrument_id
             
-        super().__init__(self.config, logger)
-        DeviceRegistry.register_device(self.config["resource_name"], self)
+        super().__init__(self.pyvisa_config, logger, instrument_id)
         
         self.master_reset()
         self.configure_control_register()

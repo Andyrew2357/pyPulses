@@ -4,7 +4,6 @@ instrument in question has an Arduino Uno connected to the Analog Devices DAC
 that takes serial bus input to set 16-bit unipolar DC outputs on 8 channels.
 """
 
-from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
 import numpy as np
@@ -17,7 +16,7 @@ class ad5764(pyvisaDevice):
                  wait: Optional[float] = 0.1, instrument_id: Optional[str] = None):
 
         # configurations for pyvisa resource manager
-        self.config = {
+        self.pyvisa_config = {
             "resource_name" : "ASRL5::INSTR",
             "baud_rate"     : 115200,
             "data_bits"     : 8,
@@ -27,11 +26,8 @@ class ad5764(pyvisaDevice):
             
             "write_buffer_size" : 512
         }
-        if instrument_id: 
-            self.config["resource_name"] = instrument_id
 
-        super().__init__(self.config, logger)
-        DeviceRegistry.register_device(self.config["resource_name"], self)
+        super().__init__(self.pyvisa_config, logger, instrument_id)
 
         # maximum bounds on channel values
         self.max_V      = 10.

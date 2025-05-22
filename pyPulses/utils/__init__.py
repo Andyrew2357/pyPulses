@@ -11,7 +11,6 @@ from .param_sweep_measure import SweepMeasureConfig, sweepMeasure
 from .param_sweep_measure import SweepMeasureCutConfig, sweepMeasureCut
 from .param_sweep_measure import SweepMeasureParallelepipedConfig, sweepMeasureParallelepiped
 from .param_sweep_measure import SweepMeasureProductConfig, sweepMeasureProduct
-from .R_predictor import RPredictor
 from .rootfinder import RootFinderState, RootFinderStatus
 from .tandem_sweep import tandemSweep
 
@@ -30,7 +29,6 @@ __all__ = [
     plotSweep,
     RootFinderState,
     RootFinderStatus,
-    RPredictor,
     sweepMeasure,
     SweepMeasureConfig,
     sweepMeasureCut,

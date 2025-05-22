@@ -1,4 +1,3 @@
-from ._registry import DeviceRegistry
 from .pyvisa_device import pyvisaDevice
 from typing import Optional, Tuple
 from collections import defaultdict
@@ -9,15 +8,12 @@ import time
 class sr865a(pyvisaDevice):
     def __init__(self, logger: Optional[str] = None, 
                  instrument_id: Optional[str] = None):
-        self.config = {
+        self.pyvisa_config = {
             "resource_name"     : "USB0::0xB506::0x2000::003931::INSTR",
             "output_buffer_size": 512
         }
-        if instrument_id: 
-            self.config["resource_name"] = instrument_id
 
-        super().__init__(self.config, logger)
-        DeviceRegistry.register_device(self.config["resource_name"], self)
+        super().__init__(self.pyvisa_config, logger, instrument_id)
 
         # initialize data acquisition parameters
         self.currsamp    = 0
@@ -299,17 +295,17 @@ class sr865a(pyvisaDevice):
             seen[n] += 1
             if seen[n] > 3:
                 self.error(f"SR865A: No progess waiting for acquisition.")
+                self.stop_acquisition()
                 break
             
             # calculate time to wait
-            delay = max((1000*self.buffer_size - n) * self.sampint / 4, 0.1)
+            delay = max((1000*self.buffer_size - n) * self.sampint / 16, 0.01)
             self.info(f"SR865A: Waiting for {delay:.2f} s to acquire data.")
             time.sleep(delay)
 
         # end the acquisition and request data
         self.stop_acquisition()
         self.device.write(f"CAPTUREGET? 0,{self.buffer_size}")
-        time.sleep(0.1) # wait for the data to be ready
         
         # read in and parse the binary data. Then reshape
         raw = self.device.read_raw()

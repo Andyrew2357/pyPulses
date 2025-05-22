@@ -2,7 +2,7 @@
 Global variables that must be accessed and modified by various device classes.
 """
 
-from typing import Dict
+from typing import Dict, Optional
 
 class DeviceRegistry:
     """
@@ -26,8 +26,10 @@ class DeviceRegistry:
         return cls._instance
     
     @classmethod
-    def get_device(cls, instrument_name: str):
+    def get_device(cls, instrument_name: str) -> Optional[object]:
         """Get a connection if it exists."""
+        if not instrument_name in cls._active_devices:
+            return None
         return cls._active_devices.get(instrument_name)
     
     @classmethod

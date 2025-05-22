@@ -3,6 +3,7 @@ This class is a bare-bones framework for low-level devices that use the pyvisa
 package for communication. This includes the majority of standalone instruments.
 """
 
+from ._registry import DeviceRegistry
 from .nivisa_utils import visa_dll
 from .abstract_device import abstractDevice
 import pyvisa.constants
@@ -10,11 +11,15 @@ import pyvisa
 import re
 
 class pyvisaDevice(abstractDevice):
-    def __init__(self, pyvisa_config, logger = None):
+    def __init__(self, pyvisa_config, logger = None, instrument_id = None):
         """Standard initialization, calling ResourceManager.open_resource."""
+        
         super().__init__(logger)
-
         self.pyvisa_config = pyvisa_config
+        if instrument_id:
+            self.pyvisa_config['resource_name'] = instrument_id
+        DeviceRegistry.register_device(self.pyvisa_config['resource_name'], self)
+
         # for debugging purposes, we can connect to an object that mimics a
         # pyvisa resource but just logs the messages it recieves. The user may
         # also pre-program responses from the dummy resource for testing. 

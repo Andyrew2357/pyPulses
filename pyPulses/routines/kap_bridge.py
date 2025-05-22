@@ -120,6 +120,21 @@ class KapBridgeBalance():
     prev_x_b: float         # Vstd when last measurement was taken (x component)
     prev_y_b: float         # Vstd when last measurement was taken (y component)
 
+    def __str__(self):
+        s = "KapBridgeBalance:\n"
+        + f"    result: {'balanced' if self.success else 'unbalanced'}\n"
+        + f"    balance point: (x_b, y_b) = ({self.x_b:.5e}V, {self.y_b:.5e}V\n"
+        + f"    lock-in: (X, Y) = {self.x_m:.5e}V, {self.y_m:.5e}V\n"
+        + f"    lock-in covariance: {self.R[0, 0]:.5e}  {self.R[0, 1]:.5e}\n"
+        + f"                        {self.R[1, 0]:.5e}  {self.R[1, 1]:.5e}\n"
+        + f"    Effective Bridge Gain: {self.A[0]:.5e} + {self.A[0]:.5e}i\n"
+        + f"    Gain covariance:    {self.P[0, 0]:.5e}  {self.P[0, 1]:.5e}\n"
+        + f"                        {self.P[1, 0]:.5e}  {self.P[1, 1]:.5e}\n"
+        + f"    Used Error Threshold: {self.errt}V\n"
+        + f"    Terminating iteration: {self.iter}\n"
+        + f"    Measured: (x, y) = ({self.prev_x_b:.5e}V, {self.prev_y_b:.5e}V"
+        return s
+
 @dataclass
 class KapBridge():
     lockin          : sr865a                    # lock-in amplifier

@@ -7,9 +7,9 @@ primarily using pulse heights.
 
 # THIS IS NOT FULLY IMPLEMENTED / READY TO BE USED YET. DO NOT USE.
 
-from .curves import pchip, prune_sort
-from .extrap_predictorNd import ExtrapPredNd
-from .dummy_predictor import DummyPred
+from ..utils.curves import pchip, prune_sort
+from ..utils.extrap_predictorNd import ExtrapPredNd
+from ..utils.dummy_predictor import DummyPred
 from typing import Tuple
 import numpy as np
 
