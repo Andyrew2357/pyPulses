@@ -140,7 +140,7 @@ def safe_file_handling(paramSweep: Callable[[ParamSweepMeasureConfig],
                 C.file = fname
                 return res
             
-            return paramSweep(C)
+        return paramSweep(C)
         
     return file_handling_paramSweep
 
