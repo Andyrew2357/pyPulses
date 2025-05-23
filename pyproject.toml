@@ -1,8 +1,21 @@
 [project]
-name = pyPulses
+name = "pyPulses"
 version = "1.0.0"
 description = "Instrument control code for pulsing measurements"
 readme = "README.md"
+authors = [
+    {name = "Jackson Butler", email = "jbutler4@mit.edu"},
+    {name = "Andrew DiFabbio", email = "avd38@mit.edu"}
+]
+maintainers = [
+    {name = "Andrew DiFabbio", email = "avd38@mit.edu"}
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python",
+  "Operating System :: OS Dependent",
+  "Intended Audience :: Science/Research"
+]
 requires-python = ">=3.10"
 dependencies = [
     "gpib-ctypes>=0.2",
@@ -19,6 +32,24 @@ plotting = [
     "jupyter_bokeh>=4.0"
 ]
 
+[project.urls]
+repository = "https://github.com/Andyrew2357/pyPulses.git"
+
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "pyPulses", 
+    "pyPulses.devices", 
+    "pyPulses.plotting",
+    "pyPulses.routines",
+    "pyPulses.utils"
+]
+
+[tool.setuptools.package-data]
+example = [
+    "*.json",
+    "*.npy"
+]
