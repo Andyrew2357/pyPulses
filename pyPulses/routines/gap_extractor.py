@@ -1,3 +1,8 @@
+"""
+These are tools for extracting gaps from capacitance data (conversion to 
+compressibility and proper integration/error propagation)
+"""
+
 import numpy as np
 import os
 from typing import Optional

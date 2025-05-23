@@ -30,8 +30,10 @@ class ad5764(pyvisaDevice):
         super().__init__(self.pyvisa_config, logger, instrument_id)
 
         # maximum bounds on channel values
-        self.max_V      = 10.
-        self.min_V      = -10.
+        self.hard_max_V = 10.
+        self.hard_min_V = -10.
+        self.max_V = {i: self.hard_max_V for i in range(8)}
+        self.min_V = {i: self.hard_min_V for i in range(8)}
 
         # sweep parameters
         self.max_step   = max_step
@@ -58,8 +60,8 @@ class ad5764(pyvisaDevice):
             self.error(f"AD5764 does not have a channel {ch}.")
             return
         
-        if V > self.max_V or V < self.min_V:
-            Vt = min(self.max_V, max(self.min_V, V))
+        if V > self.max_V[ch] or V < self.min_V[ch]:
+            Vt = min(self.max_V[ch], max(self.min_V[ch], V))
             self.warn(
                 f"{V} on AD5764 channel {ch} is out of range; truncating to {Vt}."
             )
@@ -99,8 +101,8 @@ class ad5764(pyvisaDevice):
             self.error(f"AD5764 does not have a channel {ch}.")
             return
         
-        if V > self.max_V or V < self.min_V:
-            Vt = min(self.max_V, max(self.min_V, V))
+        if V > self.max_V[ch] or V < self.min_V[ch]:
+            Vt = min(self.max_V[ch], max(self.min_V[ch], V))
             self.warn(
                 f"{V} on AD5764 channel {ch} is out of range; truncating to {Vt}."
             )
@@ -165,7 +167,22 @@ class ad5764(pyvisaDevice):
             self.V[ch] = float(V)
             if chatty:
                 self.info(f"Channel Settings: {self.V}")
-            
+
+    def set_channel_lim(self, ch, lim):
+        """Manually set the voltage limits for a channel"""
+        vl, vh = lim
+
+        if vh is None:
+            vh = self.hard_max_V
+        if vl is None:
+            vl = self.hard_min_V
+
+        vh = min(self.hard_max_V, vh)
+        vl = max(self.hard_min_V, vl)
+        self.max_V[ch] = vh
+        self.min_V[ch] = vl
+        
+        self.info(f"Set hard channel {ch} limits to [{vl}, {vh}] V")
 
     def broken_true_query(self, ch):
         return

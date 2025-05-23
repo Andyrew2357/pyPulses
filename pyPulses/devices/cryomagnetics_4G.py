@@ -8,9 +8,7 @@ from typing import Optional
 import time
 
 class cryomagnetics4G(pyvisaDevice):
-    def __init__(self, logger: Optional[str] = None, 
-                 max_step: Optional[float] = 0.05, 
-                 wait: Optional[float] = 0.1, 
+    def __init__(self, logger: Optional[str] = None,
                  instrument_id: Optional[str] = None):
         
         self.pyvisa_config = {

@@ -1,5 +1,5 @@
-from ..devices import pulseGenerator, watdScope, DeviceRegistry
-from ..utils import getQuickLogger, tandemSweep
+from ..pyPulses.devices import pulseGenerator, watdScope, DeviceRegistry
+from ..pyPulses.utils import getQuickLogger, tandemSweep
 import numpy as np
 # import argparse
 

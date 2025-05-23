@@ -1,5 +1,5 @@
 """
-An improved class for dynamically plotting data from parameter sweeps using Bokeh.
+This is a class for dynamically plotting data from parameter sweeps using Bokeh.
 Uses asynchronous updates to minimize impact on measurement time.
 """
 
@@ -25,7 +25,7 @@ class SweepPlotter:
                  swept_names    : List[str], 
                  measured_names : List[str],
                  plot_layout    : str = 'grid',
-                 update_interval: float = 0.1,  # Time-based throttling (seconds)
+                 update_interval: float = 0.1, # Time-based throttling (seconds)
                  plot_width     : int = 350, 
                  plot_height    : int = 300,
                  max_history    : Optional[int] = None,
@@ -357,7 +357,8 @@ class SweepPlotter:
         """
         Callback function to update plots during a sweep.
         
-        This function is designed to be used as the post_callback in sweepMeasureCut.
+        This function is designed to be used as the post_callback in 
+        sweepMeasureCut and similar methods.
         """
 
         # Apply masks if needed

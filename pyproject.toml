@@ -1,0 +1,24 @@
+[project]
+name = pyPulses
+version = "1.0.0"
+description = "Instrument control code for pulsing measurements"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "gpib-ctypes>=0.2",
+    "numpy>=2.0",
+    "pyserial>=3.5",
+    "PyVISA>=1.14",
+    "PyVISA-py>=0.7"
+]
+
+[project.optional-dependencies]
+plotting = [
+    "bokeh>=3.7",
+    "ipython>=9.0",
+    "jupyter_bokeh>=4.0"
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

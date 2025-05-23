@@ -1,3 +1,8 @@
+"""
+This class is an interface to the Stanford Research Systems model 865A lock-in 
+amplifier.
+"""
+
 from .pyvisa_device import pyvisaDevice
 from typing import Optional, Tuple
 from collections import defaultdict

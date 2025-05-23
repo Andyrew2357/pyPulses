@@ -1,3 +1,7 @@
+"""
+This is a class for balancing a resistor bridge using pulsing.
+"""
+
 from ..utils import balance1d, BalanceConfig, RootFinderStatus, RootFinderState
 from dataclasses import dataclass
 import numpy as np

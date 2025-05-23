@@ -1,3 +1,12 @@
+"""
+Smart function for sweeping multiple parameters simultaneously. The number of
+steps is determined by whichever parameter is the bottleneck. For costly
+setters, the user can provide min_step as a key word argument, which avoids
+unnecessarily granular sweeping (this is especially important for things like
+the magnet). Usually, this is not an issue, because we rarely sweep highly
+dissimilar parameters simultaneously; it's mostly there for param_sweep_measure.
+"""
+
 from typing import Any, Callable, List, Optional, Tuple
 from math import ceil
 import time

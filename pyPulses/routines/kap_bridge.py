@@ -172,8 +172,8 @@ class KapBridge():
         )
 
         if self.logger:
-            self.logger.info(f"Sample rate set to {self.sample_rate} Hz")
-            self.logger.info(f"Buffer size set to {self.buffer_size} kB")
+            self.logger.debug(f"Sample rate set to {self.sample_rate} Hz")
+            self.logger.debug(f"Buffer size set to {self.buffer_size} kB")
 
         exc_, std_      = self.acbox_channels
         self.set_Vex    = lambda x: self.acbox.set_amplitude(*exc_, x)
@@ -190,7 +190,7 @@ class KapBridge():
 
         if self.logger:
             self.logger.info(f"Adding new filter {filter_key}...")
-            self.logger.info(f"Upping time constant to {self.raw_time_const} s")
+            self.logger.debug(f"Upping time constant to {self.raw_time_const} s")
             self.logger.info("Performing a raw balance of the bridge")
 
         self.lockin.set_time_const(self.raw_time_const)
@@ -256,7 +256,7 @@ class KapBridge():
             self.logger.info(raw_balance)
             self.logger.info(f"Effective gain: {A[0]:.5e} + {A[1]:.5e}i")
             self.logger.info(f"Balance point: {x_b:.5e} V, {y_b:.5e} V")
-            self.logger.info(f"lowering time constant to {self.time_const} s")
+            self.logger.debug(f"lowering time constant to {self.time_const} s")
         self.lockin.set_time_const(self.time_const)
         time.sleep(0.1)
 
@@ -353,7 +353,7 @@ class KapBridge():
                 # calculating the covariance matrix for z
                 R_change = R + prev_R
                 if self.logger:
-                    self.logger.info(
+                    self.logger.debug(
                         f"Covariance matrix for measured z: \n"
                       + f"    [{R_change[0,0]:.5e}, {R_change[0,1]:.5e}]\n"
                       + f"    [{R_change[1,0]:.5e}, {R_change[1,1]:.5e}]"
@@ -366,7 +366,7 @@ class KapBridge():
             first_guess = False
 
             if self.logger:
-                self.logger.info(
+                self.logger.debug(
                     "Prior to Kalman Prediction Step\n"
                     + f"Effective gain: \n"
                     + f"    x = {self.kfilter[filter_key].kalman.x[0]:.5e}\n"
