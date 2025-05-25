@@ -19,20 +19,20 @@ from .sr865a import sr865a
 from .watd_scope import watdScope
 
 __all__ = [
-    ad5764,
-    # ad5791,
-    ad9854,
-    cryomagnetics4G,
-    dtg5274,
-    DeviceRegistry,
-    hp34401a,
-    keithley2400,
-    keithley2450,
-    mso44,
-    pulseGenerator,
-    pulseGeneratorDTG,
-    sr865a,
-    watdScope
+    "ad5764",
+    # "ad5791",
+    "ad9854",
+    "cryomagnetics4G",
+    "dtg5274",
+    "DeviceRegistry",
+    "hp34401a",
+    "keithley2400",
+    "keithley2450",
+    "mso44",
+    "pulseGenerator",
+    "pulseGeneratorDTG",
+    "sr865a",
+    "watdScope"
 ]
 
 visa_dll = 'C:/Windows/System32/visa64.dll'
