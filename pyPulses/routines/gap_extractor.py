@@ -65,6 +65,9 @@ class GapExtractor():
                 #(Y is flipped to correct for the time evolution convention of 
                 # the lock-in)
                 Y = chi_im / (self.chi_g - self.chi_b)
+                if abs(Y) < 1e-2:
+                    return self.calc_cq_AR(chi_re, mode = 'low_freq',
+                                           derivatives = derivatives)
                 
                 # calculate the z-tangent Y/X
                 ztan = Y / X
@@ -151,7 +154,7 @@ class GapExtractor():
                         dcq_dchi_g = dcq_dX*dX_dchi_g + dcq_dY*dY_dchi_g
                         dcq_dchi_b = dcq_dX*dX_dchi_b + dcq_dY*dY_dchi_b
 
-                    delta = 1e-6
+                    delta = 1e-8
                     dcq_dchi_r = (self.calc_cq_AR(chi_re + delta, chi_im, 
                         mode = 'tl_model', derivatives = False)[0] - cq)/delta
                     
@@ -169,6 +172,10 @@ class GapExtractor():
                     dcq_dchi_b = (self.calc_cq_AR(chi_re, chi_im, 
                         mode = 'tl_model', derivatives = False)[0] - cq)/delta
                     self.chi_b = chi_b
+
+                if 1/cq > 100:
+                    # print(f"ANOMALOUSLY LARGE chi_re: {chi_re}, chi_im: {chi_im}, chi_b: {self.chi_b}, chi_g: {self.chi_g}")
+                    pass
 
             # low frequency limit of the transmission line calculation
             case 'low_freq':
@@ -242,6 +249,11 @@ class GapExtractor():
             (np.diff(vt)*(dmt_dchi_i[1:] + dmt_dchi_i[:-1]) + \
              np.diff(vb)*(dmb_dchi_i[1:] + dmb_dchi_i[:-1]))**2
             ))
+        
+        # print("#"*80)
+        # print(f"chi_g: {chi_g_part[-1]:.4e}, chi_b: {chi_b_part[-1]:.4e}, chi_re: {chi_re_part[-1]:.4e}, chi_im: {chi_im_part[-1]:.4e}")
+        # print(f"dmt_dchi_g: {dmt_dchi_g.max():.2e}, dmb_dchi_g: {dmb_dchi_g.max():.2e}, dmt_dchi_b: {dmt_dchi_b.max():.2e}, dmb_dchi_g: {dmb_dchi_b.max():.2e}")
+        # print(f"dmt_dchi_r: {dmt_dchi_r.max():.2e}, dmb_dchi_r: {dmb_dchi_r.max():.2e}, dmt_dchi_i: {dmt_dchi_i.max():.2e}, dmb_dchi_i: {dmb_dchi_i.max():.2e}")
 
         # prepend 0 to get back to the right array size and reflect nf = ni
         return np.r_[0, np.sqrt(chi_g_part + chi_b_part + chi_re_part + chi_im_part)]

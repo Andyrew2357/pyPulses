@@ -284,7 +284,7 @@ class sr865a(pyvisaDevice):
         self.device.write("CAPTURESTOP")
         self.info("SR865A: Stopped data acquisition.")
 
-    def get_buffered_data(self) -> np.ndarray:
+    def get_buffered_data(self, max_tries: int = 5) -> np.ndarray:
         """
         Get buffered data.
         Returns a numpy ndarray of acquired data points
@@ -293,7 +293,7 @@ class sr865a(pyvisaDevice):
         seen = defaultdict(int)
         while True:
             n = int(self.device.query("CAPTUREBYTES?"))
-            if n >= 1000*self.buffer_size:
+            if n >= 1024*self.buffer_size:
                 break
 
             # If no progress is being made, we should stop waiting
@@ -304,16 +304,29 @@ class sr865a(pyvisaDevice):
                 break
             
             # calculate time to wait
-            delay = max((1000*self.buffer_size - n) * self.sampint / 16, 0.01)
+            delay = max((1024*self.buffer_size - n) * self.sampint / 16, 0.01)
             self.info(f"SR865A: Waiting for {delay:.2f} s to acquire data.")
             time.sleep(delay)
 
         # end the acquisition and request data
         self.stop_acquisition()
-        self.device.write(f"CAPTUREGET? 0,{self.buffer_size}")
-        
-        # read in and parse the binary data. Then reshape
-        raw = self.device.read_raw()
+        for i in range(max_tries):
+            self.device.write(f"CAPTUREGET? 0,{self.buffer_size}")
+            time.sleep((self.buffer_size + i - 1)*10e-3)
+
+            # read in and parse the binary data. Then reshape
+            raw = self.device.read_raw()
+            if len(raw) != 0:
+                break
+            
+            # If we failed to retrieve the data, we request it again with a
+            # longer delay between the request and raw read.
+        else:
+            self.error(
+                "SR865A: Failed to retrieve binary data when reading buffer."
+            )
+            return np.array([])
+
         data = self.parse_binary_block(raw)
         match self.data_config:
             case 'X':
