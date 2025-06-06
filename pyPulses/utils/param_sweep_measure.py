@@ -2,6 +2,7 @@
 
 import numpy as np
 import itertools
+import datetime
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, IO, List, Optional, Tuple, Union
@@ -52,6 +53,9 @@ Arguments that are shared between all parameter sweeps.
                       important for 'min_step', which tells the sweep to ignore
                       trivial changes in a swept parameter that cost unecessary
                       time.)
+    timestamp       : Optional; whether to include a timestamp for each point 
+                      (Note this is not returned, only written to files/passed
+                      to callbacks)
 """
 
 @dataclass(kw_only=True)
@@ -83,13 +87,14 @@ class ParamSweepMeasureConfig:
     pre_callback    : Optional[                                                 # callback before measurement
                             Callable[
                                 [Union[int, np.ndarray], 
-                                 np.ndarray], 
+                                 np.ndarray, Optional[datetime.datetime]], 
                             Any]
                         ] = None
     post_callback   : Optional[                                                 # callback after measurement
                             Callable[
                                 [Union[int, np.ndarray], 
-                                np.ndarray, np.ndarray], 
+                                np.ndarray, np.ndarray, 
+                                Optional[datetime.datetime]], 
                             Any]
                         ] = None
     space_mask      : Optional[                                                 # mask for which points to take
@@ -102,6 +107,7 @@ class ParamSweepMeasureConfig:
     ramp_wait       : Optional[float] = None                                    # wait time between steps when ramping
     ramp_steps      : Optional[List[float]] = None                              # maximum step sizes
     ramp_kwargs     : Optional[dict] = None                                     # keyword arguments for tandem sweep
+    timestamp       : Optional[bool] = True                                     # whether to include a timestamp for each point
 
     def __post_init__(self):
         """Input validation"""
@@ -181,9 +187,15 @@ def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
     # wait for things to settle
     time.sleep(C.time_per_point)
 
+    if C.timestamp:
+        now = datetime.datetime.now()
+
     # pre-measurement callback
     if C.pre_callback:
-        C.pre_callback(ind, targets)
+        if C.timestamp:
+            C.pre_callback(ind, targets, now)
+        else:
+            C.pre_callback(ind, targets)
 
     # measure the desired parameters
     measured = np.array([get() for get in C.getters])
@@ -192,6 +204,8 @@ def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
     if C.file:
         msg  = f"{''.join([f"{x}, " for x in targets])}"
         msg += f"{''.join(f"{r}, " for r in measured)[:-2]}\n"
+        if C.timestamp:
+            msg = f"{now}, " + msg
         C.file.write(msg)
 
     # log the result
@@ -202,7 +216,10 @@ def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
 
     # post-measurement callback
     if C.post_callback:
-        C.post_callback(ind, targets, measured)
+        if C.timestamp:
+            C.post_callback(ind, targets, measured, now)
+        else:
+            C.post_callback(ind, targets, measured)
 
     return True, measured
 
@@ -213,6 +230,8 @@ def initialize_sweep(C: ParamSweepMeasureConfig):
     if C.file:
         msg = f"{''.join(f"{p}, " for p in C.swept_name)}"
         msg += f"{''.join(f"{p}, " for p in C.measured_name)[:-2]}\n"
+        if C.timestamp:
+            msg = "timestamp, " + msg
         C.file.write(msg)
 
     # log the swept parameters
