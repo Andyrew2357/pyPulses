@@ -7,72 +7,99 @@ the magnet). Usually, this is not an issue, because we rarely sweep highly
 dissimilar parameters simultaneously; it's mostly there for param_sweep_measure.
 """
 
-from typing import Any, Callable, List, Optional, Tuple
-from math import ceil
+from typing import Any, Callable, List, Optional
+import numpy as np
 import time
 
-def tandemSweep(wait: float,
-                *sweeps: List[Tuple[
-                    Callable[[float], Any], # setter
-                    float,                  # starting value
-                    float,                  # target value
-                    Optional[float]         # max_step
-                ]], **kwargs):
+def tandemSweep(setters: List[Callable[[float], Any]], 
+                start: List[float], end: List[float], 
+                max_step: List[Optional[float]], wait: float,  
+                min_step: List[Optional[float]] = None,
+                handle_exceptions: bool = True) -> bool:
     """
     Sweeps multiple parameters smoothly while respecting their maximum step
-    sizes. It takes arguments of the form:
-    wait_time, 
-    (setter1, start1, target1, max_step1), 
-    (setter2, start2, target2, max_step2),
-    ...
+    sizes. Returns a boolean indicating success or failure.
     """
     
+    N = len(setters)
+    if len(start) != N or len(end) != N or len(max_step) != N:
+        raise IndexError(
+            "Mismatch between number of setters and other arguments."
+        )
 
-    # Repackage the input into an 'instructions' list of tuples like:
-    # (setter, start, target, max_step = None)
-    instructions = []
-    for sweep in sweeps:
-        if len(sweep) < 4:
-            instructions.append((*sweep, None)) # max_step = None if not given
-        else:
-            instructions.append(sweep)
+    if min_step is None: 
+        min_step = np.zeros(N)
+    elif len(min_step) != N:
+        raise IndexError(
+            "Mismatch between number of setters and other arguments."
+        )
 
-    if 'min_step' in kwargs:
-        min_step = kwargs['min_step']
-    else:
-        min_step = [0]*len(instructions)
+    min_step = np.array([0 if m == 0 else m for m in min_step])
+    max_step = np.array([np.inf if m is None else m for m in max_step])
+    
+    if np.any(max_step - min_step < 0):
+        raise ValueError("'min_step' values cannot exceed 'max_step' values.")
+    if np.any(min_step < 0):
+        raise ValueError("'min_step' values cannot be negative.")
+    
+    start = np.array(start)
+    end = np.array(end)
 
     # Determine the number of steps to take. This is determined by the 'weakest
     # link', the variable the ramp that needs the most steps respecting its
     # maximum step size.
-    min_steps = 0
-    for _, start, target, max_step in instructions:
-        if max_step:
-            min_steps = max(ceil(abs(target - start) / max_step), min_steps)
+    M = np.max(np.ceil(np.abs(end - start) / max_step))
 
     # Perform the sweep, setting each value and waiting between steps
     # It will only set a parameter to a new value if the change exceeds the
     # minimum step size for that parameter (if none is provided, that step
     # size is 0). This is to prevent repeatedly calling costly setters for
     # meaningless changes.
-    prev_settings = [start for _, start, _, _ in instructions]
-    for step in range(1, min_steps):
+    prev_settings = start.copy()
+    for i in range(N):
+        new_settings = start + i * (end - start) / M
+
+        # determine which parameters are close enough not to set
+        similar = np.abs(new_settings - prev_settings) <= min_step
+        new_settings[similar] = prev_settings[similar]
+        
+        for i in range(N):
+            if prev_settings[i] != new_settings[i]:
+                try:
+                    success = setters[i](new_settings[i])
+                    
+                    # Some setters may indicate success or failure by returning
+                    # a boolean. If failure is encountered, raise an exception.
+                    if type(success) == bool:
+                        assert success
+                
+                except:
+                    # Handle exceptions when setting; Attempt to sweep back to
+                    # start if we encounter an error.
+                    print(
+                        "tandemSweep encountered an error when setting: "
+                        + setters[i].__name__
+                    )
+                    if handle_exceptions:
+                        print("Attempting to sweep back to start...")
+                        tandemSweep(setters, prev_settings, start,
+                                    max_step    = max_step,
+                                    wait        = wait,
+                                    min_step    = min_step,
+                                    handle_exceptions = False)
+                        return False
+                    else:
+                        raise RuntimeError(
+                            "tandemSweep unable to resolve error whilst setting"
+                        )
+
+            prev_settings[i] = new_settings[i]
+        
         time.sleep(wait)
 
-        new_settings = [start + step * (target - start) / min_steps
-                        for _, start, target, _ in instructions]
-        for i in range(len(instructions)):
-            if abs(new_settings[i] - prev_settings[i]) <= min_step[i]:
-                new_settings[i] = prev_settings[i]
-
-        for i in range(len(instructions)):
-            if not prev_settings[i] == new_settings[i]:
-                instructions[i][0](new_settings[i])
-            prev_settings[i] = new_settings[i]
-
     # Make sure we actually make it to the target by the end.
-    time.sleep(wait)
-    final_settings = [stop for _, _, stop, _ in instructions]
-    for i in range(len(instructions)):
-        if not final_settings[i] == prev_settings[i]:
-            instructions[i][0](final_settings[i])
+    for i in range(N):
+        if prev_settings[i] != end[i]:
+            setters[i](end[i])
+    
+    return True

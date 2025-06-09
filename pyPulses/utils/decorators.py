@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Any, Callable
 from logging import Logger
 import time
 
@@ -47,5 +47,24 @@ def log_args(logger: Logger) -> Callable:
             return f(*args, **kwargs)   
          
         return f_logging_args
+    
+    return wrap
+
+def limit_setter(min: float, max:float) -> Callable:
+    """
+    Limit the range of a function that takes a float as its argument
+    """
+
+    def wrap(f: Callable[[float], Any]) -> Callable:
+
+        def f_limited(x: float):
+            if x < min or x > max:
+                raise ValueError(
+                    f"{f.__name__} takes values between {min} and {max}."
+                )
+            
+            return f(x)
+        
+        return f_limited
     
     return wrap

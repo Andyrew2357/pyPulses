@@ -154,14 +154,8 @@ def set_swept_params(C: ParamSweepMeasureConfig,
                      prev:np.ndarray, targets: np.ndarray):
     """Utility function to smoothly integrate tandemSweep functionality."""
     if C.ramp_wait is not None:
-        tandemSweep(
-            C.ramp_wait,
-            *[
-                (C.setters[i], prev[i], targets[i], C.ramp_steps[i])
-                for i in range(len(C.setters))
-            ],
-            **C.ramp_kwargs
-        )
+        tandemSweep(C.setters, prev, targets, 
+                    C.ramp_steps, C.ramp_wait, **C.ramp_kwargs)
     else:
         for i in range(len(C.setters)):
             if prev[i] != targets[i]:
