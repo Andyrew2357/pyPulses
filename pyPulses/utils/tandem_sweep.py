@@ -9,6 +9,7 @@ dissimilar parameters simultaneously; it's mostly there for param_sweep_measure.
 
 from typing import Any, Callable, List, Optional
 import numpy as np
+from math import ceil
 import time
 
 def tandemSweep(setters: List[Callable[[float], Any]], 
@@ -34,7 +35,7 @@ def tandemSweep(setters: List[Callable[[float], Any]],
             "Mismatch between number of setters and other arguments."
         )
 
-    min_step = np.array([0 if m == 0 else m for m in min_step])
+    min_step = np.array([0 if m is None else m for m in min_step])
     max_step = np.array([np.inf if m is None else m for m in max_step])
     
     if np.any(max_step - min_step < 0):
@@ -48,7 +49,7 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     # Determine the number of steps to take. This is determined by the 'weakest
     # link', the variable the ramp that needs the most steps respecting its
     # maximum step size.
-    M = np.max(np.ceil(np.abs(end - start) / max_step))
+    M = ceil(np.max(np.abs(end - start) / max_step))
 
     # Perform the sweep, setting each value and waiting between steps
     # It will only set a parameter to a new value if the change exceeds the
@@ -56,7 +57,7 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     # size is 0). This is to prevent repeatedly calling costly setters for
     # meaningless changes.
     prev_settings = start.copy()
-    for i in range(N):
+    for i in range(M):
         new_settings = start + i * (end - start) / M
 
         # determine which parameters are close enough not to set
