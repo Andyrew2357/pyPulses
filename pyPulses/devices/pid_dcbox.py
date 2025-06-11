@@ -3,6 +3,7 @@ This class is an interface for communicating with the PID DC box.
 """
 
 from .pyvisa_device import pyvisaDevice
+import pyvisa.constants
 from typing import Optional, Tuple
 from math import ceil
 import numpy as np
@@ -14,7 +15,13 @@ class PIDbox(pyvisaDevice):
         
         # configurations for pyvisa resource manager
         self.pyvisa_config = {
-            "resource_name": "ASRL3::INSTR"
+            "resource_name" : "ASRL6::INSTR",
+            "baud_rate"     : 9600,
+            "data_bits"     : 8,
+            "parity"        : pyvisa.constants.Parity.none,
+            "stop_bits"     : pyvisa.constants.StopBits.one,
+            "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE,
+            "write_buffer_size" : 512
         }
 
         super().__init__(self.pyvisa_config, logger, instrument_id)
@@ -31,7 +38,7 @@ class PIDbox(pyvisaDevice):
 
     def get_V(self, ch: int) -> float:
         self.select_channel(ch)
-        return float(self.device.query("SOURce:VOLTage?"))
+        return float(self.device.query("SOURce:VOLTage?\n"))
 
     def set_V(self, ch: int, V: float, chatty: bool = True):
         """Set the DC value on a given channel."""
@@ -44,13 +51,13 @@ class PIDbox(pyvisaDevice):
             )
             V = Vt
 
-        self.device.write(f"SOURce:VOLTage {V}")
+        self.device.write(f"SOURce:VOLTage {V}\n")
         if chatty:
             self.info(f"Set source on channel {ch} to {V} V.")
 
     def get_PID(self, ch: int) -> float:
         self.select_channel(ch)
-        return float(self.device.query("PID:SET?"))
+        return float(self.device.query("PID:SET?\n"))
 
     def set_PID(self, ch: int, V: float):
         """Set the DC value on a given channel."""
@@ -63,44 +70,44 @@ class PIDbox(pyvisaDevice):
             )
             V = Vt
 
-        self.device.write(f"PID:SET {V}")
+        self.device.write(f"PID:SET {V}\n")
         self.info(f"Set PID loop on channel {ch} to {V} V.")
 
-    def get_pid_status(self, ch: int) -> bool:
+    def get_PID_status(self, ch: int) -> bool:
         """Check whether PID loop is enabled on selected channel."""
         self.select_channel(ch)
-        return int(self.device.query("PID:STAT?"))
+        return self.device.query("PID:STAT?\n") != 'PID control disabled\r\n'
 
-    def set_pid_status(self, ch: int, on: bool):
+    def set_PID_status(self, ch: int, on: bool):
         """Enable or disable the PID loop."""
         self.select_channel(ch)
-        self.device.write(f"PID:{'ON' if on else 'OFF'}")
+        self.device.write(f"PID:{'ON' if on else 'OFF'}\n")
         self.info(f"{'En' if on else 'Dis'}abled PID loop on channel {ch}.")
 
-    def P(self, P: Optional[float]) -> Optional[float]:
+    def P(self, P: float = None) -> Optional[float]:
         """Query or set proportional coefficient for PID loop."""
         if P is None:
-            return float(self.device.query("PID:P?"))
+            return float(self.device.query("PID:P?\n"))
         else:
-            self.device.write(f"PID:P {P}")
+            self.device.write(f"PID:P {P}\n")
 
-    def I(self, I: Optional[float]) -> Optional[float]:
+    def I(self, I: float = None) -> Optional[float]:
         """Query or set integral coefficient for PID loop."""
         if I is None:
-            return float(self.device.query("PID:I?"))
+            return float(self.device.query("PID:I?\n"))
         else:
-            self.device.write(f"PID:I {I}")
+            self.device.write(f"PID:I {I}\n")
 
-    def D(self, D: Optional[float]) -> Optional[float]:
+    def D(self, D: float = None) -> Optional[float]:
         """Query or set derivative coefficient for PID loop."""
         if D is None:
-            return float(self.device.query("PID:D?"))
+            return float(self.device.query("PID:D?\n"))
         else:
-            self.device.write(f"PID:D {D}")
+            self.device.write(f"PID:D {D}\n")
 
     def get_ADC(self) -> float:
         """Get the current ADC reading."""
-        return float(self.device.query("ADC?"))
+        return float(self.device.query("ADC?\n"))
 
     def set_channel_lim(self, ch: int, 
                         lim: Tuple[Optional[float], Optional[float]]):
@@ -119,8 +126,8 @@ class PIDbox(pyvisaDevice):
         self.max_V[ch] = vh
         self.min_V[ch] = vl
 
-        self.device.write(f"LIMIT:LO {vl}")
-        self.device.write(f"LIMIT:HI {vl}")
+        self.device.write(f"LIMIT:LO {vl}\n")
+        self.device.write(f"LIMIT:HI {vl}\n")
         
         self.info(f"Set hard channel {ch} limits to [{vl}, {vh}] V")
 
@@ -154,4 +161,4 @@ class PIDbox(pyvisaDevice):
         if ch < 0 or ch > 3:
             self.error(f"PID DC box does not have a channel {ch}.")
             return
-        self.device.write(f"INSTrument:SELect {ch}")
+        self.device.write(f"INSTrument:SELect {ch}\n")
