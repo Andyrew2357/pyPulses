@@ -12,6 +12,7 @@ from .param_sweep_measure import SweepMeasureCutConfig, sweepMeasureCut
 from .param_sweep_measure import SweepMeasureParallelepipedConfig, sweepMeasureParallelepiped
 from .param_sweep_measure import SweepMeasureProductConfig, sweepMeasureProduct
 from .rootfinder import RootFinderState, RootFinderStatus
+from .send_mail import sendMail
 from .tandem_sweep import tandemSweep
 
 __all__ = [
@@ -37,5 +38,6 @@ __all__ = [
     "SweepMeasureParallelepipedConfig",
     "sweepMeasureProduct",
     "SweepMeasureProductConfig",
+    "sendMail",
     "tandemSweep"
 ]
