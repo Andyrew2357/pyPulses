@@ -11,8 +11,8 @@ from math import log2
 import time
 
 class sr865a(pyvisaDevice):
-    def __init__(self, logger: Optional[str] = None, 
-                 instrument_id: Optional[str] = None):
+    def __init__(self, logger = None, instrument_id: str = None):
+        
         self.pyvisa_config = {
             "resource_name"     : "USB0::0xB506::0x2000::003931::INSTR",
             "output_buffer_size": 512

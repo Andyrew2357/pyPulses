@@ -4,12 +4,10 @@ Supply.
 """
 
 from .pyvisa_device import pyvisaDevice
-from typing import Optional
 import time
 
 class cryomagnetics4G(pyvisaDevice):
-    def __init__(self, logger: Optional[str] = None,
-                 instrument_id: Optional[str] = None):
+    def __init__(self, logger = None, instrument_id: str = None):
         
         self.pyvisa_config = {
             "resource_name" : "GPIB0::25::INSTR",

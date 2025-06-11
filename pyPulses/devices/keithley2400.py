@@ -3,17 +3,14 @@ This class is an interface for communicating with the Keithley 2400 SMU.
 """
 
 from .pyvisa_device import pyvisaDevice
-import pyvisa.constants
 from typing import Optional
 from math import ceil
 import numpy as np
 import time
 
 class keithley2400(pyvisaDevice):
-    def __init__(self, logger: Optional[str] = None, 
-                 max_step: Optional[float] = 0.05, 
-                 wait: Optional[float] = 0.1, 
-                 instrument_id: Optional[str] = None):
+    def __init__(self, logger = None, max_step: float = 0.05, 
+                 wait: float = 0.1, instrument_id: str = None):
         
         self.pyvisa_config = {
             "resource_name" : "GPIB0::24::INSTR",

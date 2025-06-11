@@ -14,7 +14,7 @@ from math import floor
 from typing import Optional
 
 class ad9854(pyvisaDevice):
-    def __init__(self, logger=None, instrument_id: Optional[str] = None):
+    def __init__(self, logger=None, instrument_id: str = None):
         self.pyvisa_config = {
             "resource_name": "ASRL3::INSTR",
             "baud_rate": 19200,

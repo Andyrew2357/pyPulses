@@ -1,10 +1,9 @@
 """This class is an interface to the HP34401A digital multimeter"""
 
 from .pyvisa_device import pyvisaDevice
-from typing import Optional
 
 class hp34401a(pyvisaDevice):
-    def __init__(self, logger = None, instrument_id: Optional[str] = None):
+    def __init__(self, logger = None, instrument_id: str = None):
         
         self.pyvisa_config = {
             "resource_name" : "",

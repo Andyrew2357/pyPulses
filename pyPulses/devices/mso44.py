@@ -5,13 +5,12 @@ by the instrument.
 """
 
 from .pyvisa_device import pyvisaDevice
-# import pyvisa.constants
 from typing import Optional, Tuple
 import numpy as np
 
 class mso44(pyvisaDevice):
-    def __init__(self, logger: Optional[str] = None, 
-                 instrument_id: Optional[str] = None):
+    def __init__(self, logger = None, instrument_id: str = None):
+        
         self.pyvisa_config = {
             "resource_name" : "TCPIP0::169.254.9.11::inst0::INSTR",
 

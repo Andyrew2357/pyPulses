@@ -8,12 +8,11 @@ from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
 import numpy as np
 from math import ceil
-from typing import Optional
 import time
 
 class ad5764(pyvisaDevice):
-    def __init__(self, logger = None, max_step: Optional[float] = 0.05, 
-                 wait: Optional[float] = 0.1, instrument_id: Optional[str] = None):
+    def __init__(self, logger = None, max_step: float = 0.05, 
+                 wait: float = 0.1, instrument_id: str = None):
 
         # configurations for pyvisa resource manager
         self.pyvisa_config = {

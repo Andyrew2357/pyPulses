@@ -3,15 +3,10 @@ This class is an interface for communicating with the Keithley 2000 multimeter
 """
 
 from .pyvisa_device import pyvisaDevice
-import pyvisa.constants
-from typing import Optional
 from math import ceil
-import numpy as np
-import time
 
 class keithley2400(pyvisaDevice):
-    def __init__(self, logger: Optional[str] = None, 
-                 instrument_id: Optional[str] = None):
+    def __init__(self, logger: str = None, instrument_id: str = None):
 
         self.pyvisa_config = {
             "resource_name" : "GPIB0::24::INSTR",

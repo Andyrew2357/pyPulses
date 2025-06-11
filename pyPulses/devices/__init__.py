@@ -13,6 +13,7 @@ from .hp34401a import hp34401a
 from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
 from .mso44 import mso44
+from .pid_dcbox import PIDbox
 from .pulse_generator import pulseGenerator
 from .pulse_generator_dtg import pulseGeneratorDTG
 from .sr865a import sr865a
@@ -29,6 +30,7 @@ __all__ = [
     "keithley2400",
     "keithley2450",
     "mso44",
+    "PIDbox",
     "pulseGenerator",
     "pulseGeneratorDTG",
     "sr865a",
