@@ -4,6 +4,7 @@ import numpy as np
 import itertools
 import datetime
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, IO, List, Optional, Tuple, Union
 
@@ -16,7 +17,8 @@ Arguments that are shared between all parameter sweeps.
 
     getters         : Getter(s) for measured parameter(s) 
                         (callable or tuple of callables)
-    setters         : Setters for swept parameters
+    setters         : Setters for swept parameters; must act as getters when
+                      called without an argument
                         (tuple of callables)
     time_per_point  : Time to wait before taking a measurement at each point
     file            : Optional; path to output file or a file-like object
@@ -59,15 +61,15 @@ Arguments that are shared between all parameter sweeps.
 """
 
 @dataclass(kw_only=True)
-class ParamSweepMeasureConfig:
+class ParamSweepMeasure:
     getters         : Union[                                                    # getter(s) for measurement
                             Tuple[Callable[[], float], ...], 
                             Callable[[], float]
-                        ]
+                        ] = ()
     setters         : Union[                                                    # setter(s) for swept parameters
-                            Tuple[Callable[[float], Any], ...],
-                            Callable[[float], Any]
-                        ]
+                            Tuple[Callable[[Any], Any], ...],                   # setters must also be able to 'get'
+                            Callable[[Any], Any]                                # the parameter if called without an
+                        ] = ()                                                  # argument
     time_per_point  : Optional[float] = 0
     file            : Optional[Union[IO, str]] = None                           # output file-like object or string
     measured_name   : Optional[                                                 # names of measured parameters
@@ -108,6 +110,7 @@ class ParamSweepMeasureConfig:
     ramp_steps      : Optional[List[float]] = None                              # maximum step sizes
     ramp_kwargs     : Optional[dict] = None                                     # keyword arguments for tandem sweep
     timestamp       : Optional[bool] = True                                     # whether to include a timestamp for each point
+    return_home     : Optional[bool] = True                                     # whether to return to the starting point after sweeping
 
     def __post_init__(self):
         """Input validation"""
@@ -134,12 +137,91 @@ class ParamSweepMeasureConfig:
             if (len(self.swept_name) != len(self.setters)) or \
                 (len(self.measured_name) != len(self.getters)):
                 raise ValueError("Dimension mismatch in parameters and names.")
+            
+        if not hasattr(self, 'npoints'):
+            self.npoints = 0
 
-def safe_file_handling(paramSweep: Callable[[ParamSweepMeasureConfig], 
+    """
+    It is possible to add and multiply sweeps to obtain more complicated
+    behavior. Addition corresponds to concatenation, wheras multiplication
+    places the 'inner' sweep (the right factor) into the callback of the 'outer'
+    sweep (left factor). The resulting sweep also inherits the return_home
+    behavior of the left object. As of right now, the file writing and
+    indexing behavior is not analogous to the behavior exhibited by other
+    sweeps. I may change how this functions in the future
+    """
+
+    def __barebones(self):
+        res = deepcopy(self)
+        res.logger          = None
+        res.retain_return   = False
+        return res
+            
+    def __add_compat__(self, other) -> bool:
+        if not isinstance(other, ParamSweepMeasure):
+            return False
+        
+        return True # should maybe be more stringent
+             
+    def __add__(self, other):
+        if not self.__add_compat__(other):
+            raise SyntaxError(
+                f"Operation '+' not supported between {self} and {other}."
+            )
+        
+        first   = deepcopy(self)
+        second  = deepcopy(other)
+        return_home = first.return_home
+        first.return_home = False
+        first.return_home = False
+
+        sum = ParamSweepMeasure(return_home = return_home)
+        def run(self):
+            first.run()
+            second.run()
+            if self.return_home:
+                set_swept_params(second, second.home)
+                set_swept_params(first, first.home)
+        sum.run = run
+        sum.npoints = first.npoints + second.npoints
+
+        return sum
+
+    def __mul_compat__(self, other) -> bool:
+        if not isinstance(other, ParamSweepMeasure):
+            return False
+        
+        return True # Should maybe be more stringent
+
+    def __mul__(self, other):
+        if not self.__mul_compat__(other):
+            raise SyntaxError(
+                f"Operation '*' not supported between {self} and {other}."
+            )
+
+        outer = self.__barebones()
+        inner = deepcopy(other)
+        return_home = outer.return_home
+        inner.return_home = True
+        
+        outer_pre_callback = outer.pre_callback
+        def pre_callback(*args, **kwargs):
+            if outer_pre_callback:
+                outer_pre_callback(*args, **kwargs)
+            inner.run()
+
+        outer.pre_callback = pre_callback
+        outer.npoints *= inner.npoints
+
+        return outer
+
+"""Utility functions to avoid redundancy"""
+
+def safe_file_handling(paramSweep: Callable[[ParamSweepMeasure], 
                                             Optional[np.ndarray]]):
-    def file_handling_paramSweep(C: ParamSweepMeasureConfig):
+    def file_handling_paramSweep(C: ParamSweepMeasure):
         if type(C.file) == str:
-            with open(C.file, 'w') as f:
+            with open(C.file, 'a') as f:
                 fname = C.file
                 C.file = f
                 res = paramSweep(C)
@@ -150,9 +232,10 @@ def safe_file_handling(paramSweep: Callable[[ParamSweepMeasureConfig],
         
     return file_handling_paramSweep
 
-def set_swept_params(C: ParamSweepMeasureConfig,
-                     prev:np.ndarray, targets: np.ndarray):
+def set_swept_params(C: ParamSweepMeasure, targets: np.ndarray):
     """Utility function to smoothly integrate tandemSweep functionality."""
+
+    prev = np.array([setter() for setter in C.setters])
     if C.ramp_wait is not None:
         tandemSweep(C.setters, prev, targets, 
                     C.ramp_steps, C.ramp_wait, **C.ramp_kwargs)
@@ -161,13 +244,13 @@ def set_swept_params(C: ParamSweepMeasureConfig,
             if prev[i] != targets[i]:
                 C.setters[i](targets[i])
 
-def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
-                     prev:np.ndarray, targets: np.ndarray) -> np.ndarray:
+def measure_at_point(C: ParamSweepMeasure, ind: Union[int, np.ndarray],
+                     targets: np.ndarray) -> np.ndarray:
     """Move to a given point in parameter space, and measure there."""
 
     # If we are outside the mask, don't measure
     if not C.space_mask(ind, targets):
-        return False, np.full(len(C.getters), fill_value = np.nan)
+        return np.full(len(C.getters), fill_value = np.nan)
 
     # log the target coordinates    
     if C.logger:
@@ -176,7 +259,7 @@ def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
         )
 
     # move to the target point
-    set_swept_params(C, prev, targets)
+    set_swept_params(C, targets)
 
     # wait for things to settle
     time.sleep(C.time_per_point)
@@ -215,10 +298,13 @@ def measure_at_point(C: ParamSweepMeasureConfig, ind: Union[int, np.ndarray],
         else:
             C.post_callback(ind, targets, measured)
 
-    return True, measured
+    return measured
 
-def initialize_sweep(C: ParamSweepMeasureConfig):
-    """Start off a sweep by writing to an output file, and logging."""
+def initialize_sweep(C: ParamSweepMeasure):
+    """
+    Start off a sweep by writing to an output file, logging, and moving to the
+    starting point.
+    """
 
     # write the header for the output file
     if C.file:
@@ -237,11 +323,21 @@ def initialize_sweep(C: ParamSweepMeasureConfig):
             f"Measuring: {''.join(f"{p}, " for p in C.measured_name)[:-2]}"
         )
 
-"""
-SweepMeasureConfig
-sweepMeasure
+    set_swept_params(C, C.home)
 
-Generalization of sweepMeasureCut. Sweep parameters to each point provided in 
+def cleanup_after_sweep(C: ParamSweepMeasure):
+    """
+    Clean up after a sweep is done (includes things like returning to the 
+    starting point if return_home is True).
+    """
+
+    if C.return_home:
+        set_swept_params(C, C.home)
+
+"""
+SweepMeasure
+
+Generalization of SweepMeasureCut. Sweep parameters to each point provided in 
 the array 'points', taking measurements at each step.
 
     points  : ndarray of shape (number of points, number of swept
@@ -250,7 +346,7 @@ the array 'points', taking measurements at each step.
 """
 
 @dataclass(kw_only=True)
-class SweepMeasureConfig(ParamSweepMeasureConfig):
+class SweepMeasure(ParamSweepMeasure):
     points: np.ndarray  # points at which to measure, 
                         # shape = (#points, #swept params)
 
@@ -261,53 +357,49 @@ class SweepMeasureConfig(ParamSweepMeasureConfig):
         if self.points.ndim == 1: 
             self.points = self.points.reshape(-1, 1)
 
-@safe_file_handling
-def sweepMeasure(C: SweepMeasureConfig) -> Optional[np.ndarray]:
+        self.npoints = self.points.shape[0]
+        self.home = self.points[0, :].copy()
 
-    npoints, nswept = C.points.shape
-    nmeasured = len(C.getters)
-    if C.retain_return:
-        result = np.full(shape = (npoints, nmeasured), fill_value = np.nan)
+    @safe_file_handling
+    def run(self) -> Optional[np.ndarray]:
 
-    initialize_sweep(C)
+        npoints, nswept = self.points.shape
+        nmeasured = len(self.getters)
+        if self.retain_return:
+            result = np.full(shape = (npoints, nmeasured), fill_value = np.nan)
 
-    # move to the start of the sweep
-    for i in range(nswept):
-        C.setters[i](C.points[0, i])
+        initialize_sweep(self)
 
-    # step through each bias point
-    prev = C.points[0, :].copy()
-    for n in range(npoints):
-        targets = C.points[n, :]
-        
-        included, measured = measure_at_point(C, n, prev, targets)
-        if C.retain_return:
-            result[n, :] = measured
+        # step through each bias point
+        for n in range(npoints):
+            targets = self.points[n, :]
+            
+            measured = measure_at_point(self, n, targets)
+            if self.retain_return:
+                result[n, :] = measured
 
-        if included:
-            prev = targets.copy()
+        cleanup_after_sweep(self)
 
-    if C.retain_return:
-        return result
+        if self.retain_return:
+            return result
 
 """
-SweepMeasureCutConfig
-sweepMeasureCut
+SweepMeasureCut
 (replaces biasSweep from a previous version)
 
 Sweep parameters linearly from one point in parameter space to another, taking
 measurements at each point.
 
-    npoints : Number of points to take
-    start   : Starting points in parameter space
-    end     : Ending points in parameter space
+    numpoints : Number of points to take
+    start     : Starting points in parameter space
+    end       : Ending points in parameter space
 """
 
 @dataclass(kw_only=True)
-class SweepMeasureCutConfig(ParamSweepMeasureConfig):
-    npoints : int                                   # number of points to take
-    start   : Union[float, np.ndarray, List[float]] # starting parameters
-    end     : Union[float, np.ndarray, List[float]] # ending parameters
+class SweepMeasureCut(ParamSweepMeasure):
+    numpoints: int                                   # number of points to take
+    start    : Union[float, np.ndarray, List[float]] # starting parameters
+    end      : Union[float, np.ndarray, List[float]] # ending parameters
 
     def __post_init__(self):
         super().__post_init__()
@@ -321,39 +413,33 @@ class SweepMeasureCutConfig(ParamSweepMeasureConfig):
         
         self.start = np.array(self.start)
         self.end = np.array(self.end)
+        self.npoints = self.numpoints
+        self.home = self.start.copy()
 
-@safe_file_handling
-def sweepMeasureCut(C: SweepMeasureCutConfig) -> Optional[np.ndarray]:
+    @safe_file_handling
+    def run(self) -> Optional[np.ndarray]:
 
-    nswept = len(C.setters)
-    nmeasured = len(C.getters)
-    if C.retain_return:
-        result = np.full(shape = (C.npoints, nmeasured), fill_value = np.nan)
+        nmeasured = len(self.getters)
+        if self.retain_return:
+            result = np.full(shape = (self.points, nmeasured), fill_value = np.nan)
 
-    initialize_sweep(C)
+        initialize_sweep(self)
 
-    # move to the start of the sweep
-    for i in range(nswept):
-        C.setters[i](C.start[i])
+        # step through each bias point
+        for n in range(self.numpoints):
+            targets = self.start + (self.end - self.start)*n/(self.numpoints - 1)
+            
+            measured = measure_at_point(self, n, targets)
+            if self.retain_return:
+                result[n, :] = measured
 
-    # step through each bias point
-    prev = C.start.copy()
-    for n in range(C.npoints):
-        targets = C.start + (C.end - C.start)*n/(C.npoints - 1)
-        
-        included, measured = measure_at_point(C, n, prev, targets)
-        if C.retain_return:
-            result[n, :] = measured
+        cleanup_after_sweep(self)
 
-        if included:
-            prev = targets.copy()
-
-    if C.retain_return:
-        return result
+        if self.retain_return:
+            return result
 
 """
-SweepMeasureProductConfig
-sweepMeasureProduct
+SweepMeasureProduct
 
 Sweep parameters over the product space of provided axes, taking measurements at
 each point.
@@ -362,7 +448,7 @@ each point.
 """
 
 @dataclass(kw_only=True)
-class SweepMeasureProductConfig(ParamSweepMeasureConfig):
+class SweepMeasureProduct(ParamSweepMeasure):
     axes: Tuple[np.ndarray] # axes over which to sweep parameters
 
     def __post_init__(self):
@@ -372,38 +458,35 @@ class SweepMeasureProductConfig(ParamSweepMeasureConfig):
         if len(self.axes) != len(self.setters):
             raise ValueError("axes does not match the number of setters.")
         
-@safe_file_handling
-def sweepMeasureProduct(C: SweepMeasureProductConfig) -> Optional[np.ndarray]:
+        self.npoints = np.prod([len(a) for a in self.axes])
+        self.home = np.array([self.axes[i][0] for i in range(len(self.axes))])
+        
+    @safe_file_handling
+    def run(self) -> Optional[np.ndarray]:
 
-    space_dim = [len(a) for a in C.axes]
-    if C.retain_return:
-        result = np.full(shape = (*space_dim, len(C.getters)), 
-                         fill_value = np.nan)
+        space_dim = [len(a) for a in self.axes]
+        if self.retain_return:
+            result = np.full(shape = (*space_dim, len(self.getters)), 
+                            fill_value = np.nan)
 
-    initialize_sweep(C)
+        initialize_sweep(self)
 
-    # move to the start of the sweep
-    for i in range(len(C.axes)):
-        C.setters[i](C.axes[i][0])
+        #step through each bias point
+        for ind in itertools.product(*[range(d) for d in space_dim]):
+            targets = np.array([self.axes[d][ind[d]] 
+                                for d in range(len(self.axes))])
 
-    #step through each bias point
-    prev = np.array([C.axes[i][0] for i in range(len(C.axes))])
-    for ind in itertools.product(*[range(d) for d in space_dim]):
-        targets = np.array([C.axes[d][ind[d]] for d in range(len(C.axes))])
+            measured = measure_at_point(self, ind, targets)
+            if self.retain_return:
+                result[*ind, :] = measured
 
-        included, measured = measure_at_point(C, ind, prev, targets)
-        if C.retain_return:
-            result[*ind, :] = measured
+        cleanup_after_sweep(self)
 
-        if included:
-            prev = targets.copy()
-
-    if C.retain_return:
-        return result
+        if self.retain_return:
+            return result
 
 """
-SweepMeasureParallelepipedConfig
-sweepMeasureParallelepiped
+SweepMeasureParallelepiped
 
 Sweep parameters over the product space of provided axes, taking measurements at
 each point.
@@ -416,7 +499,7 @@ each point.
 """
 
 @dataclass(kw_only=True)
-class SweepMeasureParallelepipedConfig(ParamSweepMeasureConfig):
+class SweepMeasureParallelepiped(ParamSweepMeasure):
     origin      : List[float]   # starting corner of the parallelepiped
     endpoints   : np.ndarray    # other corners (fastest direction last)
     shape       : List[int]     # number of points for each axis
@@ -437,35 +520,30 @@ class SweepMeasureParallelepipedConfig(ParamSweepMeasureConfig):
             raise ValueError("sweep does not match columns in endpoints.")
         
         self.origin = np.array(self.origin)
+        self.npoints = np.prod(self.shape)
+        self.home = self.origin.copy()
 
-@safe_file_handling
-def sweepMeasureParallelepiped(C: SweepMeasureParallelepipedConfig
-                               ) -> Optional[np.ndarray]:
+    @safe_file_handling
+    def run(self) -> Optional[np.ndarray]:
 
-    if C.retain_return:
-        result = np.full(shape = (*C.shape, len(C.getters)), 
-                         fill_value = np.nan)
-        
-    initialize_sweep(C)
+        if self.retain_return:
+            result = np.full(shape = (*self.shape, len(self.getters)), 
+                            fill_value = np.nan)
+            
+        initialize_sweep(self)
 
-    # move to the start of the sweep
-    for i in range(len(C.setters)):
-        C.setters[i](C.origin[i])
+        # step through each point
+        A = (self.endpoints - self.origin.reshape(1, -1)).T
+        for ind in itertools.product(*(range(d) for d in self.shape)):
+            norm_coords = np.array([ind[i] / (self.shape[i] - 1) 
+                                    for i in range(len(self.shape))])
+            targets = self.origin + (A @ norm_coords)
 
-    # step through each point
-    A = (C.endpoints - C.origin.reshape(1, -1)).T
-    prev = C.origin.copy()
-    for ind in itertools.product(*(range(d) for d in C.shape)):
-        norm_coords = np.array([ind[i] / (C.shape[i] - 1) 
-                                for i in range(len(C.shape))])
-        targets = C.origin + (A @ norm_coords)
+            measured = measure_at_point(self, ind, targets)
+            if self.retain_return:
+                result[*ind, :] = measured
 
-        included, measured = measure_at_point(C, ind, prev, targets)
-        if C.retain_return:
-            result[*ind, :] = measured
+        cleanup_after_sweep(self)
 
-        if included:
-            prev = targets.copy()
-
-    if C.retain_return:
-        return result
+        if self.retain_return:
+            return result

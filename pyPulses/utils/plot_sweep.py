@@ -3,12 +3,11 @@ Lazy functions for calling a parameter sweep with SweepPlotter as a callback.
 """
 
 import numpy as np
-from typing import Any, Dict, List, Optional, Tuple, Union
-from .param_sweep_measure import SweepMeasureCutConfig, SweepMeasureConfig
-from .param_sweep_measure import sweepMeasureCut, sweepMeasure
+from typing import Any, List, Tuple
+from .param_sweep_measure import ParamSweepMeasure
 
 def create_plotter_config(swept_names: List[str], measured_names: List[str],
-                                        total_points: int, **kwargs) -> Dict:
+                                        total_points: int, **kwargs) -> dict:
     """
     Create a standard configuration dictionary for the SweepPlotter.
     """
@@ -25,8 +24,8 @@ def create_plotter_config(swept_names: List[str], measured_names: List[str],
     }
     return config
 
-def plotSweep(sweep_config: Union[SweepMeasureCutConfig, SweepMeasureConfig],
-    plotter_class=None, plotter_kwargs: Optional[Dict] = None) -> Tuple[np.ndarray, Any]:
+def plotSweep(sweep: ParamSweepMeasure, plotter_class = None, 
+              plotter_kwargs: dict = {}) -> Tuple[np.ndarray, Any]:
     """
     Run a parameter sweep with asynchronous plotting.
     """
@@ -41,29 +40,19 @@ def plotSweep(sweep_config: Union[SweepMeasureCutConfig, SweepMeasureConfig],
     
     # Extract names and determine total points
     if (plotter_kwargs is None) or (not 'swept_names' in plotter_kwargs):
-        if isinstance(sweep_config.swept_name, (list, tuple)):
-            plotter_kwargs['swept_names'] = sweep_config.swept_name
+        if isinstance(sweep.swept_name, (list, tuple)):
+            plotter_kwargs['swept_names'] = sweep.swept_name
         else:
-            plotter_kwargs['swept_names'] = [sweep_config.swept_name]
+            plotter_kwargs['swept_names'] = [sweep.swept_name]
     
     if (plotter_kwargs is None) or (not 'measured_names' in plotter_kwargs):
-        if isinstance(sweep_config.measured_name, (list, tuple)):
-            plotter_kwargs['measured_names'] = sweep_config.measured_name
+        if isinstance(sweep.measured_name, (list, tuple)):
+            plotter_kwargs['measured_names'] = sweep.measured_name
         else:
-            plotter_kwargs['measured_names'] = [sweep_config.measured_name]
+            plotter_kwargs['measured_names'] = [sweep.measured_name]
     
     # Determine number of points
-    if hasattr(sweep_config, 'npoints'):
-        total_points = sweep_config.npoints
-    elif hasattr(sweep_config, 'points') and \
-         hasattr(sweep_config.points, 'shape'):
-        total_points = sweep_config.points.shape[0]
-    else:
-        total_points = None
-    
-    # Create plotter kwargs if not provided
-    if plotter_kwargs is None:
-        plotter_kwargs = {}
+    total_points = getattr(sweep, 'npoints', None)
     
     # Set up the plotter
     plotter_config = create_plotter_config(
@@ -74,12 +63,9 @@ def plotSweep(sweep_config: Union[SweepMeasureCutConfig, SweepMeasureConfig],
     plotter = plotter_class(**plotter_config)
     
     # Save original post_callback if it exists
-    original_post_callback = None
-    if hasattr(sweep_config, 'post_callback') and \
-        sweep_config.post_callback is not None:
-        original_post_callback = sweep_config.post_callback
+    original_post_callback = getattr(sweep, 'post_callback', None)
     
-    # Create a combined callback that updates the plot and calls the original callback
+    # Create a combined callback that updates the plot and calls the og callback
     def combined_callback(index, swept_values, measured_values):
         # Update the plot
         plotter.update_callback(index, swept_values, measured_values)
@@ -89,18 +75,13 @@ def plotSweep(sweep_config: Union[SweepMeasureCutConfig, SweepMeasureConfig],
             original_post_callback(index, swept_values, measured_values)
     
     # Set the combined callback
-    sweep_config.post_callback = combined_callback
+    sweep.post_callback = combined_callback
     
     # Run the sweep
-    if isinstance(sweep_config, SweepMeasureCutConfig):
-        results = sweepMeasureCut(sweep_config)
-    elif isinstance(sweep_config, SweepMeasureConfig):
-        results = sweepMeasure(sweep_config)
-    else:
-        raise ValueError("Unsupported sweep configuration type")
+    results = sweep.run()
     
     # Restore the original callback
-    sweep_config.post_callback = original_post_callback
+    sweep.post_callback = original_post_callback
 
     # if plotter supports it, force update for final points
     if hasattr(plotter, 'force_update'):
