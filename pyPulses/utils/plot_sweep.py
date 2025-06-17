@@ -66,13 +66,18 @@ def plotSweep(sweep: ParamSweepMeasure, plotter_class = None,
     original_post_callback = getattr(sweep, 'post_callback', None)
     
     # Create a combined callback that updates the plot and calls the og callback
-    def combined_callback(index, swept_values, measured_values):
+    def combined_callback(*args):
+        if sweep.timestamp:
+            now, index, swept_values, measured_values = args
+        else:
+            index, swept_values, measured_values = args
+
         # Update the plot
         plotter.update_callback(index, swept_values, measured_values)
         
         # Call the original callback if it exists
         if original_post_callback:
-            original_post_callback(index, swept_values, measured_values)
+            original_post_callback(*args)
     
     # Set the combined callback
     sweep.post_callback = combined_callback

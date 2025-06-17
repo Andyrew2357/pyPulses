@@ -14,8 +14,10 @@ import time
 
 def tandemSweep(setters: List[Callable[[float], Any]], 
                 start: List[float], end: List[float], 
-                max_step: List[Optional[float]], wait: float,  
+                wait: float,
+                max_step: List[Optional[float]],  
                 min_step: List[Optional[float]] = None,
+                tolerance: List[Optional[float]] = None,
                 handle_exceptions: bool = True) -> bool:
     """
     Sweeps multiple parameters smoothly while respecting their maximum step
@@ -34,10 +36,21 @@ def tandemSweep(setters: List[Callable[[float], Any]],
         raise IndexError(
             "Mismatch between number of setters and other arguments."
         )
+    
+    if tolerance is None: 
+        tolerance = np.zeros(N)
+    elif len(tolerance) != N:
+        raise IndexError(
+            "Mismatch between number of setters and other arguments."
+        )
 
     min_step = np.array([0 if m is None else m for m in min_step])
     max_step = np.array([np.inf if m is None else m for m in max_step])
-    
+    tolerance = np.array([0 if m is None else m for m in tolerance])
+
+    # min_step should never be smaller than the tolerance
+    min_step = np.maximum(min_step, tolerance)
+
     if np.any(max_step - min_step < 0):
         raise ValueError("'min_step' values cannot exceed 'max_step' values.")
     if np.any(min_step < 0):
@@ -98,9 +111,10 @@ def tandemSweep(setters: List[Callable[[float], Any]],
         
         time.sleep(wait)
 
-    # Make sure we actually make it to the target by the end.
+    # Make sure we actually make it to the target by the end 
+    # (to within tolerance).
     for i in range(N):
-        if prev_settings[i] != end[i]:
+        if np.abs(prev_settings[i] - end[i]) > tolerance[i]:
             setters[i](end[i])
     
     return True
