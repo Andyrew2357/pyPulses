@@ -415,10 +415,9 @@ class ParamSweepMeasure:
                 "Operands must match in all dimensions but the first."
             )
         
+        offset = self.dimensions[0]
         def iterate():
-            offset = 0
             for idx, coord in self.iterator():
-                offset = max(offset, idx[0] + 1)
                 yield idx, coord
 
             for idx, coord in other.iterator():
