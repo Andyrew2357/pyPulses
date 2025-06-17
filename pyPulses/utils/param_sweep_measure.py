@@ -184,6 +184,44 @@ class ParamSweepMeasure:
 
         if self.retain_return:
             return result
+        
+    def preview(self, coord_indices: List[int], **kwargs):
+        """
+        Plot a preview of the path swept out by the sweep <= 3 dimensions
+        """
+
+        if len(coord_indices) > 3 or len(coord_indices) < 1:
+            raise ValueError("Invalid 'coord_indices'.")
+
+        points = np.empty(shape = (self.npoints, len(coord_indices)), 
+                          dtype = float)
+        for i, (idx, coord) in enumerate(self.iterator()):
+            points[i, :] = coord[coord_indices]
+
+        defaults = {'marker': 'o', 'color': 'r', 'alpha': 0.5}
+        kwargs = {**defaults, **kwargs}
+
+        import matplotlib.pyplot as plt
+        fig = plt.figure(figsize = (12, 12))
+        match len(coord_indices):
+            case 1:
+                ax = fig.add_subplot(111)
+                ax.plot(points[:,0], **kwargs)
+                ax.set_title(self.coord_name[coord_indices[0]])
+            case 2:
+                ax = fig.add_subplot(111)
+                ax.plot(points[:,0], points[:,1], **kwargs)
+                ax.set_xlabel(self.coord_name[coord_indices[0]])
+                ax.set_ylabel(self.coord_name[coord_indices[1]])
+            case 3:
+                from mpl_toolkits.mplot3d import Axes3D
+                ax = fig.add_subplot(111, projection='3d')
+                ax.plot3D(points[:,0], points[:,1], points[:,2], **kwargs)
+                ax.set_xlabel(self.coord_name[coord_indices[0]])
+                ax.set_ylabel(self.coord_name[coord_indices[1]])
+                ax.set_zlabel(self.coord_name[coord_indices[2]])
+                
+        return points, (fig, ax)
 
     def iterator(self):
         raise NotImplementedError(
