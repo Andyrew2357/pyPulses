@@ -418,7 +418,7 @@ class ParamSweepMeasure:
         def iterate():
             offset = 0
             for idx, coord in self.iterator():
-                offset += 1
+                offset = max(offset, idx[0] + 1)
                 yield idx, coord
 
             for idx, coord in other.iterator():
