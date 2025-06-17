@@ -423,7 +423,6 @@ class ParamSweepMeasure:
             for j in range(N):
                 if coordinates[j]['f'] == self.coordinates[i]['f']:
                     INC1[j, i] += 1
-                    print(j, i)
                     break
 
         INC2 = np.zeros((N, M2))
@@ -432,11 +431,6 @@ class ParamSweepMeasure:
                 if coordinates[j]['f'] == other.coordinates[i]['f']:
                     INC2[j, i] += 1
                     break
-        
-        print("==============================")
-        print(INC1)
-        print(INC2)
-        print("==============================")
 
         def iterate():
             for idx1, coords1 in self.iterator():
