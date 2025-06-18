@@ -185,7 +185,7 @@ class ParamSweepMeasure:
         if self.retain_return:
             return result
         
-    def preview(self, coord_indices: List[int], **kwargs):
+    def preview(self, coord_indices: List[int], use_mask = True, **kwargs):
         """
         Plot a preview of the path swept out by the sweep <= 3 dimensions
         """
@@ -193,10 +193,19 @@ class ParamSweepMeasure:
         if len(coord_indices) > 3 or len(coord_indices) < 1:
             raise ValueError("Invalid 'coord_indices'.")
 
-        points = np.empty(shape = (self.npoints, len(coord_indices)), 
-                          dtype = float)
-        for i, (idx, coord) in enumerate(self.iterator()):
-            points[i, :] = coord[coord_indices]
+        if use_mask:
+            points = np.full(shape = (self.npoints, len(coord_indices)), 
+                             fill_value=np.nan)
+            i = 0
+            for idx, coord in self.iterator():
+                if self.space_mask(idx, coord):
+                    points[i, :] = coord[coord_indices]
+                    i += 1
+        else:
+            points = np.empty(shape = (self.npoints, len(coord_indices)), 
+                            dtype = float)
+            for i, (idx, coord) in enumerate(self.iterator()):
+                points[i, :] = coord[coord_indices]
 
         defaults = {'marker': 'o', 'color': 'r', 'alpha': 0.5}
         kwargs = {**defaults, **kwargs}
