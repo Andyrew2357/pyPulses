@@ -314,6 +314,8 @@ class ParamSweepMeasure:
         self.log_file(data_str)
 
     def prep_file_handler(self, fname):
+        if self.file_handler:
+            del self.file_handler
         self.file_handler = logging.FileHandler(fname)
         self.file_handler.setLevel(logging.INFO)
         self.file_logger.addHandler(self.file_handler)
@@ -358,8 +360,10 @@ class ParamSweepMeasure:
         self.file_handler.flush()
         self.file_logger.removeHandler(self.file_handler)
         self.file_handler.close()
+        del self.file_handler
         self.file_handler = None
         self.file_logger.handlers.clear()
+        del self.file_logger
         self.file_logger = None
         self.written_points = 0
 
