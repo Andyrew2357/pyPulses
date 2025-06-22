@@ -28,8 +28,7 @@ class FastFlightPackageManager:
         
     def is_installed(self) -> bool:
         """Check if the 32-bit environment is already set up"""
-        return (self.python32_exe.exists() and 
-                (self.scripts_dir / "fastflight32.py").exists() and
+        return (self.python32_exe.exists() and \
                 (self.scripts_dir / "ff_bridge_server.py").exists())
     
     def install(self):
@@ -99,22 +98,18 @@ class FastFlightPackageManager:
         # Get the directory where this script is located
         current_dir = Path(__file__).parent
         
-        # Copy fastflight32.py
-        src_ff32 = current_dir / "fastflight32.py"
-        if src_ff32.exists():
-            shutil.copy2(src_ff32, self.scripts_dir / "fastflight32.py")
-        
         # Copy ff_bridge_server.py
         src_bridge = current_dir / "ff_bridge_server.py"
         if src_bridge.exists():
             shutil.copy2(src_bridge, self.scripts_dir / "ff_bridge_server.py")
-    
+
     def get_python32_path(self) -> str:
         """Get the path to the 32-bit Python executable"""
         if not self.is_installed():
+            print("Installing 32-bit Python executable...")
             return self.install()
         return str(self.python32_exe)
-    
+
     def get_bridge_script_path(self) -> str:
         """Get the path to the bridge server script"""
         return str(self.scripts_dir / "ff_bridge_server.py")

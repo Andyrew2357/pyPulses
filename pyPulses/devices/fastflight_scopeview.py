@@ -21,10 +21,6 @@ class ScopeView(QMainWindow):
         super().__init__()
         self.ff2 = ff2
         self.connected = self.ff2.is_connected()
-        if self.connected:
-            self.acq_running = self.ff2.is_acq_running()
-        else:
-            self.acq_running = False
         
         # Configuration parameters
         self.refresh_rate = 50  # mainloop refresh rate (ms)
@@ -36,6 +32,10 @@ class ScopeView(QMainWindow):
         self.updating_settings = False  # Flag to prevent recursive updates
         
         self._make_gui()
+
+        # If we are connected already, disconnect
+        if self.connected:
+            self._disconnect_ff2()
 
         # Timer for main loop
         self.timer = QTimer()
@@ -158,7 +158,7 @@ class ScopeView(QMainWindow):
         self.scope_settings_layout.addStretch(1)
 
         # Start/Stop Acquisition Button
-        self.start_stop_acq_button = QPushButton("Start Acquisition")
+        self.start_stop_acq_button = QPushButton()
         self._update_acq_button_appearance()
 
         # Connect/Disconnect Buttons only
@@ -206,7 +206,7 @@ class ScopeView(QMainWindow):
         # Connect Buttons
         self.connect_button.clicked.connect(self._connect_ff2)
         self.disconnect_button.clicked.connect(self._disconnect_ff2)
-        self.start_stop_acq_button.clicked.connect(self._toggle_acquisition())
+        self.start_stop_acq_button.clicked.connect(self._toggle_acquisition)
 
         # Get everything up to date
         self._fetch_settings()
@@ -355,10 +355,11 @@ class ScopeView(QMainWindow):
         """Connect to the FastFlight instrument"""
         try:
             self.ff2.open()
-            self.connected = True
-            self._update_connection_status()
             self._fetch_settings()  # Sync settings after connecting
             self._init_ff2_as_scope()
+            self.connected = True
+            self._update_connection_status()
+
         except Exception as e:
             self.status_label.setText(f"Connection failed: {str(e)}")
             self.status_label.setStyleSheet("color: red;")
@@ -381,17 +382,20 @@ class ScopeView(QMainWindow):
         # Only connect/disconnect buttons are affected
         self.connect_button.setDisabled(self.connected)
         self.disconnect_button.setDisabled(not self.connected)
+        self._update_acq_button_appearance()
 
     def _init_ff2_as_scope(self):
         """Set up the FastFlight to act as a scope"""
         self.ff2.set_general_settings(
             ActiveProtoNumber = 0,
             ExtTriggerInputEdge = 0,
-            ExtTriggerInputEnable = 1,
+            ExtTriggerInputEnable = 0,
             ExtTriggerInputThreshold = 0.0
         )
-        self.ff2.stop_acq()
-
+        if self.ff2.is_acq_running():
+            self.ff2.stop_acq()
+        self.acq_running = False
+        
     def _mainloop(self):
         """Main loop that handles settings updates and plot refreshing"""
 
@@ -414,7 +418,7 @@ class ScopeView(QMainWindow):
         
         # Handle plot updates (only if enough time has passed)
         plot_update_interval = max(self.min_plot_update_interval, 
-            1e3 * self.record_len_input.value() * self.averages_input.value())
+            1e-3 * self.record_len_input.value() * self.averages_input.value())
         if (current_time - self.last_plot_update) >= plot_update_interval:
             try:
                 x, y, d = self.ff2.get_data()
@@ -422,7 +426,7 @@ class ScopeView(QMainWindow):
                 y = np.array(y)
                 # Translate y to volts properly
                 y *= (0.5 / 255.0) / self.averages_input.value() 
-                
+
                 self.canvas.plot_waveform(x, y)
                 self.last_plot_update = current_time
             except Exception as e:
@@ -479,4 +483,4 @@ def FFScopeView(ff2: FastFlight64):
     app = QApplication(sys.argv)
     window = ScopeView(ff2)
     window.show()
-    sys.exit(app.exec_())
+    app.exec_()

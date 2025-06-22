@@ -1,5 +1,5 @@
-from comtypes.client import CreateObject
-from comtypes.automation import VARIANT
+from comtypes.client import CreateObject # type: ignore
+from comtypes.automation import VARIANT # type: ignore
 from typing import Optional, Tuple
 
 try:
@@ -7,7 +7,7 @@ try:
     import comtypes.gen.FF2CTRLLib as FF2Lib # type: ignore
 except:
     # Generate the library from the DLL, then import it
-    from comtypes.client import GetModule
+    from comtypes.client import GetModule # type: ignore
     GetModule(r'C:\Windows\SysWOW64\FF2Ctrl.dll')
     import comtypes.gen.FF2CTRLLib as FF2Lib # type: ignore
 
