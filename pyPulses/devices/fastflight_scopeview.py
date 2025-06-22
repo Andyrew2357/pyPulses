@@ -206,6 +206,7 @@ class ScopeView(QMainWindow):
         # Connect Buttons
         self.connect_button.clicked.connect(self._connect_ff2)
         self.disconnect_button.clicked.connect(self._disconnect_ff2)
+        self.start_stop_acq_button.clicked.connect(self._toggle_acquisition())
 
         # Get everything up to date
         self._fetch_settings()
