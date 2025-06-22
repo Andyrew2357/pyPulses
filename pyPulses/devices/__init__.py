@@ -9,6 +9,7 @@ from .ad5764 import ad5764
 from .ad9854 import ad9854
 from .cryomagnetics_4G import cryomagnetics4G
 from .dtg5274 import dtg5274
+from .fastflight2 import FastFlight2
 from .hp34401a import hp34401a
 from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
@@ -26,6 +27,7 @@ __all__ = [
     "cryomagnetics4G",
     "dtg5274",
     "DeviceRegistry",
+    "FastFlight2",
     "hp34401a",
     "keithley2400",
     "keithley2450",
