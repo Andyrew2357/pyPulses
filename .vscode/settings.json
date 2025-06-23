@@ -1,16 +1,5 @@
 {
     "editor.rulers": [
         80
-    ],
-    "files.associations": {
-        "dlts_fastspikes.C": "cpp",
-        "dlts_pickspikes.C": "cpp",
-        "relay.C": "cpp",
-        "signalgen.C": "cpp",
-        "dtg5274s.C": "cpp",
-        "dtg5274.C": "cpp",
-        "sgcontrol.C": "cpp",
-        "capbridge.C": "cpp",
-        "pio24c.C": "cpp"
-    }
+    ]
 }
