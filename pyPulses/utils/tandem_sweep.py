@@ -7,11 +7,14 @@ the magnet). Usually, this is not an issue, because we rarely sweep highly
 dissimilar parameters simultaneously; it's mostly there for param_sweep_measure.
 """
 
-from typing import Any, Callable, List, Optional
+from .getsetter import getSetter
+
+from typing import Any, Callable, List, Optional, overload
 import numpy as np
 from math import ceil
 import time
 
+@overload
 def tandemSweep(setters: List[Callable[[float], Any]], 
                 start: List[float], end: List[float], 
                 wait: float,
@@ -118,3 +121,35 @@ def tandemSweep(setters: List[Callable[[float], Any]],
             setters[i](end[i])
     
     return True
+
+@overload
+def tandemSweep(parms: List[dict], target: List[float], wait: float, 
+                handle_exceptions: bool = True) -> bool:
+    """
+    Overloaded wrapper for more human syntax. Pass parameters as a list of
+    dictionaries describing their behavior. Automatically gets the start
+    values, by requiring users to provide the getters.
+    
+    Recognized fields for parms elements:
+    'f'         : <getsetter (function)> 
+                    (must provide either 'f' or 'get' and 'set')
+    'get'       : <getter (function)> (Ignored if 'f' is provided)
+    'set'       : <setter (function)> (Ignored if 'f' is provided)
+    'min_step'  : <minimum step size (float)> (optional)
+    'max_step'  : <maximum step size (float)> (optional)
+    'tolerance' : <tolerance (float)> (optional)
+    """
+
+    for P in parms:
+        if not 'f' in P:
+            P['f'] = getSetter(P['get'], P['set'])
+
+    setters = [P['f'] for P in parms],
+    max_step = [P.get('max_step') for P in parms]
+    min_step = [P.get('min_step') for P in parms]
+    tolerance = [P.get('tolerance') for P in parms]
+    start = [G() for G in setters]
+
+    return tandemSweep(setters, start, target, 
+                       wait, max_step, min_step, tolerance, 
+                       handle_exceptions)
