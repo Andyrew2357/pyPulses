@@ -368,8 +368,8 @@ class ScopeView(QMainWindow):
     def _disconnect_ff2(self):
         """Disconnect from the FastFlight instrument"""
         try:
-            self.ff2.close()
             self.connected = False
+            self.ff2.close()
             self._update_connection_status()
             self.status_label.setText("Disconnected")
             self.status_label.setStyleSheet("color: gray;")
@@ -392,9 +392,9 @@ class ScopeView(QMainWindow):
             ExtTriggerInputEnable = 0,
             ExtTriggerInputThreshold = 0.0
         )
+        self.acq_running = False
         if self.ff2.is_acq_running():
             self.ff2.stop_acq()
-        self.acq_running = False
         
     def _mainloop(self):
         """Main loop that handles settings updates and plot refreshing"""
@@ -432,6 +432,29 @@ class ScopeView(QMainWindow):
             except Exception as e:
                 # Silently handle data acquisition errors to avoid spam
                 pass
+
+    def closeEvent(self, event):
+        """Properly cleanup when the window is closed"""
+        
+        # Stop the timer
+        if hasattr(self, 'timer'):
+            self.timer.stop()
+        
+        # Stop acquisition if running
+        if hasattr(self, 'connected') and self.connected:
+            try:
+                if hasattr(self, 'acq_running') and self.acq_running:
+                    self.ff2.stop_acq()
+            except:
+                pass  # Ignore errors during cleanup
+            
+            # Disconnect from instrument
+            try:
+                self.ff2.close()
+            except:
+                pass  # Ignore errors during cleanup
+
+        event.accept()
 
 
 class ScopeCanvas(FigureCanvas):
