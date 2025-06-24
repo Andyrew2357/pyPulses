@@ -6,7 +6,7 @@ compressibility and proper integration/error propagation)
 import numpy as np
 import os
 from typing import Optional
-from ..utils import curves
+from pyPulses.utils import curves
 
 class GapExtractor():
     def __init__(self, ct   : Optional[float] = None, 
