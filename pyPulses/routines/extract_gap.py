@@ -29,6 +29,12 @@ def integrate(x, f: np.ndarray) -> np.ndarray:
     return 0.5 * np.cumsum(np.diff(x, axis = -1) * (f[..., 1:] + f[..., :-1]), 
                            axis = -1)
 
+def pad_z(a: np.ndarray) -> np.ndarray:
+    """Pad zeros along the final axis"""
+
+    pad_width = [(0, 0)] * (a.ndim - 1) + [(1, 0)]
+    return np.pad(a, pad_width, mode = 'constant', constant_values = 0.0)
+
 def ztan_inv(z: float) -> float: ...
 def ztan_invp(z: float) -> float: ...
 
@@ -68,10 +74,10 @@ def lf_model(chi_r: float, chi_i: float, chi_g: float, chi_b: float,
     low frequency model.
     """
     
-    if chi_r is None or chi_i is None:
+    if np.isnan(chi_r) or np.isnan(chi_i):
         return np.nan, np.nan
 
-    return cb*(1 + gamma)*(chi_g - chi_r) / (chi_r - chi_b), 0
+    return cb * (1 + gamma) * (chi_g - chi_r) / (chi_r - chi_b), 0
 
 @np.vectorize
 def lf_model_deriv(chi_r: float, chi_i: float, chi_g: float, chi_b: float,
@@ -82,7 +88,7 @@ def lf_model_deriv(chi_r: float, chi_i: float, chi_g: float, chi_b: float,
     low frequency model. Return derivatives with respect to uncertain quantities.
     """
 
-    cq, AR = lf_model(chi_r, chi_g, chi_b, cb, gamma, **kwargs)
+    cq, AR = lf_model(chi_r, chi_i, chi_g, chi_b, cb, gamma, **kwargs)
     cT = cb * (1 + gamma)
     dcq_dchi_r = cT*(chi_b - chi_g) / (chi_r - chi_b)**2
     dcq_dchi_i = 0
@@ -180,8 +186,7 @@ def gap(vt: List[float], vb: List[float], cq: List[float],
     mt = (1 + cq/ (gamma * cb))**-1
     mb = (1 + cq / cb)**-1
 
-    # prepend 0 to get back to the right array size and reflect nf = ni
-    return np.r_[0, integrate(vt, mt) + integrate(vb, mb)]
+    return pad_z(integrate(vt, mt) + integrate(vb, mb))
 
 def gap_unc(vt: List[float], vb: List[float], cq: List[float], 
             dcq_dchi_r: list[float], dcq_dchi_i: List[float], 
@@ -243,9 +248,8 @@ def gap_unc(vt: List[float], vb: List[float], cq: List[float],
          axis = -1
     )
 
-    # prepend 0 to get back to the right array size and reflect nf = ni
-    return np.r_[0, np.sqrt(gamma_part + chi_g_part + chi_b_part + 
-                            chi_re_part + chi_im_part)]
+    return pad_z(np.sqrt(gamma_part + chi_g_part + 
+                         chi_b_part + chi_re_part + chi_im_part))
 
 def mu(vt: List[float], vb: List[float], 
        chi_r: List[float], chi_i: List[float],

@@ -9,12 +9,11 @@ dissimilar parameters simultaneously; it's mostly there for param_sweep_measure.
 
 from .getsetter import getSetter
 
-from typing import Any, Callable, List, Optional, overload
+from typing import Any, Callable, List, Optional
 import numpy as np
 from math import ceil
 import time
 
-@overload
 def tandemSweep(setters: List[Callable[[float], Any]], 
                 start: List[float], end: List[float], 
                 wait: float,
@@ -122,13 +121,12 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     
     return True
 
-@overload
-def tandemSweep(parms: List[dict], target: List[float], wait: float, 
-                handle_exceptions: bool = True) -> bool:
+def ezTandemSweep(parms: List[dict], target: List[float], wait: float, 
+                  handle_exceptions: bool = True) -> bool:
     """
-    Overloaded wrapper for more human syntax. Pass parameters as a list of
-    dictionaries describing their behavior. Automatically gets the start
-    values, by requiring users to provide the getters.
+    Wrapper for more human syntax. Pass parameters as a list of dictionaries 
+    describing their behavior. Automatically gets the start values, by requiring 
+    users to provide the getters.
     
     Recognized fields for parms elements:
     'f'         : <getsetter (function)> 
@@ -144,7 +142,7 @@ def tandemSweep(parms: List[dict], target: List[float], wait: float,
         if not 'f' in P:
             P['f'] = getSetter(P['get'], P['set'])
 
-    setters = [P['f'] for P in parms],
+    setters = [P['f'] for P in parms]
     max_step = [P.get('max_step') for P in parms]
     min_step = [P.get('min_step') for P in parms]
     tolerance = [P.get('tolerance') for P in parms]

@@ -14,7 +14,7 @@ from .param_sweep_measure import SweepMeasureParallelepiped
 from .param_sweep_measure import SweepMeasureProduct
 from .rootfinder import RootFinderState, RootFinderStatus
 from .send_mail import sendMail
-from .tandem_sweep import tandemSweep
+from .tandem_sweep import tandemSweep, ezTandemSweep
 
 __all__ = [
     "balance1d",
@@ -24,6 +24,7 @@ __all__ = [
     "decorators",
     "DummyPred",
     "DummyPredFunc",
+    "ezTandemSweep",
     "ExtrapPred1d",
     "ExtrapPredNd",
     "getQuickLogger",
