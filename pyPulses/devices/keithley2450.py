@@ -13,7 +13,6 @@ class keithley2450(pyvisaDevice):
         
         self.pyvisa_config = {
             "resource_name" : "GPIB0::24::INSTR",
-            
             "output_buffer_size" : 512,
             "gpib_eos_mode"     : False,
             "gpib_eos_char"     : ord('\n'),

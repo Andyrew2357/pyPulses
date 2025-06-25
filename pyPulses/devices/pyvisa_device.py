@@ -19,7 +19,7 @@ class pyvisaDevice(abstractDevice):
         if instrument_id:
             self.pyvisa_config['resource_name'] = instrument_id
         DeviceRegistry.register_device(self.pyvisa_config['resource_name'], self)
-
+        
         # for debugging purposes, we can connect to an object that mimics a
         # pyvisa resource but just logs the messages it recieves. The user may
         # also pre-program responses from the dummy resource for testing. 

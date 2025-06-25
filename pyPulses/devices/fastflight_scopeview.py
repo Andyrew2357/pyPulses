@@ -21,6 +21,10 @@ class ScopeView(QMainWindow):
         super().__init__()
         self.ff2 = ff2
         self.connected = self.ff2.is_connected()
+        if self.connected:
+            self.acq_running = self.ff2.is_acq_running()
+        else:
+            self.acq_running = False
         
         # Configuration parameters
         self.refresh_rate = 50  # mainloop refresh rate (ms)
@@ -389,7 +393,7 @@ class ScopeView(QMainWindow):
         self.ff2.set_general_settings(
             ActiveProtoNumber = 0,
             ExtTriggerInputEdge = 0,
-            ExtTriggerInputEnable = 0,
+            ExtTriggerInputEnable = 1,
             ExtTriggerInputThreshold = 0.0
         )
         self.acq_running = False

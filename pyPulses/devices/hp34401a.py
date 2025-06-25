@@ -6,7 +6,7 @@ class hp34401a(pyvisaDevice):
     def __init__(self, logger = None, instrument_id: str = None):
         
         self.pyvisa_config = {
-            "resource_name" : "",
+            "resource_name" : "GPIB1::18::INSTR",
             "output_buffer_size" : 512,
             "gpib_eos_mode"     : False,
             "gpib_eos_char"     : ord('\n'),
