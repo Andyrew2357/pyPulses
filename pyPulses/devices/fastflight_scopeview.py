@@ -458,6 +458,18 @@ class ScopeView(QMainWindow):
             except:
                 pass  # Ignore errors during cleanup
 
+        # Clean up matplotlib canvas
+        if hasattr(self, 'canvas'):
+            try:
+                self.canvas.fig.clear()
+                self.canvas.close()
+            except:
+                pass
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+
         event.accept()
 
 
@@ -504,10 +516,27 @@ class ScopeCanvas(FigureCanvas):
         self.axes.set_ylabel("Analog In [V]", fontsize=AXIS_FONT)
         self.axes.tick_params(axis='both', which='major', 
                               labelsize=TICK_LABEL_SIZE)
+        
+    def closeEvent(self, event):
+        """Clean up the canvas"""
+        self.fig.clear()
+        super().close()
+        event.accept()
 
 def FFScopeView(ff2: FastFlight64):
     """Launch the ScopeView application"""
-    app = QApplication(sys.argv)
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+        app_created = True
+    else:
+        app_created = False
+
     window = ScopeView(ff2)
     window.show()
-    app.exec_()
+
+    if app_created:
+        app.exec_()
+    else:
+        while window.isVisible():
+            app.processEvents()
