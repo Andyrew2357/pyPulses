@@ -53,6 +53,7 @@ class FastFlight2(abstractDevice):
 
     def __del__(self):
         del self.ff2
+        super().__del__()
 
     def _ensure_settings_synced(self):
         """Only sync settings if needed"""

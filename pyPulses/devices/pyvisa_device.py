@@ -135,6 +135,7 @@ class pyvisaDevice(abstractDevice):
 
     def __del__(self):
         self.device.close()
+        super().__del__()
 
 """
 This is a dummy class for debugging instruments without actually sending 
