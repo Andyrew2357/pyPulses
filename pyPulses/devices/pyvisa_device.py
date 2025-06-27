@@ -133,6 +133,9 @@ class pyvisaDevice(abstractDevice):
         self.device.close()
         self.connect()
 
+    def __del__(self):
+        self.device.close()
+
 """
 This is a dummy class for debugging instruments without actually sending 
 commands (important for testing things like magnet power supplies).

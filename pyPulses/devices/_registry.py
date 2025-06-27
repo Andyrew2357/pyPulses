@@ -41,7 +41,6 @@ class DeviceRegistry:
     def unregister_device(cls, instrument_name: str):
         """Unregister a device."""
         if instrument_name in cls._active_devices:
-            cls._active_devices[instrument_name].device.close()
             del cls._active_devices[instrument_name]
 
     @classmethod
@@ -53,5 +52,5 @@ class DeviceRegistry:
     def clear_registry(cls) -> None:
         """Clear all registered devices."""
         for dev in cls._active_devices:
-            cls._active_devices[dev].device.close()
+            del cls._active_devices[dev]
         cls._active_devices.clear()

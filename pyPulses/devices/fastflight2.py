@@ -51,6 +51,9 @@ class FastFlight2(abstractDevice):
         # Settings sync flag to avoid unnecessary retrievals
         self._settings_synced = False
 
+    def __del__(self):
+        del self.ff2
+
     def _ensure_settings_synced(self):
         """Only sync settings if needed"""
         if not self._settings_synced:
