@@ -28,7 +28,7 @@ class FastFlight64():
                 stdin   = subprocess.PIPE,
                 stdout  = subprocess.PIPE,
                 stderr  = subprocess.PIPE,
-                text    = False,
+                text    = True,
                 bufsize = 0
             )
 
@@ -37,8 +37,8 @@ class FastFlight64():
             # Check if the process started successfully
             if self._process.poll() is not None:
                 # Process already terminated
-                stderr_output = self._process.stderr.read().decode('utf-8')
-                stdout_output = self._process.stdout.read().decode('utf-8')
+                stderr_output = self._process.stderr.read()
+                stdout_output = self._process.stdout.read()
                 raise RuntimeError(
                     f"Bridge process terminated immediately."
                     f"STDERR: {stderr_output}, STDOUT: {stdout_output}"
@@ -64,96 +64,40 @@ class FastFlight64():
         }
 
         return interval_map[sampling_interval] * np.arange(length)
-    
-    def _read_binary_data(self):
-        # Read fixed-size metadata
-        metadata_bytes = self._process.stdout.read(20)  # 3*4 + 4 + 8 bytes
-        if len(metadata_bytes) != 20:
-            raise RuntimeError("Failed to read metadata")
-        
-        sampling_interval, err_flags, proto_num, spec_num = struct.unpack('<IIII', metadata_bytes[:16])
-        timestamp = struct.unpack('<d', metadata_bytes[16:20])[0]
-        
-        # Read data length
-        data_len_bytes = self._process.stdout.read(4)
-        data_length = struct.unpack('<I', data_len_bytes)[0]
-        
-        # Read Y data in one shot
-        y_bytes = self._process.stdout.read(data_length * 4)
-        if len(y_bytes) != data_length * 4:
-            raise RuntimeError("Failed to read Y data")
-        
-        y_data = np.frombuffer(y_bytes, dtype='<i4')  # Direct numpy conversion
-        x_data = self._reconstruct_x_data(data_length, sampling_interval)
-        
-        tof_parms = {
-            'ErrFlags': err_flags,
-            'ProtoNum': proto_num,
-            'SpecNum': spec_num,
-            'TimeStamp': timestamp
-        }
-        
-        return x_data, y_data, tof_parms
         
     def _call_method(self, method, *args, **kwargs):
         """Call a method on the remote FastFlight instance"""
 
-        if self._process is None or \
-            self._process.poll() is not None:
+        if self._process is None or self._process.poll() is not None:
             raise RuntimeError("Bridge process is not running")
         
         request = {
             'method': method,
-            'args'  : list(args),
+            'args': list(args),
             'kwargs': kwargs
         }
 
         try:
-            # send request
+            # Send request
             request_json = json.dumps(request) + '\n'
-            self._process.stdin.write(request_json.encode('utf-8'))
+            self._process.stdin.write(request_json)
             self._process.stdin.flush()
 
-            # Special handling for get_data which returns binary
-            if method == 'get_data':
-                # Read the first line to see if it's a JSON or binary
-                response_line_bytes = self._process.stdout.readline()
-                if not response_line_bytes:
-                    raise RuntimeError("No response from bridge process")
-                
-                response_line = response_line_bytes.decode('utf-8').strip()
-                
-                # Check if it's the binary data marker
-                if response_line == "BINARY_DATA_FOLLOWS":
-                    return self._read_binary_data()
-                else:
-                    # It's a regular JSON response (probably None case)
-                    response = json.loads(response_line)
-                    if response['success']:
-                        return response['result']
-                    else:
-                        error_msg = response['error']
-                        if 'traceback' in response:
-                            error_msg += '\n' + response['traceback']
-                        raise RuntimeError(f"Remote error: {error_msg}")
-                            
+            # Read response
+            response_line_bytes = self._process.stdout.readline()
+            if not response_line_bytes:
+                raise RuntimeError("No response from bridge process")
+            
+            response_line = response_line_bytes.strip()
+            response = json.loads(response_line)
+
+            if response['success']:
+                return response['result']
             else:
-
-                # Read regular JSON response
-                response_line_bytes = self._process.stdout.readline()
-                if not response_line_bytes:
-                    raise RuntimeError("No response from bridge process")
-                
-                response_line = response_line_bytes.decode('utf-8').strip()
-                response = json.loads(response_line)
-
-                if response['success']:
-                    return response['result']
-                else:
-                    error_msg = response['error']
-                    if 'traceback' in response:
-                        error_msg += '\n' + response['traceback']
-                    raise RuntimeError(f"Remote error: {error_msg}")
+                error_msg = response['error']
+                if 'traceback' in response:
+                    error_msg += '\n' + response['traceback']
+                raise RuntimeError(f"Remote error: {error_msg}")
                 
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Failed to decode response: {e}")
@@ -168,7 +112,7 @@ class FastFlight64():
             return
         
         try:
-            self._process.stdin.write(b'QUIT\n')
+            self._process.stdin.write('QUIT\n')
             self._process.stdin.flush()
             self._process.wait(timeout = 5)
 
@@ -273,5 +217,9 @@ class FastFlight64():
         result = self._call_method('get_data')
         if result is None:
             return None
-        return tuple(result)
+        
+        # Reconstruct X data on the client side
+        y_data = np.array(result['y_data'], dtype=np.int32)
+        x_data = self._reconstruct_x_data(len(y_data), result['sampling_interval'])
+        tof_parms = result['tof_parms']
     

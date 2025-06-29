@@ -227,34 +227,6 @@ class FastFlightBridge():
     def __init__(self):
         self.ff2 = None
 
-    def _send_binary_response(self, y_data, sampling_interval, tof_parms):
-        # Pre-allocate and pack everything in one go
-        data_len = len(y_data)
-        
-        # Pack metadata first (fixed size for speed)
-        metadata_packed = struct.pack('<III', 
-                                    sampling_interval,
-                                    tof_parms['ErrFlags'],
-                                    tof_parms['ProtoNum'])
-        
-        # Pack variable-length data
-        spec_num = struct.pack('<I', tof_parms['SpecNum'])
-        timestamp = struct.pack('<d', tof_parms['TimeStamp'])  # double precision
-        data_length = struct.pack('<I', data_len)
-        
-        # Convert y_data directly to bytes (assuming it's already a list of ints)
-        if hasattr(y_data, 'tobytes'):  # numpy array
-            y_binary = y_data.astype('<i4').tobytes()
-        else:  # regular list
-            y_binary = struct.pack('<' + 'i' * data_len, *y_data)
-        
-        # Single concatenated write
-        complete_response = (metadata_packed + spec_num + timestamp + 
-                            data_length + y_binary)
-        
-        sys.stdout.buffer.write(complete_response)
-        sys.stdout.buffer.flush()
-
     def handle_request(self, request: Dict[str, Any]):
         """Handle a single request and return response"""
 
@@ -279,42 +251,39 @@ class FastFlightBridge():
                 return {'success': True, 'result': None}
             
             elif method == 'get_data':
-                # Special handling for get_data to use binary transfer
+                # Handle get_data with JSON
                 result = self.ff2.get_data()
                 if result is None:
                     return {'success': True, 'result': None}
                 
                 x_data, y_data, tof_parms = result
 
-                # Get current sampling interval from active protocol
+                # Get current sampling interval for X data reconstruction
                 active_proto = self.ff2.GSObj.ActiveProtoNumber
                 sampling_interval = self.ff2.Protocols[active_proto].SamplingInterval
 
-                # First send a marker line to indicate binary data follows
-                marker_line = "BINARY_DATA_FOLLOWS\n"
-                sys.stdout.buffer.write(marker_line.encode('utf-8'))
-                sys.stdout.buffer.flush()
-
-                # Send binary response
-                self._send_binary_response(y_data, sampling_interval, tof_parms)
-
-                # Return a special marker to indicate binary data was sent
-                return {'success': True, 'result': 'BINARY_SENT'}
+                # Return everything as JSON
+                return {
+                    'success': True, 
+                    'result': {
+                        'y_data': [int(y) for y in y_data],
+                        'sampling_interval': sampling_interval,
+                        'tof_parms': tof_parms
+                    }
+                }
             
             elif hasattr(self.ff2, method):
                 result = getattr(self.ff2, method)(*args, **kwargs)
                 return {'success': True, 'result': result}
             
             else:
-                return {'success': False, 
-                        'error'  : f'Unknown method: {method}'
-                    }
+                return {'success': False, 'error': f'Unknown method: {method}'}
             
         except Exception as e:
             return {
-                'success'   : False,
-                'error'     : str(e),
-                'traceback' : traceback.format_exc()
+                'success': False,
+                'error': str(e),
+                'traceback': traceback.format_exc()
             }
         
     def run(self):
@@ -324,13 +293,11 @@ class FastFlightBridge():
 
         try:
             while True:
-                # Read binary data from stdin and decode
-                line_bytes = sys.stdin.buffer.readline()
-                if not line_bytes:
+                # Read texr data from stdin
+                line = sys.stdin.buffer.readline().strip()
+                if not line:
                     break
 
-                line = line_bytes.decode('utf-8').strip()
-                
                 if not line or line == 'QUIT':
                     break
 
@@ -338,19 +305,18 @@ class FastFlightBridge():
                     request = json.loads(line)
                     response = self.handle_request(request)
 
-                    # Only send JSON response if it's not a binary data response
-                    if response.get('result') != 'BINARY_SENT':
-                        response_json = json.dumps(response) + '\n'
-                        sys.stdout.buffer.write(response_json.encode('utf-8'))
-                        sys.stdout.buffer.flush()
+                    # send JSON response
+                    response_json = json.dumps(response) + '\n'
+                    sys.stdout.buffer.write(response_json)
+                    sys.stdout.buffer.flush()
 
                 except json.JSONDecodeError as e:
                     error_response = {
                         'success': False, 
                         'error'  : f'JSON decode error: {str(e)}'
                     }
-                    response_json = json.dumps(response) + '\n'
-                    sys.stdout.buffer.write(response_json.encode('utf-8'))
+                    response_json = json.dumps(error_response) + '\n'
+                    sys.stdout.buffer.write(response_json)
                     sys.stdout.buffer.flush()
 
         except KeyboardInterrupt:
