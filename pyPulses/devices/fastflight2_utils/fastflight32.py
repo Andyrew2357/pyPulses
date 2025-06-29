@@ -128,8 +128,21 @@ class FastFlight32():
 
     def get_tof_parms(self):
         """Return a dictionary describing TOFObj."""
-        return {parm: getattr(self.TOFObj, parm, None)
-                for parm in self.tof_parms}
+        result = {}
+        for parm in self.tof_parms:
+            value = getattr(self.TOFObj, parm, None)
+            if value is not None:
+                # Ensure integer types are properly converted
+                if parm in ['ErrFlags', 'ProtoNum', 'SpecNum', 'TagNum']:
+                    # Explicitly convert to python int for consistent bit repr
+                    result[parm] = int(value)
+                else:
+                    # Double precision values 
+                    # (SpecificIonCount, TimeStamp, TotalIonCount)
+                    result[parm] = float(value)
+            else:
+                result[parm] = None    
+        return result
     
     def is_acq_running(self) -> Optional[bool]:
         """Is there a currently running acquisition."""

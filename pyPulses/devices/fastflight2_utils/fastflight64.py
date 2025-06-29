@@ -3,6 +3,8 @@ from .ff_package_manager import FastFlightPackageManager
 import json
 import subprocess
 import time
+import struct
+import numpy as np
 from typing import Optional, Tuple
 
 class FastFlight64():
@@ -26,7 +28,7 @@ class FastFlight64():
                 stdin   = subprocess.PIPE,
                 stdout  = subprocess.PIPE,
                 stderr  = subprocess.PIPE,
-                text    = True,
+                text    = False,
                 bufsize = 0
             )
 
@@ -35,8 +37,8 @@ class FastFlight64():
             # Check if the process started successfully
             if self._process.poll() is not None:
                 # Process already terminated
-                stderr_output = self._process.stderr.read()
-                stdout_output = self._process.stdout.read()
+                stderr_output = self._process.stderr.read().decode('utf-8')
+                stdout_output = self._process.stdout.read().decode('utf-8')
                 raise RuntimeError(
                     f"Bridge process terminated immediately."
                     f"STDERR: {stderr_output}, STDOUT: {stdout_output}"
@@ -48,6 +50,47 @@ class FastFlight64():
 
         except Exception as e:
             raise RuntimeError(f"Failed to start 32-bit Python bridge: {e}")
+        
+    def _reconstruct_x_data(self, length: int, sampling_interval: int) -> np.ndarray:
+        """Reconstruct X data from sampling interval and length"""
+
+        # Sampling interval mapping based on the original code comments
+        interval_map = {
+            0: 0.25,
+            1: 0.25,
+            2: 0.5,
+            3: 1.0,
+            4: 2.0
+        }
+
+        return interval_map[sampling_interval] * np.arange(length)
+    
+    def _read_binary_data(self):
+        """Read binary data response from bridge process"""
+        
+        # Read metadata length (4 bytes, little-endian unsigned int)
+        metadata_len_bytes = self._process.stdout.read(4)
+        if len(metadata_len_bytes) != 4:
+            raise RuntimeError("Failed to read metadata length")
+        metadata_len = struct.unpack('<I', metadata_len_bytes)[0]
+
+        # Read metadata JSON
+        metadata_bytes = self._process.stdout.read(metadata_len)
+        if len(metadata_bytes) != metadata_len: 
+            raise RuntimeError("Failed to read metadata")
+        metadata = json.loads(metadata_bytes.decode('utf-8'))
+
+        # Read binary Y data
+        data_length = metadata['length']
+        y_bytes = self._process.stdout.read(data_length * 4) # 4 bytes per int32
+        if len(y_bytes) != data_length * 4:
+            raise RuntimeError("Failed to read Y data")
+        
+        # Unpack Y data
+        y_data = list(struct.unpack('<' + 'i' * data_length, y_bytes))
+        x_data = self._reconstruct_x_data(data_length, metadata['sampling_interval'])
+
+        return x_data, np.array(y_data), metadata['tof_parms']
         
     def _call_method(self, method, *args, **kwargs):
         """Call a method on the remote FastFlight instance"""
@@ -64,24 +107,58 @@ class FastFlight64():
 
         try:
             # send request
-            self._process.stdin.write(json.dumps(request) + '\n')
+            request_json = json.dumps(request) + '\n'
+            self._process.stdin.write(request_json.encode('utf-8'))
             self._process.stdin.flush()
 
-            # read response
-            response_line = self._process.stdout.readline().strip()
-            if not response_line:
-                raise RuntimeError("No response from bridge process")
-            
-            response = json.loads(response_line)
+            # Special handling for get_data which returns binary
+            if method == 'get_data':
+                # First check if there's a regular JSON response (for None case)
+                # We need to peek ahead to see if it's binary or JSON
+                first_bytes = self._process.stdout.read(6)
+                if first_bytes == b"BINARY":
+                    return self._read_binary_data()
+                
+                else:
+                    # It's a JSON response, read the rest of the line
+                    rest_of_line = b""
+                    while True:
+                        byte = self._process.stdout.read(1)
+                        if byte == b'\n' or not byte:
+                            break
+                        rest_of_line += byte
 
-            if response['success']:
-                return response['result']
+                    response_line = (first_bytes + rest_of_line).decode('utf-8').strip()
+                    if not response_line:
+                        raise RuntimeError("No response from bridge process")
+                    
+                    response = json.loads(response_line)
+                    if response['success']:
+                        return response['result'] # This should be None
+                    else:
+                        error_msg = response['error']
+                        if 'traceback' in response:
+                            error_msg += '\n' + response['traceback']
+                        raise RuntimeError(f"Remote error: {error_msg}")
+                    
             else:
-                error_msg = response['error']
-                if 'traceback' in response:
-                    error_msg += '\n' + response['traceback']
-                raise RuntimeError(f"Remote error: {error_msg}")
-            
+
+                # Read regular JSON response
+                response_line_bytes = self._process.stdout.readline()
+                if not response_line_bytes:
+                    raise RuntimeError("No response from bridge process")
+                
+                response_line = response_line_bytes.decode('utf-8').strip()
+                response = json.loads(response_line)
+
+                if response['success']:
+                    return response['result']
+                else:
+                    error_msg = response['error']
+                    if 'traceback' in response:
+                        error_msg += '\n' + response['traceback']
+                    raise RuntimeError(f"Remote error: {error_msg}")
+                
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Failed to decode response: {e}")
         
@@ -95,7 +172,7 @@ class FastFlight64():
             return
         
         try:
-            self._process.stdin.write('QUIT\n')
+            self._process.stdin.write(b'QUIT\n')
             self._process.stdin.flush()
             self._process.wait(timeout = 5)
 
@@ -177,6 +254,26 @@ class FastFlight64():
         return self._call_method('stop_acq')
     
     def get_data(self) -> Optional[Tuple[list, list, dict]]:
+        """
+        Get TOF data from the FastFlight.
+        
+        Returns:
+            Tuple of (x_data, y_data, tof_params) or None if no data available
+            
+            x_data: list of float - Time values in microseconds
+            y_data: list of float - Signal intensity values (converted from integers)
+            tof_params: dict containing:
+                - ErrFlags (int): Error status bits (0=ADC underflow, 1=ADC overflow)
+                        Check (ErrFlags & 1) for ADC underflow,
+                              (ErrFlags & 2) for ADC overflow
+                - ProtoNum (int): Protocol number used for this spectrum
+                - SpecificIonCount (float): Specific ion count for this spectrum
+                - SpecNum (int): Spectrum number since acquisition start
+                - TagNum (int): Tag number for this spectrum  
+                - TimeStamp (float): Timestamp in seconds
+                - TotalIonCount (float): Total ion count for this spectrum
+        """
+
         result = self._call_method('get_data')
         if result is None:
             return None
