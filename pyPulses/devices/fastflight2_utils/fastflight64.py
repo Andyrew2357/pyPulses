@@ -120,27 +120,27 @@ class FastFlight64():
                     return self._read_binary_data()
                 
                 else:
-                    # It's a JSON response, read the rest of the line
-                    rest_of_line = b""
-                    while True:
-                        byte = self._process.stdout.read(1)
-                        if byte == b'\n' or not byte:
-                            break
-                        rest_of_line += byte
-
-                    response_line = (first_bytes + rest_of_line).decode('utf-8').strip()
-                    if not response_line:
+                    # Read the first line to see if it's a JSON or binary
+                    response_line_bytes = self._process.stdout.readline()
+                    if not response_line_bytes:
                         raise RuntimeError("No response from bridge process")
                     
-                    response = json.loads(response_line)
-                    if response['success']:
-                        return response['result'] # This should be None
-                    else:
-                        error_msg = response['error']
-                        if 'traceback' in response:
-                            error_msg += '\n' + response['traceback']
-                        raise RuntimeError(f"Remote error: {error_msg}")
+                    response_line = response_line_bytes.decode('utf-8').strip()
                     
+                    # Check if it's the binary data marker
+                    if response_line == "BINARY_DATA_FOLLOWS":
+                        return self._read_binary_data()
+                    else:
+                        # It's a regular JSON response (probably None case)
+                        response = json.loads(response_line)
+                        if response['success']:
+                            return response['result']
+                        else:
+                            error_msg = response['error']
+                            if 'traceback' in response:
+                                error_msg += '\n' + response['traceback']
+                            raise RuntimeError(f"Remote error: {error_msg}")
+                            
             else:
 
                 # Read regular JSON response

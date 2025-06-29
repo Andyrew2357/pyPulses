@@ -242,14 +242,11 @@ class FastFlightBridge():
         metadata_json = json.dumps(metadata)
         metadata_bytes = metadata_json.encode('utf-8')
 
-        # Send header: "BINARY" + metadata + binary data
-        header = b"BINARY"
         metadata_len = struct.pack('<I', len(metadata_bytes)) # 4-byte little-endian
 
         # Pack Y data as 32-bit signed integers
         y_binary = struct.pack('<' + 'i' * len(y_integers), *y_integers) # 4-byte little-endian
 
-        sys.stdout.buffer.write(header)
         sys.stdout.buffer.write(metadata_len)
         sys.stdout.buffer.write(metadata_bytes)
         sys.stdout.buffer.write(y_binary)
@@ -289,6 +286,11 @@ class FastFlightBridge():
                 # Get current sampling interval from active protocol
                 active_proto = self.ff2.GSObj.ActiveProtoNumber
                 sampling_interval = self.ff2.Protocols[active_proto].SamplingInterval
+
+                # First send a marker line to indicate binary data follows
+                marker_line = "BINARY_DATA_FOLLOWS\n"
+                sys.stdout.buffer.write(marker_line.encode('utf-8'))
+                sys.stdout.buffer.flush()
 
                 # Send binary response
                 self._send_binary_response(y_data, sampling_interval, tof_parms)
