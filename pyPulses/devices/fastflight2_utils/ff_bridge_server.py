@@ -247,7 +247,7 @@ class FastFlightBridge():
         metadata_len = struct.pack('<I', len(metadata_bytes)) # 4-byte little-endian
 
         # Pack Y data as 32-bit signed integers
-        y_binary = struct.pack('<I', len(metadata_bytes)) # 4-byte little-endian
+        y_binary = struct.pack('<' + 'i' * len(y_integers), *y_integers) # 4-byte little-endian
 
         sys.stdout.buffer.write(header)
         sys.stdout.buffer.write(metadata_len)
