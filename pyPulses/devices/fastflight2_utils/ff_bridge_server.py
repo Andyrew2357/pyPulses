@@ -228,28 +228,31 @@ class FastFlightBridge():
         self.ff2 = None
 
     def _send_binary_response(self, y_data, sampling_interval, tof_parms):
-        """Send binary data response for get_data"""
+        # Pre-allocate and pack everything in one go
+        data_len = len(y_data)
         
-        # Convert Y data to integers
-        y_integers = [int(y) for y in y_data]
-
-        metadata = {
-            'sampling_interval' : sampling_interval,
-            'tof_parms'         : tof_parms,
-            'length'            : len(y_integers)
-        }
-
-        metadata_json = json.dumps(metadata)
-        metadata_bytes = metadata_json.encode('utf-8')
-
-        metadata_len = struct.pack('<I', len(metadata_bytes)) # 4-byte little-endian
-
-        # Pack Y data as 32-bit signed integers
-        y_binary = struct.pack('<' + 'i' * len(y_integers), *y_integers) # 4-byte little-endian
-
-        sys.stdout.buffer.write(metadata_len)
-        sys.stdout.buffer.write(metadata_bytes)
-        sys.stdout.buffer.write(y_binary)
+        # Pack metadata first (fixed size for speed)
+        metadata_packed = struct.pack('<III', 
+                                    sampling_interval,
+                                    tof_parms['ErrFlags'],
+                                    tof_parms['ProtoNum'])
+        
+        # Pack variable-length data
+        spec_num = struct.pack('<I', tof_parms['SpecNum'])
+        timestamp = struct.pack('<d', tof_parms['TimeStamp'])  # double precision
+        data_length = struct.pack('<I', data_len)
+        
+        # Convert y_data directly to bytes (assuming it's already a list of ints)
+        if hasattr(y_data, 'tobytes'):  # numpy array
+            y_binary = y_data.astype('<i4').tobytes()
+        else:  # regular list
+            y_binary = struct.pack('<' + 'i' * data_len, *y_data)
+        
+        # Single concatenated write
+        complete_response = (metadata_packed + spec_num + timestamp + 
+                            data_length + y_binary)
+        
+        sys.stdout.buffer.write(complete_response)
         sys.stdout.buffer.flush()
 
     def handle_request(self, request: Dict[str, Any]):

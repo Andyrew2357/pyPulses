@@ -66,31 +66,34 @@ class FastFlight64():
         return interval_map[sampling_interval] * np.arange(length)
     
     def _read_binary_data(self):
-        """Read binary data response from bridge process"""
-        
-        # Read metadata length (4 bytes, little-endian unsigned int)
-        metadata_len_bytes = self._process.stdout.read(4)
-        if len(metadata_len_bytes) != 4:
-            raise RuntimeError("Failed to read metadata length")
-        metadata_len = struct.unpack('<I', metadata_len_bytes)[0]
-
-        # Read metadata JSON
-        metadata_bytes = self._process.stdout.read(metadata_len)
-        if len(metadata_bytes) != metadata_len: 
+        # Read fixed-size metadata
+        metadata_bytes = self._process.stdout.read(20)  # 3*4 + 4 + 8 bytes
+        if len(metadata_bytes) != 20:
             raise RuntimeError("Failed to read metadata")
-        metadata = json.loads(metadata_bytes.decode('utf-8'))
-
-        # Read binary Y data
-        data_length = metadata['length']
-        y_bytes = self._process.stdout.read(data_length * 4) # 4 bytes per int32
+        
+        sampling_interval, err_flags, proto_num, spec_num = struct.unpack('<IIII', metadata_bytes[:16])
+        timestamp = struct.unpack('<d', metadata_bytes[16:20])[0]
+        
+        # Read data length
+        data_len_bytes = self._process.stdout.read(4)
+        data_length = struct.unpack('<I', data_len_bytes)[0]
+        
+        # Read Y data in one shot
+        y_bytes = self._process.stdout.read(data_length * 4)
         if len(y_bytes) != data_length * 4:
             raise RuntimeError("Failed to read Y data")
         
-        # Unpack Y data
-        y_data = list(struct.unpack('<' + 'i' * data_length, y_bytes))
-        x_data = self._reconstruct_x_data(data_length, metadata['sampling_interval'])
-
-        return x_data, np.array(y_data), metadata['tof_parms']
+        y_data = np.frombuffer(y_bytes, dtype='<i4')  # Direct numpy conversion
+        x_data = self._reconstruct_x_data(data_length, sampling_interval)
+        
+        tof_parms = {
+            'ErrFlags': err_flags,
+            'ProtoNum': proto_num,
+            'SpecNum': spec_num,
+            'TimeStamp': timestamp
+        }
+        
+        return x_data, y_data, tof_parms
         
     def _call_method(self, method, *args, **kwargs):
         """Call a method on the remote FastFlight instance"""
