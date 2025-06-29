@@ -113,33 +113,26 @@ class FastFlight64():
 
             # Special handling for get_data which returns binary
             if method == 'get_data':
-                # First check if there's a regular JSON response (for None case)
-                # We need to peek ahead to see if it's binary or JSON
-                first_bytes = self._process.stdout.read(6)
-                if first_bytes == b"BINARY":
-                    return self._read_binary_data()
+                # Read the first line to see if it's a JSON or binary
+                response_line_bytes = self._process.stdout.readline()
+                if not response_line_bytes:
+                    raise RuntimeError("No response from bridge process")
                 
+                response_line = response_line_bytes.decode('utf-8').strip()
+                
+                # Check if it's the binary data marker
+                if response_line == "BINARY_DATA_FOLLOWS":
+                    return self._read_binary_data()
                 else:
-                    # Read the first line to see if it's a JSON or binary
-                    response_line_bytes = self._process.stdout.readline()
-                    if not response_line_bytes:
-                        raise RuntimeError("No response from bridge process")
-                    
-                    response_line = response_line_bytes.decode('utf-8').strip()
-                    
-                    # Check if it's the binary data marker
-                    if response_line == "BINARY_DATA_FOLLOWS":
-                        return self._read_binary_data()
+                    # It's a regular JSON response (probably None case)
+                    response = json.loads(response_line)
+                    if response['success']:
+                        return response['result']
                     else:
-                        # It's a regular JSON response (probably None case)
-                        response = json.loads(response_line)
-                        if response['success']:
-                            return response['result']
-                        else:
-                            error_msg = response['error']
-                            if 'traceback' in response:
-                                error_msg += '\n' + response['traceback']
-                            raise RuntimeError(f"Remote error: {error_msg}")
+                        error_msg = response['error']
+                        if 'traceback' in response:
+                            error_msg += '\n' + response['traceback']
+                        raise RuntimeError(f"Remote error: {error_msg}")
                             
             else:
 
