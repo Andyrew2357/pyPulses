@@ -211,3 +211,4 @@ class FastFlight32():
         if not success:
             return
         return vaXData.value, vaYData.value, self.get_tof_parms()
+    

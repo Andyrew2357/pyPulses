@@ -51,6 +51,6 @@ class DeviceRegistry:
     @classmethod
     def clear_registry(cls) -> None:
         """Clear all registered devices."""
-        for dev in cls._active_devices:
+        for dev in list(cls._active_devices.keys()):
             del cls._active_devices[dev]
         cls._active_devices.clear()

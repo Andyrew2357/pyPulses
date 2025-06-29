@@ -28,7 +28,7 @@ class FastFlight64():
                 stdin   = subprocess.PIPE,
                 stdout  = subprocess.PIPE,
                 stderr  = subprocess.PIPE,
-                text    = True,
+                text    = False,
                 bufsize = 0
             )
 
@@ -37,8 +37,8 @@ class FastFlight64():
             # Check if the process started successfully
             if self._process.poll() is not None:
                 # Process already terminated
-                stderr_output = self._process.stderr.read()
-                stdout_output = self._process.stdout.read()
+                stderr_output = self._process.stderr.read().decode('utf-8')
+                stdout_output = self._process.stdout.read().decode('utf-8')
                 raise RuntimeError(
                     f"Bridge process terminated immediately."
                     f"STDERR: {stderr_output}, STDOUT: {stdout_output}"
@@ -51,10 +51,10 @@ class FastFlight64():
         except Exception as e:
             raise RuntimeError(f"Failed to start 32-bit Python bridge: {e}")
         
-    def _reconstruct_x_data(self, length: int, sampling_interval: int) -> np.ndarray:
+    def _reconstruct_x_data(self, length: int, sampling_interval: int
+                            ) -> np.ndarray:
         """Reconstruct X data from sampling interval and length"""
 
-        # Sampling interval mapping based on the original code comments
         interval_map = {
             0: 0.25,
             1: 0.25,
@@ -64,6 +64,55 @@ class FastFlight64():
         }
 
         return interval_map[sampling_interval] * np.arange(length)
+    
+    def _read_exact(self, size: int) -> bytes:
+        """Read exactly 'size' bytes from stdout, handling partial reads"""
+        data = b''
+        while len(data) < size:
+            chunk = self._process.stdout.read(size - len(data))
+            if not chunk:
+                raise RuntimeError(
+                    f"Unexpected end of stream. Expected {size} bytes, "
+                    f"got {len(data)}")
+            data += chunk
+        return data
+    
+    def _read_binary_data(self):
+        """Read binary data response from bridge process"""
+        try:
+            # Read fixed-size metadata: sampling_interval(4) + err_flags(4) + 
+            # proto_num(4) + spec_num(4) + timestamp(8) = 24 bytes
+            metadata_bytes = self._read_exact(24)
+            
+            sampling_interval, err_flags, proto_num, spec_num = \
+                struct.unpack('<IIII', metadata_bytes[:16])
+            timestamp = struct.unpack('<d', metadata_bytes[16:24])[0]
+            
+            # Read data length
+            data_len_bytes = self._read_exact(4)
+            data_length = struct.unpack('<I', data_len_bytes)[0]
+            
+            if data_length == 0:
+                # Handle empty data case
+                x_data = np.array([])
+                y_data = np.array([])
+            else:
+                # Read Y data
+                y_bytes = self._read_exact(data_length * 4)  # 4 bytes per int32
+                y_data = np.frombuffer(y_bytes, dtype='<i4')  # Little-endian int32
+                x_data = self._reconstruct_x_data(data_length, sampling_interval)
+            
+            tof_parms = {
+                'ErrFlags': err_flags,
+                'ProtoNum': proto_num,
+                'SpecNum': spec_num,
+                'TimeStamp': timestamp
+            }
+            
+            return x_data, y_data.astype(), tof_parms
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to read binary data: {e}")
         
     def _call_method(self, method, *args, **kwargs):
         """Call a method on the remote FastFlight instance"""
@@ -73,37 +122,70 @@ class FastFlight64():
         
         request = {
             'method': method,
-            'args': list(args),
+            'args'  : list(args),
             'kwargs': kwargs
         }
 
         try:
-            # Send request
+            # send request
             request_json = json.dumps(request) + '\n'
-            self._process.stdin.write(request_json)
+            self._process.stdin.write(request_json.encode('utf-8'))
             self._process.stdin.flush()
 
-            # Read response
-            response_line_bytes = self._process.stdout.readline()
-            if not response_line_bytes:
-                raise RuntimeError("No response from bridge process")
-            
-            response_line = response_line_bytes.strip()
-            response = json.loads(response_line)
-
-            if response['success']:
-                return response['result']
-            else:
-                error_msg = response['error']
-                if 'traceback' in response:
-                    error_msg += '\n' + response['traceback']
-                raise RuntimeError(f"Remote error: {error_msg}")
+            # Special handling for get_data which returns binary
+            if method == 'get_data':
+                # Read the first line to see if it's a JSON or binary
+                response_line_bytes = self._process.stdout.readline()
+                if not response_line_bytes:
+                    raise RuntimeError("No response from bridge process")
                 
-        except json.JSONDecodeError as e:
-            raise RuntimeError(f"Failed to decode response: {e}")
+                response_line = response_line_bytes.decode('utf-8').strip()
+                
+                # Check if it's the binary data marker
+                if response_line == "BINARY_DATA_FOLLOWS":
+                    return self._read_binary_data()
+                else:
+                    # It's a regular JSON response (probably None case)
+                    try:
+                        response = json.loads(response_line)
+                        if response['success']:
+                            return response['result']
+                        else:
+                            error_msg = response['error']
+                            if 'traceback' in response:
+                                error_msg += '\n' + response['traceback']
+                            raise RuntimeError(f"Remote error: {error_msg}")
+                    except json.JSONDecodeError as e:
+                        raise RuntimeError(
+                            f"Failed to decode JSON response: {response_line}, "
+                            f"error: {e}")
+                            
+            else:
+                # Read regular JSON response
+                response_line_bytes = self._process.stdout.readline()
+                if not response_line_bytes:
+                    raise RuntimeError("No response from bridge process")
+                
+                response_line = response_line_bytes.decode('utf-8').strip()
+                
+                try:
+                    response = json.loads(response_line)
+                    if response['success']:
+                        return response['result']
+                    else:
+                        error_msg = response['error']
+                        if 'traceback' in response:
+                            error_msg += '\n' + response['traceback']
+                        raise RuntimeError(f"Remote error: {error_msg}")
+                except json.JSONDecodeError as e:
+                    raise RuntimeError(f"Failed to decode JSON response: "
+                                       f"{response_line}, error: {e}")
+                
+        except Exception as e:
+            raise RuntimeError(f"Communication error: {e}")
         
     def __del__(self):
-        """Clean up the brige process"""
+        """Clean up the bridge process"""
         self.close_bridge()
 
     def close_bridge(self):
@@ -112,7 +194,7 @@ class FastFlight64():
             return
         
         try:
-            self._process.stdin.write('QUIT\n')
+            self._process.stdin.write(b'QUIT\n')
             self._process.stdin.flush()
             self._process.wait(timeout = 5)
 
@@ -193,7 +275,7 @@ class FastFlight64():
     def stop_acq(self):
         return self._call_method('stop_acq')
     
-    def get_data(self) -> Optional[Tuple[list, list, dict]]:
+    def get_data(self) -> Optional[Tuple[np.ndarray, np.ndarray, dict]]:
         """
         Get TOF data from the FastFlight.
         
@@ -217,9 +299,4 @@ class FastFlight64():
         result = self._call_method('get_data')
         if result is None:
             return None
-        
-        # Reconstruct X data on the client side
-        y_data = np.array(result['y_data'], dtype=np.int32)
-        x_data = self._reconstruct_x_data(len(y_data), result['sampling_interval'])
-        tof_parms = result['tof_parms']
-    
+        return tuple(result)

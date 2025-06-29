@@ -426,8 +426,7 @@ class ScopeView(QMainWindow):
         if (current_time - self.last_plot_update) >= plot_update_interval:
             try:
                 x, y, d = self.ff2.get_data()
-                x = np.array(x)
-                y = np.array(y)
+                
                 # Translate y to volts properly
                 y *= (0.5 / 255.0) / self.averages_input.value() 
 
