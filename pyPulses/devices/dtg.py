@@ -121,8 +121,8 @@ class Block():
         
         if length is None:
             length = self.length - offset
-        waveform = BlockData(self, group, ch_idx, data, offset, length)
-        self.waveforms.append()
+        waveform = BlockData(group, ch_idx, data, offset, length)
+        self.waveforms.append(waveform)
         return waveform
 
 class BlockData():
@@ -165,6 +165,7 @@ class DTG(pyvisaDevice):
         self._burst_count   : int   = None
 
         self.get_installed_modules()
+        self.operation_mode()
     
     def mode_required(*allowed_modes) -> Callable:
         """Check to see if we are in the right mode to call this function."""
@@ -180,9 +181,6 @@ class DTG(pyvisaDevice):
                 return f(self, *args, **kwargs)
             return wrapper
         return decorator
-    
-    def get_mode(self) -> str:
-        pass
 
     def get_installed_modules(self) -> dict:
         """Determine installed hardware modules"""
@@ -240,13 +238,19 @@ class DTG(pyvisaDevice):
         self.device.write(f"TBAS:MODE {'BURS' if burst else 'CONT'}")
         self.device.write(f"Entered {'burst' if burst else 'continuous mode.'}")
     
-    def output_enable(self, on: bool = None) -> Optional[bool]:
-        """Enable/Disable output or query output state."""
+    def run(self, on: bool = None) -> Optional[bool]:
+        """Enable/Disable sequencer or query sequencer state."""
 
         if on is None:
             return int(self.device.query("TBAS:RUN?"))
         
         self.device.write(f"TBAS:RUN {'ON' if on else 'OFF'}")
+        self.info(f"{'En' if on else 'Dis'}abled sequencer.")
+
+    def output_enable(self, on: bool):
+        """Enable or disable all outputs"""
+
+        self.device.write(f"OUTPut:STATe:ALL {'ON' if on else 'OFF'}")
         self.info(f"{'En' if on else 'Dis'}abled outputs.")
         
     def frequency(self, f: float = None) -> float:
@@ -671,12 +675,6 @@ class DTG(pyvisaDevice):
             self.error(f"Unrecognized channel name {ch}")
             return
         
-        # set logical levels to make sure they are not None
-        if ch.low is None:
-            ch.low = 0.0
-        if ch.high is None:
-            ch.high = 1.0
-        
         self.groups[group_name].channels[idx] = ch
         self.device.write(f'SIGNal:ASSign "{group_name}[{idx}]", "{ch._id()}"')
         self.info(
@@ -726,13 +724,15 @@ class DTG(pyvisaDevice):
         self.device.write(f'BLOCk:SELect "{block_name}"')
         payload = data.tobytes()
         header = f'#{len(str(len(payload)))}{len(payload)}'.encode('ascii')
-        cmd = f'SIGNal:BDATa "{group_name}", {start_idx}, {num_bits}, '.encode('ascii')
-        cmd += header + payload + b'\n'
+        cmd = f'SIGNal:BDATa "{group_name}[{ch_idx}]", {start_idx}, {num_bits}, '
+        cmd = cmd.encode('ascii')
+        cmd += header + payload
         self.device.write_raw(cmd)
 
         self.info(
-            f"Loaded block {block_name} with {payload} from index {start_idx} to "
-            f"{start_idx + num_bits} associated to group {group_name}"
+            f"Loaded block {block_name} with {header}{payload} from index "
+            f"{start_idx} to {start_idx + num_bits} associated to group "
+            f"{group_name} channel {ch_idx}"
         )
 
     @mode_required('DATA')
@@ -831,11 +831,6 @@ class DTG(pyvisaDevice):
             T[-1] = 16 * period
             V[-1] = logic_l
 
-            print(chan.name)
-            print(ch_period)
-            print(T)
-            print(V)
-
             ax.plot(T, V, color = 'r')
             ax.set_ylabel(chan.name)
         
@@ -858,11 +853,11 @@ class DTG(pyvisaDevice):
 
             toff = period * wf.off
             if ch.low is None:
-                low = self.low_level[ch]
+                low = self.low_level(ch)
             else:
                 low = ch.low
             if ch.high is None:
-                high = self.high_level[ch]
+                high = self.high_level(ch)
             else:
                 high = ch.high
             dt = ch.rise_time
@@ -876,6 +871,7 @@ class DTG(pyvisaDevice):
                 if v != curr_v:
                     T.extend([toff + j * period, toff + j * period + dt])
                     V.extend([curr_v, v])
+                    curr_v = v
 
             T.append(toff + period * len(S))
             V.append(S[-1])
@@ -896,8 +892,8 @@ class DifferentialPair():
         self.chy = dtg.get_channel(chy)
 
     def enable(self, on: bool):
-        self.dtg.output_enable(self.chx, on)
-        self.dtg.output_enable(self.chy, on)
+        self.dtg.chan_output(self.chx, on)
+        self.dtg.chan_output(self.chy, on)
 
     @property
     def ldelay(self) -> float:
@@ -915,9 +911,9 @@ class DifferentialPair():
     @property
     def toff(self) -> float:
         if self.chy.ldelay is None:
-            ldelayy = self.dtg.lead_delay(self.chy)
+            self.dtg.lead_delay(self.chy)
 
-        return ldelayy - self.chy.ldelay
+        return self.chy.ldelay - self.chy.ldelay
     
     @toff.setter
     def toff(self, dt: float):
@@ -988,7 +984,7 @@ class DifferentialPair():
         else:
             return self.chy.low
         
-    @Xlow.setter
+    @Ylow.setter
     def Ylow(self, V: float):
         self.dtg.low_level(self.chy, V)
 
@@ -999,7 +995,7 @@ class DifferentialPair():
         else:
             return self.chy.high
         
-    @Xhigh.setter
+    @Yhigh.setter
     def Yhigh(self, V: float):
         self.dtg.high_level(self.chy, V)
 

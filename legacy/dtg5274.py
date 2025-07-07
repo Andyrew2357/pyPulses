@@ -6,7 +6,7 @@ coordinates multiple instruments to generate clean excitation and discharge
 pulses.
 """
 
-from .pyvisa_device import pyvisaDevice
+from ..pyPulses.devices.pyvisa_device import pyvisaDevice
 
 class dtg5274(pyvisaDevice):
     def __init__(self, logger = None, instrument_id: str = None):

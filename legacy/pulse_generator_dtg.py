@@ -1,73 +1,59 @@
 """
-This class represents a multi-instrument object that controls a dc box and dtg
-to produce excitation and discharge pulses with the desired heights. The DC box
-is wired to Xsg1, Ysg1, Xsg2, and Ysg2 on the pulse shaper box, and the DTG is
-wired to all of the clock inputs (AC1, AC1bar, AC2, AC2bar) and the repetitive 
-signal averager's trigger input.
+This class represents a wrapper over the dtg that functions as a pulse generator
+without the pulse shaper box.
 """
 
-from ._registry import DeviceRegistry
-from .abstract_device import abstractDevice
-from .ad5764 import ad5764
+from ..pyPulses.devices._registry import DeviceRegistry
+from ..pyPulses.devices.abstract_device import abstractDevice
 from .dtg5274 import dtg5274
 from typing import Optional
-import json
-import os
 
-class pulseGenerator(abstractDevice):
+class pulseGeneratorDTG(abstractDevice):
     def __init__(self, loggers = None, config = None):
         if not config:
-            fname = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                r'pulse_generator.json'
-            )
-            with open(fname, 'r') as f:
-                config = json.load(f)
+            config = {
+                "max_V" : 2.5,
+                "min_V" : 0.0,
+                "Vx1"   : ["A", 1],
+                "Vy1"   : ["A", 2],
+                "Vx2"   : ["B", 1],
+                "Vy2"   : ["B", 2],
+                "trig"  : ["C", 1],
+            }
+        self.config = config
 
         if loggers:
             try:
-                logger, dc_logger, dtg_logger = loggers
+                logger, dtg_logger = loggers
             except:
-                logger = dc_logger = dtg_logger = loggers
+                logger = dtg_logger = loggers
         
         super().__init__(logger)        
 
         self.max_V = config["max_V"]
         self.min_V = config["min_V"]
 
-        self.dcbox_map = config["dcbox_map"]
 
-        self.ac1    = tuple(config["ac1"])
-        self.ac1bar = tuple(config["ac1bar"])
-        self.ac2    = tuple(config["ac2"])
-        self.ac2bar = tuple(config["ac2bar"])
+        self.Vx1    = tuple(config["Vx1"])
+        self.Vy1    = tuple(config["Vy1"])
+        self.Vx2    = tuple(config["Vx2"])
+        self.Vy2    = tuple(config["Vy2"])
         self.trig   = tuple(config["trig"])
 
-        dcbox_address   = config["dcbox_address"]
-        dtg_address     = config["dtg_address"]
-
-        self.dcbox = DeviceRegistry.get_device(dcbox_address)
-        if self.dcbox is None:
-            self.dcbox = ad5764(dc_logger, instrument_id = dcbox_address)
-        
+        dtg_address = config["dtg_address"]
         self.dtg = DeviceRegistry.get_device(dtg_address)
         if self.dtg is None:
             self.dtg = dtg5274(dtg_logger, instrument_id = dtg_address)
         
         self.get_status()
         self.dtg.run(True)
-
-        self.wait = 0.05
-        self.max_step = 0.1
     
     def get_V(self, ch):
         """Get the pulse height of a given output."""
-        return self.dcbox.get_V(self.dcbox_map[ch])
+        return self.dtg.get_high(*self.config[ch])
     
-    def set_V(self, ch, V, **kwargs) -> float:
+    def set_V(self, ch, V) -> float:
         """Set the pulse height of a given output."""
-        if "wait" not in kwargs: kwargs["wait"] = self.wait
-        if "max_step" not in kwargs: kwargs["max_step"] = self.max_step
 
         if not self.min_V <= V < self.max_V:
             Vt = min(self.max_V, max(self.min_V, V))
@@ -76,7 +62,7 @@ class pulseGenerator(abstractDevice):
             )
             V = Vt
 
-        self.dcbox.sweep_V(self.dcbox_map[ch], V, **kwargs)
+        self.dtg.set_high(*self.config[ch], V)
         self.info(f"Set {ch} to {V} V.")
         return V
 
@@ -88,11 +74,11 @@ class pulseGenerator(abstractDevice):
     def set_prate(self, prate):
         """Set the relative pulse rate consistently accross all outputs."""
         if self.exc_on():
-            self.dtg.set_relative_rate(prate, *self.ac1)
-            self.dtg.set_relative_rate(prate, *self.ac1bar)
+            self.dtg.set_relative_rate(prate, *self.Vx1)
+            self.dtg.set_relative_rate(prate, *self.Vy1)
         if self.dis_on():
-            self.dtg.set_relative_rate(prate, *self.ac2)
-            self.dtg.set_relative_rate(prate, *self.ac2bar)
+            self.dtg.set_relative_rate(prate, *self.Vx2)
+            self.dtg.set_relative_rate(prate, *self.Vy2)
         self.dtg.set_relative_rate(prate, *self.trig)
         self.prate = prate
         self.info(f"Set the relative pulse rate to {prate}.")
@@ -100,28 +86,28 @@ class pulseGenerator(abstractDevice):
     def exc_on(self, on: Optional[bool] = None) -> Optional[bool]:
         """Query or set whether excitation pulses are on or off."""
         if on is None:
-            print(self.dtg.get_relative_rate(*self.ac1))
-            return self.dtg.get_relative_rate(*self.ac1) != 'OFF'
+            print(self.dtg.get_relative_rate(*self.Vx1))
+            return self.dtg.get_relative_rate(*self.Vx1) != 'OFF'
 
         if on:
-            self.dtg.set_relative_rate(self.prate, *self.ac1)
-            self.dtg.set_relative_rate(self.prate, *self.ac1bar)
+            self.dtg.set_relative_rate(self.prate, *self.Vx1)
+            self.dtg.set_relative_rate(self.prate, *self.Vy1)
         else:
-            self.dtg.set_relative_rate('OFF', *self.ac1)
-            self.dtg.set_relative_rate('OFF', *self.ac1bar)
+            self.dtg.set_relative_rate('OFF', *self.Vx1)
+            self.dtg.set_relative_rate('OFF', *self.Vy1)
         self.info(f"Turned {'on' if on else 'off'} excitation pulses.")
 
     def dis_on(self, on: Optional[bool] = None) -> Optional[bool]:
         """Query or set whether discharge pulses are on or off."""
         if on is None:
-            return self.dtg.get_relative_rate(*self.ac2) != 'OFF'
+            return self.dtg.get_relative_rate(*self.Vx2) != 'OFF'
 
         if on:
-            self.dtg.set_relative_rate(self.prate, *self.ac2)
-            self.dtg.set_relative_rate(self.prate, *self.ac2bar)
+            self.dtg.set_relative_rate(self.prate, *self.Vx2)
+            self.dtg.set_relative_rate(self.prate, *self.Vy2)
         else:
-            self.dtg.set_relative_rate('OFF', *self.ac2)
-            self.dtg.set_relative_rate('OFF', *self.ac2bar)
+            self.dtg.set_relative_rate('OFF', *self.Vx2)
+            self.dtg.set_relative_rate('OFF', *self.Vy2)
         self.info(f"Turned {'on' if on else 'off'} discharge pulses.")
 
     def set_polarity(self, exc: bool):
@@ -129,11 +115,11 @@ class pulseGenerator(abstractDevice):
         Set the polarity of the excitation and discharge pulses.
         Make sure both ends are consistent with one another.
         """
-        self.dtg.set_polarity(exc, *self.ac1)
-        self.dtg.set_polarity(not exc, *self.ac1bar)
+        self.dtg.set_polarity(exc, *self.Vx1)
+        self.dtg.set_polarity(not exc, *self.Vy1)
 
-        self.dtg.set_polarity(not exc, *self.ac2)
-        self.dtg.set_polarity(exc, *self.ac2bar)
+        self.dtg.set_polarity(not exc, *self.Vx2)
+        self.dtg.set_polarity(exc, *self.Vy2)
 
         self.info(
             f"Set pulse polarities for {'positive' if exc else 'negative'} excitation."
@@ -141,29 +127,29 @@ class pulseGenerator(abstractDevice):
 
     def set_exc_width(self, W):
         """Set the width for both ends of the excitation pulse."""
-        self.dtg.set_width(W, *self.ac1)
-        self.dtg.set_width(W, *self.ac1bar)
+        self.dtg.set_width(W, *self.Vx1)
+        self.dtg.set_width(W, *self.Vy1)
         self.t_exc = W
         self.info(f"Set excitation pulse width to {W}s.")
 
     def set_dis_width(self, W):
         """Set the width for both ends of the discharge pulse."""
-        self.dtg.set_width(W, *self.ac2)
-        self.dtg.set_width(W, *self.ac2bar)
+        self.dtg.set_width(W, *self.Vx2)
+        self.dtg.set_width(W, *self.Vy2)
         self.t_dis = W
         self.info(f"Set discharge pulse width to {W}s.")
 
     def get_widths(self):
         """Make sure the pulse widths we keep internally are accurate."""
-        self.t_exc = self.dtg.get_width(*self.ac1)
-        self.t_dis = self.dtg.get_width(*self.ac2)
+        self.t_exc = self.dtg.get_width(*self.Vx1)
+        self.t_dis = self.dtg.get_width(*self.Vx2)
 
-        t_exc_bar = self.dtg.get_width(*self.ac1bar)
+        t_exc_bar = self.dtg.get_width(*self.Vy1)
         if t_exc_bar != self.t_exc:
             self.warn(
                 f"Mismatch in excitation pulse widths detected {self.t_exc} != {t_exc_bar}."
             )
-        t_dis_bar = self.dtg.get_width(*self.ac2bar)
+        t_dis_bar = self.dtg.get_width(*self.Vy2)
         if t_dis_bar != self.t_dis:
             self.warn(
                 f"Mismatch in discharge pulse widths detected {self.t_exc} != {t_exc_bar}."
@@ -175,7 +161,7 @@ class pulseGenerator(abstractDevice):
             self.warn("Relative rate is set to OFF. This is likely a mistake.")
             self.warn("Use set_prate to set a meaningful relative pulse rate.")
 
-        for ac in [self.ac1, self.ac1bar, self.ac2, self.ac2bar, self.trig]:
+        for ac in [self.Vx1, self.Vy1, self.Vx2, self.Vy2, self.trig]:
             if self.dtg.get_relative_rate(*ac) not in [self.prate, 'OFF']:
                 self.warn(
                     f"Relative rates are not set consistently between clocks."

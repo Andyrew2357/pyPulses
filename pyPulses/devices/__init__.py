@@ -8,15 +8,13 @@ from .ad5764 import ad5764
 # from .ad5791 import ad5791
 from .ad9854 import ad9854
 from .cryomagnetics_4G import cryomagnetics4G
-from .dtg5274 import dtg5274
+from .dtg import dtg5274, DifferentialPair
 from .fastflight2 import FastFlight2
 from .hp34401a import hp34401a
 from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
 from .mso44 import mso44
 from .pid_dcbox import PIDbox
-from .pulse_generator import pulseGenerator
-from .pulse_generator_dtg import pulseGeneratorDTG
 from .sr865a import sr865a
 from .watd_scope import watdScope
 
@@ -25,16 +23,15 @@ __all__ = [
     # "ad5791",
     "ad9854",
     "cryomagnetics4G",
-    "dtg5274",
     "DeviceRegistry",
+    "DifferentialPair"
+    "dtg5274",
     "FastFlight2",
     "hp34401a",
     "keithley2400",
     "keithley2450",
     "mso44",
     "PIDbox",
-    "pulseGenerator",
-    "pulseGeneratorDTG",
     "sr865a",
     "watdScope"
 ]
