@@ -1,4 +1,7 @@
-"""REMAKING CLASS"""
+"""
+Instrument control for 5000 series Tektronix data timing generators.
+"""
+
 from .pyvisa_device import pyvisaDevice
 
 import numpy as np
@@ -6,6 +9,8 @@ import matplotlib.pyplot as plt
 from bitarray import bitarray
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
+
+"""Utility classes for tracking DTG state"""
 
 @dataclass
 class Channel:
@@ -36,9 +41,6 @@ class Channel:
     
     def _id(self) -> str:
         return f"{self.mf}{self.slot}{self.ch}"
-    
-    def _sig(self) -> str:
-        return f"{self.slot}{self.mf}:CH{self.ch}"
     
     @property
     def high(self) -> Optional[float]:
@@ -121,6 +123,7 @@ class Block():
             length = self.length - offset
         view = BlockView(self, group, offset, length)
         self.views.append(view)
+        return view
 
 class BlockView():
     """View of a portion of some block assigned to a group"""
@@ -154,6 +157,8 @@ class BlockView():
             arr[:,i] = ch.low + (ch.high - ch.low) * arr[:,i]
         
         return arr.T
+
+"""Base DTG class"""
 
 class DTG(pyvisaDevice):
     def __init__(self, logger = None, instrument_id: str = None,
@@ -653,9 +658,10 @@ class DTG(pyvisaDevice):
         else:
             N = len(channels)
 
-        self.groups[name] = Group(name, channels)
+        self.groups[name] = Group(name, N)
         self.device.write(f'GROup:NEW "{name}", {N}')
         self.info(f"Created new group {name} of width {N}")
+        self.assign_signals(name, channels)
 
     @mode_required('DATA')
     def assign_signals(self, group_name: str, 
@@ -687,8 +693,14 @@ class DTG(pyvisaDevice):
             self.error(f"Unrecognized channel name {ch}")
             return
         
+        # set logical levels to make sure they are not None
+        if ch.low is None:
+            ch.low = 0.0
+        if ch.high is None:
+            ch.high = 1.0
+        
         self.groups[group_name].channels[idx] = ch
-        self.device.write(f'SIGNal:ASSign "{group_name}[{idx}]", "{ch._sig()}"')
+        self.device.write(f'SIGNal:ASSign "{group_name}[{idx}]", "{ch._id()}"')
         self.info(
             f"Added channel {ch._id()} to group element {group_name}[{idx}]"
         )
@@ -727,8 +739,8 @@ class DTG(pyvisaDevice):
         B = self.blocks[block_name]
         G = self.groups[group_name]
         
-        by_l = len(data)
-        bi_l = 4*by_l
+        bi_l = len(bitarray(data))
+        by_l = int(bi_l/4 + 1)
 
         if num_bits is None:
             num_bits = bi_l
@@ -737,15 +749,18 @@ class DTG(pyvisaDevice):
             self.error("Data vector too large to fit in block")
             return
         
-        B.add_view(G, start_idx, num_bits)
-        self.device.write(f'BLOCk:SELect "{block_name}"')
-        by_l_s = str(by_l)
-        data_str = data.decode('latin1')
-        bin_block = f"#{len(by_l_s)}{by_l_s}{data_str}"
-        self.device.write(
-            f'SIGNal:BDATA "{group_name}", {start_idx}, {num_bits}, {bin_block}'
-        )
+        V = B.add_view(G, start_idx, num_bits)
+        V.set_data(data)
 
+        self.device.write(f'BLOCk:SELect "{block_name}"')
+
+        prefix = f'SIGNal:BDATa "{group_name}", {start_idx}, {num_bits}, '.encode('ascii')
+        by_l_s = str(len(data))
+        header = f'#{len(by_l_s)}{by_l_s}'.encode('ascii')
+        msg = prefix + header + data + b'\n'
+
+        self.info(msg)
+        self.device.write_raw(msg)
         self.info(
             f"Loaded block {block_name} with {data} from index {start_idx} to "
             f"{start_idx + num_bits} associated to group {group_name}"
@@ -757,7 +772,7 @@ class DTG(pyvisaDevice):
         """Create a new block and populate it with a group and data."""
 
         self.new_block(name, N)
-        self.assign_to_block(group_name, data, start_idx, num_bits)
+        self.assign_to_block(name, group_name, data, start_idx, num_bits)
 
     @mode_required('DATA')
     def delete_block(self, name: str):
@@ -878,32 +893,150 @@ class DTG(pyvisaDevice):
         for view in B.views:
             channels = view.group.channels
             data = view.as_array()
-            off = view.offset
+            off = view.offset * period
             _, vlen = data.shape
             for i, ch in enumerate(channels):
                 if ch is None:
                     continue
                 
-                idx = dtg_channels.index(ch.name)
                 curr_v = np.nan
                 dt = ch.rise_time
+                T = [off]
+                V = [data[i, 0]]
+                print(data[i,:])
                 for j in range(vlen):
-                    v = data[i, :]
-                    T = []
-                    V = []
+                    v = data[i, j]
                     if v != curr_v:
-                        # instead plot on the fly, makes it esaier ;laskdjf;lkj
-                        # fix this. we need to insert INTO THE RIGHT PART OF ARRAY
-                        T.extend([j * period, j * period + dt])
+                        T.extend([off + j * period, off + j * period + dt])
                         V.extend([curr_v, v])
                         curr_v = v
 
+                T.append(off + period * vlen)
+                V.append(data[i, -1])
                 axes[i].plot(T, V, color = 'r')
                 axes[i].set_ylabel(ch.name)
 
         axes[-1].set_xlabel("s")
         return fig, axes
+
+"""Differential pair for use with Oliver's pulse shaper box"""
+
+class DifferentialPair():
+    def __init__(self, dtg: DTG, chx: str | Channel, chy: str | Channel):
+        self.dtg = dtg
+        self.chx = dtg.get_channel(chx)
+        self.chy = dtg.get_channel(chy)
+
+    def enable(self, on: bool):
+        self.dtg.output_enable(self.chx, on)
+        self.dtg.output_enable(self.chy, on)
+
+    @property
+    def ldelay(self) -> float:
+        if self.chx.ldelay is None:
+            return self.dtg.lead_delay(self.chx)
+        else:
+            return self.chx.ldelay
+        
+    @ldelay.setter
+    def ldelay(self, l: float):
+        toff = self.toff
+        self.dtg.lead_delay(self.chx, l)
+        self.dtg.lead_delay(self.chy, l + toff)
+
+    @property
+    def toff(self) -> float:
+        if self.chy.ldelay is None:
+            ldelayy = self.dtg.lead_delay(self.chy)
+
+        return ldelayy - self.chy.ldelay
     
+    @toff.setter
+    def toff(self, dt: float):
+        self.dtg.lead_delay(self.chy, self.ldelay + dt)
+
+    @property
+    def width(self) -> float:
+        if self.chx.width is None:
+            return self.dtg.pulse_width(self.chx)
+        else:
+            return self.chx.width
+        
+    @width.setter
+    def width(self, w: float):
+        woff = self.woff
+        self.dtg.pulse_width(self.chx, w)
+        self.dtg.pulse_width(self.chy, w + woff)
+
+    @property
+    def woff(self) -> float:
+        if self.chy.width is None:
+            wy = self.dtg.pulse_width(self.chy)
+        else:
+            wy = self.chy.width
+
+        return wy - self.width
+
+    @woff.setter
+    def woff(self, dw: float):
+        self.dtg.pulse_width(self.chx, self.width)
+        self.dtg.pulse_width(self.chy, self.width + dw)
+
+    @property
+    def polarity(self) -> bool:
+        return self.chx.polarity
+    
+    @polarity.setter
+    def polarity(self, pos: bool):
+        self.dtg.polarity(self.chx, pos)
+        self.dtg.polarity(self.chy, not pos)
+
+    @property
+    def Xlow(self) -> float:
+        if self.chx.low is None:
+            return self.dtg.low_level(self.chx)
+        else:
+            return self.chx.low
+        
+    @Xlow.setter
+    def Xlow(self, V: float):
+        self.dtg.low_level(self.chx, V)
+
+    @property
+    def Xhigh(self) -> float:
+        if self.chx.high is None:
+            return self.dtg.high_level(self.chx)
+        else:
+            return self.chx.high
+        
+    @Xhigh.setter
+    def Xhigh(self, V: float):
+        self.dtg.high_level(self.chx, V)
+
+    @property
+    def Ylow(self) -> float:
+        if self.chy.low is None:
+            return self.dtg.low_level(self.chy)
+        else:
+            return self.chy.low
+        
+    @Xlow.setter
+    def Ylow(self, V: float):
+        self.dtg.low_level(self.chy, V)
+
+    @property
+    def Yhigh(self) -> float:
+        if self.chy.high is None:
+            return self.dtg.high_level(self.chy)
+        else:
+            return self.chy.high
+        
+    @Xhigh.setter
+    def Yhigh(self, V: float):
+        self.dtg.high_level(self.chy, V)
+
+"""DTG5274 instrument class"""
+
 class dtg5274(DTG):
     def __init__(self, logger = None, instrument_id: str = None):
         
