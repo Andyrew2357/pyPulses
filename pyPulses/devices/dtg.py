@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from bitarray import bitarray
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
 """Utility classes for tracking DTG state"""
 
