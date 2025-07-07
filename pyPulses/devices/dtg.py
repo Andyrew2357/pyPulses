@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from bitarray import bitarray
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 """Utility classes for tracking DTG state"""
 
@@ -113,50 +113,28 @@ class Block():
     def __init__(self, name: str, length: int):
         self.name   = name
         self.length = length
-        self.bits   = bitarray(length)
-        self.bits.setall(0)
-        self.views: List[BlockView] = []
+        self.waveforms: List[BlockData] = []
 
-    def add_view(self, group: Group, offset: int = 0, length: int = None):
-        """Add a new view to the block associated to some group"""
+    def add_data(self, group: Group, ch_idx: int, data: bitarray, 
+                 offset: int = 0, length: int = None):
+        """Add data to the block associated to some logical channel"""
+        
         if length is None:
             length = self.length - offset
-        view = BlockView(self, group, offset, length)
-        self.views.append(view)
-        return view
+        waveform = BlockData(self, group, ch_idx, data, offset, length)
+        self.waveforms.append()
+        return waveform
 
-class BlockView():
-    """View of a portion of some block assigned to a group"""
-    def __init__(self, block: Block, group: Group, offset: int, length: int):
-        self.block = block
-        self.group = group
-        self.offset = offset
-        self.length = length
+class BlockData():
+    def __init__(self, group: Group, ch_idx: int, data: bitarray, 
+                 offset: int, length: int):
+        self.group  = group
+        self.ch_idx = ch_idx
+        self.off    = offset
+        self.bits   = data[:length]
 
-    def set_data(self, data: bytes, bit_offset: int = 0, num_bits: int = None):
-        """Set the data in the view"""
-
-        ba = bitarray(endian='big')
-        ba.frombytes(data)
-        if num_bits is None:
-            num_bits = len(ba)
-        off = self.offset + bit_offset
-        self.block.bits[off:off + num_bits] = ba[:num_bits]
-
-    def as_array(self) -> np.ndarray:
-        """Return as numpy array of shape (n_words, group_width)"""
-        
-        num_words = self.length // self.group.width
-        bits = self.block.bits[self.offset:self.offset + self.length]
-        arr = np.array(bits.tolist(), dtype = np.uint8)
-        arr = arr.reshape((num_words, self.group.width)).astype(float)
-        
-        for i, ch in enumerate(self.group.channels):
-            if ch is None:
-                continue
-            arr[:,i] = ch.low + (ch.high - ch.low) * arr[:,i]
-        
-        return arr.T
+    def to_array(self) -> np.ndarray:
+        return np.array(self.bits.tolist(), dtype = np.uint8).astype(float)
 
 """Base DTG class"""
 
@@ -723,6 +701,7 @@ class DTG(pyvisaDevice):
 
     # ---------------------------- Handling Blocks ----------------------------
     
+    
     @mode_required('DATA')
     def new_block(self, name: str, N: int):
         """Create a new block of a given length"""
@@ -732,47 +711,29 @@ class DTG(pyvisaDevice):
         self.info(f"Created new block {name} of length {N}")
 
     @mode_required('DATA')
-    def assign_to_block(self, block_name: str, group_name: str, 
-                        data: bytes, start_idx: int = 0, num_bits = None):
-        """Assign data to the block with some associated group."""
+    def add_block_data(self, block_name:str, group_name: str, ch_idx: int,
+                    data: str | bytes, start_idx: int = 0, num_bits: int = None):
+        """Add data to the block associated to some logical channel"""
 
         B = self.blocks[block_name]
         G = self.groups[group_name]
-        
-        bi_l = len(bitarray(data))
-        by_l = int(bi_l/4 + 1)
 
+        data = bitarray(data)
         if num_bits is None:
-            num_bits = bi_l
-
-        if start_idx + num_bits > B.length:
-            self.error("Data vector too large to fit in block")
-            return
+            num_bits = len(data)
         
-        V = B.add_view(G, start_idx, num_bits)
-        V.set_data(data)
-
+        B.add_data(G, ch_idx, data, offset = start_idx, length = num_bits)
         self.device.write(f'BLOCk:SELect "{block_name}"')
+        payload = data.tobytes()
+        header = f'#{len(str(len(payload)))}{len(payload)}'.encode('ascii')
+        cmd = f'SIGNal:BDATa "{group_name}", {start_idx}, {num_bits}, '.encode('ascii')
+        cmd += header + payload + b'\n'
+        self.device.write_raw(cmd)
 
-        prefix = f'SIGNal:BDATa "{group_name}", {start_idx}, {num_bits}, '.encode('ascii')
-        by_l_s = str(len(data))
-        header = f'#{len(by_l_s)}{by_l_s}'.encode('ascii')
-        msg = prefix + header + data + b'\n'
-
-        self.info(msg)
-        self.device.write_raw(msg)
         self.info(
-            f"Loaded block {block_name} with {data} from index {start_idx} to "
+            f"Loaded block {block_name} with {payload} from index {start_idx} to "
             f"{start_idx + num_bits} associated to group {group_name}"
         )
-
-    @mode_required('DATA')
-    def init_block(self, name: str, N: int, group_name: str, data: bytes,
-                   start_idx: int = 0, num_bits: int = None):
-        """Create a new block and populate it with a group and data."""
-
-        self.new_block(name, N)
-        self.assign_to_block(name, group_name, data, start_idx, num_bits)
 
     @mode_required('DATA')
     def delete_block(self, name: str):
@@ -890,31 +851,38 @@ class DTG(pyvisaDevice):
         dtg_channels = list(self.channels.keys())
         fig, axes = plt.subplots(len(dtg_channels), 1, sharex = True)
 
-        for view in B.views:
-            channels = view.group.channels
-            data = view.as_array()
-            off = view.offset * period
-            _, vlen = data.shape
-            for i, ch in enumerate(channels):
-                if ch is None:
-                    continue
-                
-                curr_v = np.nan
-                dt = ch.rise_time
-                T = [off]
-                V = [data[i, 0]]
-                print(data[i,:])
-                for j in range(vlen):
-                    v = data[i, j]
-                    if v != curr_v:
-                        T.extend([off + j * period, off + j * period + dt])
-                        V.extend([curr_v, v])
-                        curr_v = v
+        for wf in B.waveforms:
+            ch = wf.group.channels[wf.ch_idx]
+            if ch is None:
+                continue
 
-                T.append(off + period * vlen)
-                V.append(data[i, -1])
-                axes[i].plot(T, V, color = 'r')
-                axes[i].set_ylabel(ch.name)
+            toff = period * wf.off
+            if ch.low is None:
+                low = self.low_level[ch]
+            else:
+                low = ch.low
+            if ch.high is None:
+                high = self.high_level[ch]
+            else:
+                high = ch.high
+            dt = ch.rise_time
+
+            S = low + (high - low) * wf.to_array()
+            T = [toff]
+            V = [S[0]]
+
+            curr_v = np.nan
+            for j, v in enumerate(S):
+                if v != curr_v:
+                    T.extend([toff + j * period, toff + j * period + dt])
+                    V.extend([curr_v, v])
+
+            T.append(toff + period * len(S))
+            V.append(S[-1])
+
+            ax_ind = dtg_channels.index(ch.name)
+            axes[ax_ind].plot(T, V, color = 'r')
+            axes[ax_ind].set_ylabel(ch.name)
 
         axes[-1].set_xlabel("s")
         return fig, axes
