@@ -23,6 +23,8 @@ class ips120(pyvisaDevice):
         self.max_rate   = 0.5   # T / min
         self.max_B      = 10.0  # T
 
+        self.heater_wait_time = 7 # s
+
         self.B_tol_match        = 1e-5  # T (Used when matching output and persistent)
         self.B_tol_assertive    = 1e-4  # T (Used in _goto_B and set_B)
 
@@ -165,7 +167,7 @@ class ips120(pyvisaDevice):
             self.warn(f"Unrecognized heater status flag: {c}")
             return
 
-    def _set_heater(self, state: bool, wait_time: float) -> bool:
+    def _set_heater(self, state: bool) -> bool:
         """Set the heater state on or off"""
 
         for _ in range(self.retries):
@@ -179,7 +181,7 @@ class ips120(pyvisaDevice):
         for _ in range(self.retries):
             if not self.is_persistent_mode() or \
                 abs(self._get_persistent_field() - \
-                    self._get_output_field()) < self.B_tol:
+                    self._get_output_field()) < self.B_tol_match:
                 break
             
             self.warn(f"Cannot set heater to H{int(state)}; "
@@ -189,7 +191,8 @@ class ips120(pyvisaDevice):
         else:        
             self.error(f"Failed to equalize persistent and output fields")
             return False
-            
+        
+        wait_time = self.heater_wait_time
         self.info(f"Setting heater to H{int(state)} abd waiting {wait_time:.4f} s")
         self._send_cmd(f"H{int(state)}")
         time.sleep(wait_time)
@@ -235,7 +238,14 @@ class ips120(pyvisaDevice):
                     break
 
         else:
-            self.error(f"Maximum attempts exceeded; unable to set field.")
+            self.error(
+                "Maximum attempts exceeded; unable to set field. Ramping back "
+                "to 0 lead current for safety and aborting."
+            )
+            self._set_heater(False)
+            self._ramp_to_zero()
+            return
+
 
         self.info("Output is matched and switch heater is on.")
         self.info(f"Ramping to target field: {B} T")
@@ -256,9 +266,13 @@ class ips120(pyvisaDevice):
         self._set_mode(self.mode.HOLD)
         self.info("Ramped lead current to 0")
 
+        Bout = self._get_output_field()
+        if abs(Bout) > self.B_tol_assertive:
+            self.warn(f"Marginal current still remaining in leads: {Bout:.6f} T")
+
     """User level methods"""
 
-    def set_B(self, B: float):
+    def set_B(self, B: float) -> bool:
         """Set the field of the magnet"""
 
         if abs(B) > self.max_B:
@@ -267,7 +281,16 @@ class ips120(pyvisaDevice):
                 f"Requested field is larger than maximum allowed; clipped to {B} T"
             )
 
-        while True: 
+        tries = 0
+        while True:
+            tries += 1
+            if tries > self.retries:
+                self.warn(
+                    "Maximum number of retries exceeded in set_B without "
+                    "reaching assertive tolerance; proceeding..."
+                )
+                break
+
             self._goto_B(B)
             if abs(self.get_B() - B) < self.B_tol_assertive:
                 break
@@ -277,10 +300,13 @@ class ips120(pyvisaDevice):
             self.error(
                 "Failed to turn heater off! Aborting part way through set_B"
             )
+            return False
 
         # Set the current in the leads to 0
         if abs(self._get_output_field()) != 0:
             self._ramp_to_zero()
+
+        return True
 
     def get_B(self) -> float:
         """
