@@ -1,7 +1,9 @@
+"""
+Differential pair for use with Oliver's pulse shaper box
+"""
+
 from .dtg import DTG
 from .dtg_utils import Channel
-
-"""Differential pair for use with Oliver's pulse shaper box"""
 
 class DifferentialPair():
     def __init__(self, dtg: DTG, chx: str | Channel, chy: str | Channel):

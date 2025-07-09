@@ -10,7 +10,6 @@ import base64
 import numpy as np
 import matplotlib.pyplot as plt
 from bitarray import bitarray
-from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
 """Base DTG class"""

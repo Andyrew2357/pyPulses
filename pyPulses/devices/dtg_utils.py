@@ -1,4 +1,7 @@
-"""Utility classes for tracking DTG state"""
+"""
+Utility classes for tracking DTG state
+"""
+
 import numpy as np
 from dataclasses import dataclass
 from typing import Optional, List
