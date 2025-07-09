@@ -22,18 +22,51 @@ import os
 from typing import List, Tuple
 from ..utils import curves
 
-def integrate(x, f: np.ndarray) -> np.ndarray:
-    """
-    Integrate using a trapezoidal sum (return values for all points in domain)
-    """
-    return 0.5 * np.cumsum(np.diff(x, axis = -1) * (f[..., 1:] + f[..., :-1]), 
-                           axis = -1)
-
 def pad_z(a: np.ndarray) -> np.ndarray:
     """Pad zeros along the final axis"""
 
     pad_width = [(0, 0)] * (a.ndim - 1) + [(1, 0)]
     return np.pad(a, pad_width, mode = 'constant', constant_values = 0.0)
+
+def integrate_trapz(x: np.ndarray, f: np.ndarray, mask_nans: bool = False
+                    ) -> np.ndarray:
+    """
+    Vectorized trapezoidal integration along the last axis.
+    If 'mask_nans' is True, segments with NaNs are skipped.
+    """
+    f0 = f[..., :-1]
+    f1 = f[..., 1:]
+    dx = np.diff(x, axis=-1)
+
+    if mask_nans:
+        mask = np.isnan(f0) | np.isnan(f1)
+        integrand = np.where(mask, 0.0, 0.5 * (f0 + f1) * dx)
+    else:
+        integrand = 0.5 * (f0 + f1) * dx
+
+    return np.cumsum(integrand, axis=-1)
+
+def integrate_trapz_padded(x: np.ndarray, f: np.ndarray, 
+                           mask_nans: bool = False) -> np.ndarray:
+    """Like 'integrate_trapz', but prepends a zero for shape alignment."""
+    return pad_z(integrate_trapz(x, f, mask_nans))
+
+def squared_integral(dx: np.ndarray, f: np.ndarray, mask_nans: bool = False
+                     ) -> np.ndarray:
+    """
+    Compute cummulated sum of square of trapezoidal integrals along the last 
+    axis.
+    """
+    f0 = f[..., :-1]
+    f1 = f[..., 1:]
+
+    if mask_nans:
+        mask = np.isnan(f0) | np.isnan(f1)
+        integrand = np.where(mask, 0.0, 0.5 * (f0 + f1) * dx)
+    else:
+        integrand = 0.5 * (f0 + f1) * dx
+
+    return np.cumsum(integrand**2, axis = -1)
 
 def ztan_inv(z: float) -> float: ...
 def ztan_invp(z: float) -> float: ...
@@ -107,6 +140,8 @@ def tl_model(chi_r: float, chi_i: float,
     transmission line model. 
     """
 
+    if np.isnan(chi_r) or np.isnan(chi_i):
+        return np.nan, np.nan
 
     # calculate Z = (χ_g - χ)/(χ_g - χ_b) in terms of real and imaginary parts 
     # (X and Y)
@@ -173,8 +208,8 @@ def tl_model_deriv(chi_r: float, chi_i: float,
 
     return cq, AR, dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b
 
-def gap(vt: List[float], vb: List[float], cq: List[float], 
-        cb: float = 1.0, gamma: float = 1.0, **kwargs) -> np.ndarray:
+def gap(vt: List[float], vb: List[float], cq: List[float], cb: float = 1.0, 
+        gamma: float = 1.0, mask_nans: bool = False, **kwargs) -> np.ndarray:
     """
     Calculate the change in chemical potential at all points along the domain
     """
@@ -186,7 +221,8 @@ def gap(vt: List[float], vb: List[float], cq: List[float],
     mt = (1 + cq/ (gamma * cb))**-1
     mb = (1 + cq / cb)**-1
 
-    return pad_z(integrate(vt, mt) + integrate(vb, mb))
+    return integrate_trapz_padded(vt, mt, mask_nans) + \
+            integrate_trapz_padded(vb, mb, mask_nans)
 
 def gap_unc(vt: List[float], vb: List[float], cq: List[float], 
             dcq_dchi_r: list[float], dcq_dchi_i: List[float], 
@@ -194,7 +230,7 @@ def gap_unc(vt: List[float], vb: List[float], cq: List[float],
             var_chi_r: float, var_chi_i: float,
             var_chi_g: float, var_chi_b: float,
             cb: float = 1.0, gamma: float = 1.0, var_gamma: float = 0.0,
-            **kwargs) -> np.ndarray:
+            mask_nans: bool = False, **kwargs) -> np.ndarray:
     """
     Assign an uncertainty in the change of chemical potential at all points 
     along the domain.
@@ -223,11 +259,11 @@ def gap_unc(vt: List[float], vb: List[float], cq: List[float],
 
     dmb_dgamma = cq * mb2 / (cb * gamma**2)
 
-    gamma_part = var_gamma * integrate(vb, dmb_dgamma)**2
-    chi_g_part = var_chi_g * (integrate(vt, dmt_dchi_g) + \
-                              integrate(vb, dmb_dchi_g))**2
-    chi_b_part = var_chi_b * (integrate(vt, dmt_dchi_b) + \
-                              integrate(vb, dmb_dchi_b))**2
+    gamma_part = var_gamma * integrate_trapz(vb, dmb_dgamma, mask_nans)**2
+    chi_g_part = var_chi_g * (integrate_trapz(vt, dmt_dchi_g, mask_nans) + \
+                              integrate_trapz(vb, dmb_dchi_g, mask_nans))**2
+    chi_b_part = var_chi_b * (integrate_trapz(vt, dmt_dchi_b, mask_nans) + \
+                              integrate_trapz(vb, dmb_dchi_b, mask_nans))**2
     
     # note, the square being inside for this one is intentional. See my document 
     # for notes on how this works out (note I am ignoring covariance terms here). 
@@ -236,16 +272,17 @@ def gap_unc(vt: List[float], vb: List[float], cq: List[float],
     # The whole thing becomes a mess, and I don't think that the covariance terms 
     # do much in practice, so I ignore them here.
 
-    chi_re_part = var_chi_r * np.cumsum(
-        (np.diff(vt, axis = -1) * (dmt_dchi_r[..., 1:] + dmt_dchi_r[..., :-1]) + 
-         np.diff(vb, axis = -1) * (dmb_dchi_r[..., 1:] + dmb_dchi_r[..., :-1]))**2,
-        axis = -1
+    dx_vt = np.diff(vt, axis = -1)
+    dx_vb = np.diff(vb, axis = -1)
+
+    chi_re_part = var_chi_r * (
+       squared_integral(dx_vt, dmt_dchi_r, mask_nans) + \
+       squared_integral(dx_vb, dmb_dchi_r, mask_nans)
     )
     
-    chi_im_part = var_chi_i * np.cumsum(
-        (np.diff(vt, axis = -1) * (dmt_dchi_i[..., 1:] + dmt_dchi_i[..., :-1]) +
-         np.diff(vb, axis = -1) * (dmb_dchi_i[..., 1:] + dmb_dchi_i[..., :-1]))**2,
-         axis = -1
+    chi_im_part = var_chi_i * (
+        squared_integral(dx_vt, dmt_dchi_i, mask_nans) + \
+        squared_integral(dx_vb, dmb_dchi_i, mask_nans)    
     )
 
     return pad_z(np.sqrt(gamma_part + chi_g_part + 
@@ -257,7 +294,8 @@ def mu(vt: List[float], vb: List[float],
        var_chi_r: float = 0.0, var_chi_i: float = 0.0,
        var_chi_g: float = 0.0, var_chi_b: float = 0.0,
        cb: float = 1.0, gamma: float = 1.0, var_gamma: float = 0.0,
-       omega: float = 0.0, **kwargs) -> Tuple[np.ndarray, np.ndarray]:
+       omega: float = 0.0, mask_nans: bool = False, 
+       **kwargs) -> Tuple[np.ndarray, np.ndarray]:
     """
     Calculate jump in chemical potential and estimated uncertainty for all
     points along the domain.
@@ -274,11 +312,11 @@ def mu(vt: List[float], vb: List[float],
             raise ValueError(f"Unrecognized mode: {mode}")
     
     cq, Ar, dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b  = res
-    mu = gap(vt, vb, cq, cb, gamma, **kwargs)
+    mu = gap(vt, vb, cq, cb, gamma, mask_nans, **kwargs)
     mu_unc = gap_unc(vt, vb, cq, 
                      dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b, 
                      var_chi_r, var_chi_i, var_chi_g, var_chi_b, 
-                     cb, gamma, var_gamma, **kwargs)
+                     cb, gamma, var_gamma, mask_nans, **kwargs)
     
     return mu, mu_unc
 

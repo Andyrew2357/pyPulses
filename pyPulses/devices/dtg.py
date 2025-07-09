@@ -3,138 +3,15 @@ Instrument control for 5000 series Tektronix data timing generators.
 """
 
 from .pyvisa_device import pyvisaDevice
+from .dtg_utils import *
 
+import json
+import base64
 import numpy as np
 import matplotlib.pyplot as plt
 from bitarray import bitarray
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
-
-"""Utility classes for tracking DTG state"""
-
-@dataclass
-class Channel:
-    name : str
-    ch   : int
-    slot : str
-    mf   : int
-    min_V: float
-    max_V: float
-    min_V_diff: float
-    min_width : float
-    rise_time : float
-
-    def __post_init__(self):
-        self.enabled    : bool    = None
-        self.polarity   : bool    = None
-        self._high      : float   = None
-        self._low       : float   = None
-        self._width     : float   = None
-        self._ldelay    : float   = None
-        self._tdelay    : float   = None
-        self.prate      : float   = None
-        self.termination_Z: float = None
-        self.termination_V: float = None
-
-    def __str__(self) -> str:
-        return f"PGEN{self.slot}{self.mf}:CH{self.ch}"
-    
-    def _id(self) -> str:
-        return f"{self.mf}{self.slot}{self.ch}"
-    
-    @property
-    def high(self) -> Optional[float]:
-        return self._high
-    
-    @high.setter
-    def high(self, V: float):
-        if self._low is not None:
-            self._low = min(V - self.min_V_diff, self._low)
-        self._high = V
-
-    @property
-    def low(self) -> Optional[float]:
-        return self._low
-    
-    @low.setter
-    def low(self, V: float):
-        if self._high is not None:
-            self._high = max(V + self.min_V_diff, self._high)
-        self._low = V
-
-    @property
-    def width(self) -> Optional[float]:
-        return self._width
-    
-    @width.setter
-    def width(self, W: float):
-        if self._ldelay is not None:
-            self._tdelay = self._ldelay + W
-        self._width = W
-    
-    @property
-    def ldelay(self) -> Optional[float]:
-        return self._ldelay
-    
-    @ldelay.setter
-    def ldelay(self, l: float):
-        if self._width is not None:
-            self._tdelay = l + self._width
-        self._ldelay = l
-
-    @property
-    def tdelay(self) -> Optional[float]:
-        return self._tdelay
-    
-    @tdelay.setter
-    def tdelay(self, t: float):
-        if self._ldelay is not None:
-            self._width = t - self._ldelay
-        self._tdelay = t
-
-class Group():
-    """Logical bus corresponding to physical channels of the device"""
-    def __init__(self, name: str, channels: int | List[Channel | None]):
-        self.name = name
-        self.width: int = None
-        self.channels: List[Channel] = None
-        if type(channels) == int:
-            self.width = channels
-            self.channels = [None] * channels
-        else:
-            self.width = len(channels)
-            self.channels = channels
-
-class Block():
-    """
-    Pattern data represented in bits. 
-    Views of these bits are associated with groups
-    """
-    def __init__(self, name: str, length: int):
-        self.name   = name
-        self.length = length
-        self.waveforms: List[BlockData] = []
-
-    def add_data(self, group: Group, ch_idx: int, data: bitarray, 
-                 offset: int = 0, length: int = None):
-        """Add data to the block associated to some logical channel"""
-        
-        if length is None:
-            length = self.length - offset
-        waveform = BlockData(group, ch_idx, data, offset, length)
-        self.waveforms.append(waveform)
-        return waveform
-
-class BlockData():
-    def __init__(self, group: Group, ch_idx: int, data: bitarray, 
-                 offset: int, length: int):
-        self.group  = group
-        self.ch_idx = ch_idx
-        self.off    = offset
-        self.bits   = data[:length]
-
-    def to_array(self) -> np.ndarray:
-        return np.array(self.bits.tolist(), dtype = np.uint8).astype(float)
 
 """Base DTG class"""
 
@@ -882,122 +759,149 @@ class DTG(pyvisaDevice):
 
         axes[-1].set_xlabel("s")
         return fig, axes
-
-"""Differential pair for use with Oliver's pulse shaper box"""
-
-class DifferentialPair():
-    def __init__(self, dtg: DTG, chx: str | Channel, chy: str | Channel):
-        self.dtg = dtg
-        self.chx = dtg.get_channel(chx)
-        self.chy = dtg.get_channel(chy)
-
-    def enable(self, on: bool):
-        self.dtg.chan_output(self.chx, on)
-        self.dtg.chan_output(self.chy, on)
-
-    @property
-    def ldelay(self) -> float:
-        if self.chx.ldelay is None:
-            return self.dtg.lead_delay(self.chx)
-        else:
-            return self.chx.ldelay
-        
-    @ldelay.setter
-    def ldelay(self, l: float):
-        toff = self.toff
-        self.dtg.lead_delay(self.chx, l)
-        self.dtg.lead_delay(self.chy, l + toff)
-
-    @property
-    def toff(self) -> float:
-        if self.chy.ldelay is None:
-            self.dtg.lead_delay(self.chy)
-
-        return self.chy.ldelay - self.chy.ldelay
     
-    @toff.setter
-    def toff(self, dt: float):
-        self.dtg.lead_delay(self.chy, self.ldelay + dt)
+    # --------------------------- Save / Load State ---------------------------
 
-    @property
-    def width(self) -> float:
-        if self.chx.width is None:
-            return self.dtg.pulse_width(self.chx)
-        else:
-            return self.chx.width
-        
-    @width.setter
-    def width(self, w: float):
-        woff = self.woff
-        self.dtg.pulse_width(self.chx, w)
-        self.dtg.pulse_width(self.chy, w + woff)
+    def save_state_dev(self, path: str):
+        """Save the DTG state on the device. Use '.dtg' or '.dat' extension"""
+        self.device.write(f'MMEMory:STORe "{path}"')
+        self.info(f"Saved DTG state to device at {path}")
 
-    @property
-    def woff(self) -> float:
-        if self.chy.width is None:
-            wy = self.dtg.pulse_width(self.chy)
-        else:
-            wy = self.chy.width
+    def load_state_dev(self, path: str):
+        """Load the DTG state from the device. Use '.dtg' or '.dat' extension"""
+        self.device.write(f'MMEMory:LOAD "{path}"')
+        self.info(f"Loaded DTG state from device at {path}")
 
-        return wy - self.width
+    def save_state_json(self, path: str):
+        """Save the DTG state to json on computer"""
+        state = self._serialize_state()
+        with open(path, 'w') as f:
+            json.dump(state, f, indent=2)
 
-    @woff.setter
-    def woff(self, dw: float):
-        self.dtg.pulse_width(self.chx, self.width)
-        self.dtg.pulse_width(self.chy, self.width + dw)
+    def load_state_json(self, path: str):
+        """Load the DTG state from json on computer"""
+        with open(path, 'r') as f:
+            state = json.load(f)
+        self._deserialize_state(state)
 
-    @property
-    def polarity(self) -> bool:
-        return self.chx.polarity
-    
-    @polarity.setter
-    def polarity(self, pos: bool):
-        self.dtg.polarity(self.chx, pos)
-        self.dtg.polarity(self.chy, not pos)
+    def _serialize_state(self) -> dict:
+        state = {
+            'version'       : 1,
+            'mode'          : self.mode,
+            'frequency'     : self._frequency,
+            'time_offset'   : self._time_offset,
+            'burst_count'   : self._burst_count,
+            'channels': {
+                name: {
+                    'enabled'   : ch.enabled,
+                    'polarity'  : ch.polarity,
+                    'high'      : ch.high,
+                    'low'       : ch.low,
+                    'width'     : ch.width,
+                    'ldelay'    : ch.ldelay,
+                    'tdelay'    : ch.tdelay,
+                    'prate'     : ch.prate,
+                    'termination_Z': ch.termination_Z,
+                    'termination_V': ch.termination_V
+                }
+                for name, ch in self.channels.items()
+            }
+        }
 
-    @property
-    def Xlow(self) -> float:
-        if self.chx.low is None:
-            return self.dtg.low_level(self.chx)
-        else:
-            return self.chx.low
-        
-    @Xlow.setter
-    def Xlow(self, V: float):
-        self.dtg.low_level(self.chx, V)
+        if self.mode == 'DATA':
+            # Serialize groups
+            state['groups'] = {
+                name: {
+                    'width'     : group.width,
+                    'channels'  : [ch._id() if ch else None 
+                                   for ch in group.channels]
+                }
+                for name, group in self.groups.items()
+            }
 
-    @property
-    def Xhigh(self) -> float:
-        if self.chx.high is None:
-            return self.dtg.high_level(self.chx)
-        else:
-            return self.chx.high
-        
-    @Xhigh.setter
-    def Xhigh(self, V: float):
-        self.dtg.high_level(self.chx, V)
+            # Serialize blocks
+            state['blocks'] = {}
+            for name, block in self.blocks.items():
+                bdict = {'length': block.length, 'waveforms': []}
+                for wf in block.waveforms:
+                    # Encode binary data efficiently
+                    raw_bytes = wf.bits.tobytes()
+                    encoded = base64.b64encode(raw_bytes).decode('ascii')
+                    bdict['waveforms'].append({
+                        'group' : wf.group.name,
+                        'ch_idx': wf.ch_idx,
+                        'offset': wf.off,
+                        'bitlen': len(wf.bits),
+                        'data_b64': encoded
+                    })
+                state['blocks'][name] = bdict
 
-    @property
-    def Ylow(self) -> float:
-        if self.chy.low is None:
-            return self.dtg.low_level(self.chy)
-        else:
-            return self.chy.low
-        
-    @Ylow.setter
-    def Ylow(self, V: float):
-        self.dtg.low_level(self.chy, V)
+            # Serialize sequencer
+            state['sequence'] = [
+                {
+                    'index' : i,
+                    'line'  : line
+                }
+                for i, line in enumerate(self.sequence)
+                if line
+            ]
 
-    @property
-    def Yhigh(self) -> float:
-        if self.chy.high is None:
-            return self.dtg.high_level(self.chy)
-        else:
-            return self.chy.high
-        
-    @Yhigh.setter
-    def Yhigh(self, V: float):
-        self.dtg.high_level(self.chy, V)
+        return state
+
+    def _deserialize_state(self, state: dict):
+        self.operation_mode(state['mode'] == 'PULS')
+        self.frequency(state['frequency'])
+        self.time_offset(state['time_offset'])
+        self.burst_count(state['burst_count'])
+
+        for ch_id, ch_state in state['channels'].items():
+            if ch_id not in self.channels:
+                continue
+
+            ch = self.channels[ch_id]
+            self.chan_output(ch, ch_state['enabled'])
+            self.low_level(ch, ch_state['low'])
+            self.high_level(ch, ch_state['high'])
+            self.termination_Z(ch, ch_state['termination_Z'])
+            self.termination_V(ch, ch_state['termination_V'])
+            if self.mode == 'PULS':
+                self.polarity(ch, ch_state['polarity'])
+                self.prate(ch, ch_state['prate'])
+                self.lead_delay(ch, ch_state['ldelay'])
+                self.trail_delay(ch, ch_state['tdelay'])
+                self.pulse_width(ch, ch_state['width'])
+
+        if self.mode == 'DATA':
+            self.clear_groups()
+            self.clear_blocks()
+
+            for name, group in state['groups'].items():
+                self.new_group(name, group['width'])
+                self.assign_signals(name, group['channels'])
+
+            for name, bdict in state['blocks'].items():
+                self.new_block(name, bdict['length'])
+                for wf in bdict['waveforms']:
+                    raw = base64.b64decode(wf['data_b64'])
+                    bits = bitarray()
+                    bits.frombytes(raw)
+                    bits = bits[:wf['bitlen']]
+                    self.add_block_data(
+                        name, wf['group'], wf['ch_idx'],
+                        bits, wf['offset'], wf['bitlen']
+                    )
+
+            indices = [l['index'] for l in state['sequence']]
+            if indices:
+                seq_len = max(indices) + 1
+            else:
+                return
+
+            self.sequence_length(seq_len)
+            for entry in state['sequence']:
+                idx = entry['index']
+                fields = eval(entry['line']) # assumes safe inputs
+                self.set_sequence_line(idx, *fields)
 
 """DTG5274 instrument class"""
 

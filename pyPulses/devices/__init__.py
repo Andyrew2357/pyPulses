@@ -8,7 +8,8 @@ from .ad5764 import ad5764
 # from .ad5791 import ad5791
 from .ad9854 import ad9854
 from .cryomagnetics_4G import cryomagnetics4G
-from .dtg import dtg5274, DifferentialPair
+from .dtg import dtg5274
+from .dtg_diff_pair import DifferentialPair
 from .fastflight2 import FastFlight2
 from .hp34401a import hp34401a
 from .keithley2400 import keithley2400
