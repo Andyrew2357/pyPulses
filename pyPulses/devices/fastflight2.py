@@ -396,6 +396,7 @@ class FastFlight2(abstractDevice):
             f"Prepared protocols for dithering; dither length = {dither_len} V"
             f"Resyncing cached protocols and settings..."
         )
+        self._invalidate_settings_cache()
         self._ensure_settings_synced()
         self._log_settings()
 
