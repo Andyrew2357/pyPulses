@@ -3,13 +3,16 @@ from .fastflight_scopeview import FFScopeView
 from .abstract_device import abstractDevice
 from ._registry import DeviceRegistry
 
-from typing import Any, Optional
+import numpy as np
+from typing import Any, Optional, Tuple
 
 class FastFlight2(abstractDevice):
     def __init__(self, logger = None):
         super().__init__(logger)
         self.ff2 = FastFlight64()
         DeviceRegistry.register_device('FASTFLIGHT2', self)
+
+        self.voltage_scale_factor = 1.0
 
         # Mapping dictionaries
         self._compression_modes = {
@@ -379,13 +382,66 @@ class FastFlight2(abstractDevice):
             self._invalidate_settings_cache()
 
     def start_acq(self):
+        self.info(f"Manually Starting Acquisition")
         self.ff2.start_acq()
 
     def stop_acq(self):
         self.ff2.stop_acq()
+        self.info(f"Manually Stopped Acquisition")
 
-    def get_trace(self):
-        raise NotImplementedError()
+    def prep_dither(self, dither_len: float):
+        """Set up protocols with an appropriate dither length"""
+        self.ff2.prep_dither(dither_len)
+        self.info(
+            f"Prepared protocols for dithering; dither length = {dither_len} V"
+            f"Resyncing cached protocols and settings..."
+        )
+        self._ensure_settings_synced()
+        self._log_settings()
+
+    def get_dither_length(self) -> float:
+        return self.ff2.get_dither_len()
+
+    def spectra_per_trace(self, N: int = None) -> int:
+        """
+        Number of distinct spectra to take in a single trace 
+        (irrespective of whether we are dithering)
+        """
+
+        if N is None:
+            return self.ff2.get_num_spectra_per_trace()
+        self.ff2.set_num_spectra_per_trace(N)
+        self.info(f"Set to take {N} spectra per trace")
+        return N
+
+    def get_trace(self) -> Tuple[np.ndarray, np.ndarray, int]:
+        """Take a trace with the fastflight"""
+
+        T, V, D = self.ff2.get_trace()
+        N = D['SpecNum'] # we fill this with num_avg * records per spectrum
+        V *= self.voltage_scale_factor * 0.5 / (256 * N)
+        errflags = D['ErrFlags']
+        self.parse_error_flags(errflags)
+        self.info(f"Took trace with {len(T)} points, {N} averages.")
+        return T, V, errflags
+
+    def get_trace_dither(self) -> Tuple[np.ndarray, np.ndarray, int]:
+        """Take a trace with the fastflight"""
+
+        T, V, D = self.ff2.get_trace_dither()
+        N = D['SpecNum'] # we fill this with num_avg * records per spectrum
+        V *= self.voltage_scale_factor * 0.5 / (256 * N)
+        errflags = D['ErrFlags']
+        self.parse_error_flags(errflags)
+        self.info(f"Took a dithered trace with {len(T)} points, {N} averages.")
+        return T, V, errflags
+
+    def parse_error_flags(self, errflags):
+        """Appropriately log the results of the error flag"""
+        self.info(
+            f"Error Flags: ADC underflow = {errflags & 1}\n"
+                         f"ADC overflow  = {errflags & 2}"
+        )
 
     def launch_scope_view(self):
         """Launch a GUI to use the fastflight as an Oscilloscope"""

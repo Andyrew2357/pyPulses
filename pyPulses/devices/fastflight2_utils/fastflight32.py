@@ -1,6 +1,7 @@
 from comtypes.client import CreateObject # type: ignore
 from comtypes.automation import VARIANT # type: ignore
 from typing import Optional, Tuple
+import time
 
 try:
     # If the library has already been generated, import it
@@ -13,6 +14,10 @@ except:
 
 class FastFlight32():
     def __init__(self):
+        self._num_spectra_per_trace = 1
+        self.dither_len = 0.0           # Dithering length to use (V)
+        self.dither_ready = False       # Are our protocols set for dithering?
+
         self.FF2Ctrl = CreateObject(FF2Lib.FF2CtrlObj)
         self.GSObj   = CreateObject(FF2Lib.GSObj)
         self.TOFObj  = CreateObject(FF2Lib.TOFObj)
@@ -96,6 +101,7 @@ class FastFlight32():
 
         self.set_prot_parms(prot_num, **kwargs)
         self.FF2Ctrl.SetProtocol(prot_num, self.Protocols[prot_num])
+        self.dither_ready = False
 
     def get_gs_parms(self):
         """
@@ -212,3 +218,78 @@ class FastFlight32():
             return
         return vaXData.value, vaYData.value, self.get_tof_parms()
     
+    def get_spectrum(self) -> Optional[Tuple[list, list, dict]]:
+        self.start_acq()
+        
+        prot = self.Protocols[self.GSObj.ActiveProtoNumber]
+        rec_len = 1e6 * prot.RecordLen
+        target_rec = prot.RecordsPerSpectrum
+        while True:
+            n_rec = self.num_records()
+            if n_rec >= target_rec:
+                break
+            time.sleep((target_rec - n_rec) * rec_len / 2)
+        
+        res = self.get_data()
+        self.stop_acq()
+        return res
+    
+    def get_num_spectra_per_trace(self) -> int:
+        return self._num_spectra_per_trace
+    
+    def set_num_spectra_per_trace(self, N: int):
+        self._num_spectra_per_trace = N
+    
+    def get_trace(self) -> Optional[Tuple[list, list, dict]]:
+        """Get TOF data repeatedly"""
+        T, V, D = self.get_spectrum()
+        for _ in range(self._num_spectra_per_trace):
+            t, v, d = self.get_spectrum()
+            for i in len(t):
+                V[i] += v[i]
+            D['ErrFlags'] |= d['ErrFlags']
+
+        D['SpecNum'] = self._num_spectra_per_trace * \
+                        self.Protocols[0].RecordsPerSpectrum
+        return T, V, D
+    
+    def get_dither_len(self) -> float:
+        return self.dither_len
+
+    def prep_dither(self, dither_len: float):
+        """Prepare protocols for taking a dithered trace."""
+        prot_i = self.GSObj.ActiveProtoNumber
+        proto_args = self.get_prot_parms(prot_i)
+        delay = proto_args['TimeOffset']
+
+        for i in range(16):
+            proto_args['TimeOffset'] = delay + i * dither_len / 15
+            self.set_protocol(i, **proto_args)
+
+        self.set_general_settings(ActiveProtoNumber = 0)
+        self.dither_len = dither_len
+        self.dither_ready = True
+        
+    def get_trace_dither(self) -> Optional[Tuple[list, list, dict]]:
+        """Get TOF data repeatedly with dithering."""
+
+        if not self.dither_ready:
+            raise RuntimeError("Protocols are not prepped for dithering.")
+        
+        for i in range(self._num_spectra_per_trace):
+            self.set_general_settings(ActiveProtoNumber = i % 16)
+            if i == 0:
+                T, V, D = self.get_spectrum()
+
+            t, v, d = self.get_spectrum()
+            voff = self.Protocols[0].VerticalOffset
+            num_avg = self.Protocols[0].RecordsPerSpectrum
+            for i in len(t):
+                offset = self.Protocols[i].VerticalOffset - voff
+                offset_int = int(offset * num_avg * 256 / 0.5) # Volts to integer rep
+                V[i] += v[i] - offset_int
+            D['ErrFlags'] |= d['ErrFlags']
+
+        D['SpecNum'] = self._num_spectra_per_trace * \
+                        self.Protocols[0].RecordsPerSpectrum
+        return T, V, D

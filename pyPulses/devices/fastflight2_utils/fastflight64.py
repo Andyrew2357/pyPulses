@@ -103,13 +103,13 @@ class FastFlight64():
                 x_data = self._reconstruct_x_data(data_length, sampling_interval)
             
             tof_parms = {
-                'ErrFlags': err_flags,
-                'ProtoNum': proto_num,
-                'SpecNum': spec_num,
-                'TimeStamp': timestamp
+                'ErrFlags'  : err_flags,
+                'ProtoNum'  : proto_num,
+                'SpecNum'   : spec_num,
+                'TimeStamp' : timestamp
             }
             
-            return x_data, y_data.astype(), tof_parms
+            return x_data, y_data.astype(float), tof_parms
             
         except Exception as e:
             raise RuntimeError(f"Failed to read binary data: {e}")
@@ -297,6 +297,74 @@ class FastFlight64():
         """
 
         result = self._call_method('get_data')
+        if result is None:
+            return None
+        return tuple(result)
+    
+    def get_num_spectra_per_trace(self) -> int:
+        """Get the number of spectra to include in a single trace"""
+        return self._call_method('get_num_spectra_per_trace')
+    
+    def set_num_spectra_per_trace(self, N: int):
+        """Set the number of spectra to include in a single trace"""
+        return self._call_method('set_num_spectra_per_trace', N)
+    
+    def get_trace(self) -> Optional[Tuple[np.ndarray, np.ndarray, dict]]:
+        """
+        Get a trace from the FastFlight.
+        
+        Returns:
+            Tuple of (x_data, y_data, tof_params) or None if no data available
+            
+            x_data: list of float - Time values in microseconds
+            y_data: list of float - Signal intensity values (converted from integers)
+            tof_params: dict containing:
+                - ErrFlags (int): Error status bits (0=ADC underflow, 1=ADC overflow)
+                        Check (ErrFlags & 1) for ADC underflow,
+                              (ErrFlags & 2) for ADC overflow
+                - ProtoNum (int): Protocol number used for this spectrum
+                - SpecificIonCount (float): Specific ion count for this spectrum
+                - SpecNum (int): REPLACED WITH num_spectra_per_trace * RecordsPerSpectrum
+                - TagNum (int): Tag number for this spectrum  
+                - TimeStamp (float): Timestamp in seconds
+                - TotalIonCount (float): Total ion count for this spectrum
+        """
+
+        result = self._call_method('get_trace')
+        if result is None:
+            return None
+        return tuple(result)
+    
+    def get_dither_len(self) -> float:
+        """Get the dither length (V)"""
+        return self._call_method('get_dither_len')
+
+    def prep_dither(self, dither_len: float):
+        """Set the dither length and prep protocols for a dithered trace"""
+        return self._call_method('prep_dither', dither_len)
+    
+    def get_trace_dither(self) -> Optional[Tuple[np.ndarray, np.ndarray, dict]]:
+        """
+        Get a dithered trace from the FastFlight.
+        
+        Returns:
+            Tuple of (x_data, y_data, tof_params) or None if no data available
+            
+            x_data: list of float - Time values in microseconds
+            y_data: list of float - Signal intensity values (converted from integers)
+            tof_params: dict containing:
+                - ErrFlags (int): Error status bits (0=ADC underflow, 1=ADC overflow)
+                        Check (ErrFlags & 1) for ADC underflow,
+                              (ErrFlags & 2) for ADC overflow
+                - ProtoNum (int): Protocol number used for this spectrum
+                - SpecificIonCount (float): Specific ion count for this spectrum
+                - SpecNum (int): REPLACED WITH num_spectra_per_trace * RecordsPerSpectrum
+                - TagNum (int): Tag number for this spectrum  
+                - TimeStamp (float): Timestamp in seconds
+                - TotalIonCount (float): Total ion count for this spectrum
+        """
+
+        result = self._call_method('get_trace_dither')
         if result is None:
             return None
         return tuple(result)
