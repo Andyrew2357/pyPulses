@@ -519,7 +519,9 @@ class DTG(pyvisaDevice):
         self.groups[name] = Group(name, N)
         self.device.write(f'GROup:NEW "{name}", {N}')
         self.info(f"Created new group {name} of width {N}")
-        self.assign_signals(name, channels)
+
+        if type(channels) != int:
+            self.assign_signals(name, channels)
 
     @mode_required('DATA')
     def assign_signals(self, group_name: str, 
