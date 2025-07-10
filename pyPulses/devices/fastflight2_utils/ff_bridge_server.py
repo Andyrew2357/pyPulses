@@ -10,7 +10,7 @@ from typing import Any, Dict
 
 from comtypes.client import CreateObject # type: ignore
 from comtypes.automation import VARIANT # type: ignore
-from typing import Optional, Tuple
+from typing import Tuple
 
 try:
     # If the library has already been generated, import it
@@ -159,35 +159,35 @@ class FastFlight32():
                 result[parm] = None    
         return result
     
-    def is_acq_running(self) -> Optional[bool]:
+    def is_acq_running(self) -> bool | None:
         """Is there a currently running acquisition."""
         return self.FF2Ctrl.Active
 
-    def device_count(self) -> Optional[int]:
+    def device_count(self) -> int | None:
         """Number of devices available for USB connection."""
         return self.FF2Ctrl.DeviceCount
     
-    def FF_version(self) -> Optional[str]:
+    def FF_version(self) -> str | None:
         """Version of the FastFlight firmware."""
         return self.FF2Ctrl.FFVersion
     
-    def is_connected(self) -> Optional[bool]:
+    def is_connected(self) -> bool | None:
         """Is there an open connection to instrument."""
         return self.FF2Ctrl.IsInstrumentPresent
     
-    def num_records(self) -> Optional[int]:
+    def num_records(self) -> int | None:
         """Records collected in current acquisition."""
         return self.FF2Ctrl.Records
     
-    def serial_number(self) -> Optional[str]:
+    def serial_number(self) -> str | None:
         """Serial number of the FastFlight."""
         return self.FF2Ctrl.SerialNumber
     
-    def num_spectra(self) -> Optional[int]:
+    def num_spectra(self) -> int | None:
         """Number of spectra collected in acquisition."""
         return self.FF2Ctrl.Spectrums
     
-    def time_elapsed(self) -> Optional[float]:
+    def time_elapsed(self) -> float | None:
         """Seconds since start of acquisition."""
         return self.FF2Ctrl.TimeElapsed
     
@@ -217,7 +217,7 @@ class FastFlight32():
         """Stop the current acquisition."""
         self.FF2Ctrl.Stop()
 
-    def get_data(self) -> Optional[Tuple[list, list, dict]]:
+    def get_data(self) -> Tuple[list, list, dict] | None:
         """Get TOF data off the FastFlight."""
         vaXData = VARIANT()
         vaYData = VARIANT()
@@ -227,7 +227,7 @@ class FastFlight32():
             return
         return vaXData.value, vaYData.value, self.get_tof_parms()
     
-    def get_spectrum(self) -> Optional[Tuple[list, list, dict]]:
+    def get_spectrum(self) -> Tuple[list, list, dict] | None:
         self.start_acq()
         
         prot = self.Protocols[self.GSObj.ActiveProtoNumber]
@@ -249,7 +249,7 @@ class FastFlight32():
     def set_num_spectra_per_trace(self, N: int):
         self._num_spectra_per_trace = N
     
-    def get_trace(self) -> Optional[Tuple[list, list, dict]]:
+    def get_trace(self) -> Tuple[list, list, dict] | None:
         """Get TOF data repeatedly"""
         T, V, D = self.get_spectrum()
         for _ in range(self._num_spectra_per_trace):
@@ -279,7 +279,7 @@ class FastFlight32():
         self.dither_len = dither_len
         self.dither_ready = True
         
-    def get_trace_dither(self) -> Optional[Tuple[list, list, dict]]:
+    def get_trace_dither(self) -> Tuple[list, list, dict] | None:
         """Get TOF data repeatedly with dithering."""
 
         if not self.dither_ready:

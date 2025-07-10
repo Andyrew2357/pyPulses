@@ -4,7 +4,7 @@ from .abstract_device import abstractDevice
 from ._registry import DeviceRegistry
 
 import numpy as np
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple
 
 class FastFlight2(abstractDevice):
     def __init__(self, logger = None):
@@ -97,8 +97,7 @@ class FastFlight2(abstractDevice):
         self.info(msg)
 
     # Parameter access methods
-    def _get_protocol_param(self, param_name: str, 
-                            prot_num: Optional[int] = None) -> Any:
+    def _get_protocol_param(self, param_name: str, prot_num: int = None) -> Any:
         """Fast protocol parameter getter"""
         self._ensure_settings_synced()
         prot_num = prot_num or self.gen_settings['ActiveProtoNumber']
@@ -122,7 +121,7 @@ class FastFlight2(abstractDevice):
             return raw_value
 
     def _set_protocol_param(self, param_name: str, value: Any, 
-                            prot_num: Optional[int] = None):
+                            prot_num: int = None):
         """Fast protocol parameter setter"""
         prot_num = prot_num or self.gen_settings['ActiveProtoNumber']
         hw_name, *meta = self._prot_param_cache[param_name]
@@ -213,87 +212,81 @@ class FastFlight2(abstractDevice):
         self.info(f"Setting: {param_name} = {value}")
 
     # Protocol Parameters
-    def compression(self, mode: Optional[str] = None, 
-                    prot_num: Optional[int] = None) -> str:
+    def compression(self, mode: str = None, prot_num: int = None) -> str:
         if mode is not None:
             self._set_protocol_param('compression', mode, prot_num)
         return self._get_protocol_param('compression', prot_num)
     
-    def correlated_noise_subtraction(self, on: Optional[bool] = None, 
-                                     prot_num: Optional[int] = None) -> bool:
+    def correlated_noise_subtraction(self, on: bool = None, 
+                                     prot_num: int = None) -> bool:
         if on is not None:
             self._set_protocol_param('correlated_noise_subtraction', on, prot_num)
         return self._get_protocol_param('correlated_noise_subtraction', prot_num)
     
-    def precision_enhancement(self, on: Optional[bool] = None, 
-                              prot_num: Optional[int] = None) -> bool:
+    def precision_enhancement(self, on: bool = None, prot_num: int = None
+                              ) -> bool:
         if on is not None:
             self._set_protocol_param('precision_enhancement', on, prot_num)
         return self._get_protocol_param('precision_enhancement', prot_num)
     
-    def trace_length(self, val: Optional[float] = None, 
-                     prot_num: Optional[int] = None) -> float:
+    def trace_length(self, val: float = None, prot_num: int = None) -> float:
         if val is not None:
             self._set_protocol_param('trace_length', val, prot_num)
         return self._get_protocol_param('trace_length', prot_num)
     
-    def num_averages(self, n: Optional[int] = None, 
-                     prot_num: Optional[int] = None) -> int:
+    def num_averages(self, n: int = None, prot_num: int = None) -> int:
         if n is not None:
             self._set_protocol_param('num_averages', n, prot_num)
         return self._get_protocol_param('num_averages', prot_num)
 
-    def time_resolution(self, setting: Optional[str] = None, 
-                        prot_num: Optional[int] = None) -> str:
+    def time_resolution(self, setting: str = None, prot_num: int = None) -> str:
         if setting is not None:
             self._set_protocol_param('time_resolution', setting, prot_num)
         return self._get_protocol_param('time_resolution', prot_num)
 
-    def trigger_delay(self, val: Optional[float] = None, 
-                      prot_num: Optional[int] = None) -> float:
+    def trigger_delay(self, val: float = None, prot_num: int = None) -> float:
         if val is not None:
             self._set_protocol_param('trigger_delay', val, prot_num)
         return self._get_protocol_param('trigger_delay', prot_num)
 
-    def voltage_offset(self, val: Optional[float] = None, 
-                       prot_num: Optional[int] = None) -> float:
+    def voltage_offset(self, val: float = None, prot_num: int = None) -> float:
         if val is not None:
             self._set_protocol_param('voltage_offset', val, prot_num)
         return self._get_protocol_param('voltage_offset', prot_num)
 
     # General Settings Parameters
-    def active_protocol(self, prot_num: Optional[int] = None) -> int:
+    def active_protocol(self, prot_num: int = None) -> int:
         if prot_num is not None:
             self._set_general_param('active_protocol', prot_num)
         return self._get_general_param('active_protocol')
     
-    def trigger_falling(self, falling: Optional[bool] = None) -> bool:
+    def trigger_falling(self, falling: bool = None) -> bool:
         if falling is not None:
             self._set_general_param('trigger_falling', falling)
         return self._get_general_param('trigger_falling')
     
-    def trigger_enabled(self, on: Optional[bool] = None) -> bool:
+    def trigger_enabled(self, on: bool = None) -> bool:
         if on is not None:
             self._set_general_param('trigger_enabled', on)
         return self._get_general_param('trigger_enabled')
     
-    def trigger_threshold(self, val: Optional[float] = None) -> float:
+    def trigger_threshold(self, val: float = None) -> float:
         if val is not None:
             self._set_general_param('trigger_threshold', val)
         return self._get_general_param('trigger_threshold')
     
-    def trigger_enable_polarity(self, high: Optional[bool] = None) -> bool:
+    def trigger_enable_polarity(self, high: bool = None) -> bool:
         if high is not None:
             self._set_general_param('trigger_enable_polarity', high)
         return self._get_general_param('trigger_enable_polarity')
     
-    def trigger_output_width(self, val: Optional[float] = None) -> float:
+    def trigger_output_width(self, val: float = None) -> float:
         if val is not None:
             self._set_general_param('trigger_output_width', val)
         return self._get_general_param('trigger_output_width')
     
     # Bulk parameter setting
-    def set_protocol_bulk(self, prot_num: Optional[int] = None, **kwargs):
+    def set_protocol_bulk(self, prot_num: int = None, **kwargs):
         """
         Set multiple protocol parameters in one call
         """

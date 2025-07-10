@@ -8,7 +8,7 @@ measurements of the integrated 'settled' response for balancing discharge pulses
 from ._registry import DeviceRegistry
 from .abstract_device import abstractDevice
 from .mso44 import mso44
-from typing import Optional, Tuple
+from typing import Tuple
 import numpy as np
 import time
 import json

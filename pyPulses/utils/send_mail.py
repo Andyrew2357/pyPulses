@@ -1,12 +1,10 @@
 from email.message import EmailMessage
 import configparser
 import smtplib
-import sys
-import os
-from typing import Union, List
+from typing import List
 
 def sendMail(subject: str, message: str, email_cfg: str,
-             recipients: Union[str, List[str]] = 'all'):
+             recipients: str | List[str] = 'all'):
 
     cfg = configparser.ConfigParser()
     cfg.read(email_cfg)

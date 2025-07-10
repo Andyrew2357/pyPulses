@@ -5,7 +5,7 @@ Uses asynchronous updates to minimize impact on measurement time.
 
 import numpy as np
 from collections import deque
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 import threading
 import time
 import queue
@@ -28,8 +28,8 @@ class SweepPlotter:
                  update_interval: float = 0.1, # Time-based throttling (seconds)
                  plot_width     : int = 350, 
                  plot_height    : int = 300,
-                 max_history    : Optional[int] = None,
-                 total_points   : Optional[int] = None):
+                 max_history    : int = None,
+                 total_points   : int = None):
         """
         Initialize the SweepPlotter.
         

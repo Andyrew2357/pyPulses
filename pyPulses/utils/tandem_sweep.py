@@ -9,7 +9,7 @@ dissimilar parameters simultaneously; it's mostly there for param_sweep_measure.
 
 from .getsetter import getSetter
 
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List
 import numpy as np
 from math import ceil
 import time
@@ -17,9 +17,9 @@ import time
 def tandemSweep(setters: List[Callable[[float], Any]], 
                 start: List[float], end: List[float], 
                 wait: float,
-                max_step: List[Optional[float]],  
-                min_step: List[Optional[float]] = None,
-                tolerance: List[Optional[float]] = None,
+                max_step: List[float | None],  
+                min_step: List[float | None] = None,
+                tolerance: List[float | None] = None,
                 handle_exceptions: bool = True) -> bool:
     """
     Sweeps multiple parameters smoothly while respecting their maximum step

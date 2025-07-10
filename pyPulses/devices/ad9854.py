@@ -11,7 +11,6 @@ up to ~ 50 MHz with 48 bit resolution.
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
 from math import floor
-from typing import Optional
 
 class ad9854(pyvisaDevice):
     def __init__(self, logger=None, instrument_id: str = None):
@@ -108,7 +107,7 @@ class ad9854(pyvisaDevice):
         self.info(f"Set {channel}{chip} amplitude to {amplitude} V rms.")
         return amplitude
 
-    def get_amplitude(self, chip, channel) -> Optional[float]:
+    def get_amplitude(self, chip, channel) -> float | None:
         if chip not in [1, 2] or channel not in ['X', 'Y']:
             self.error(f"chip = {chip}, channel = {channel} is invalid.")
             return

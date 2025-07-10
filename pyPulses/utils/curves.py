@@ -3,11 +3,11 @@ Utility functions for dealing with curves. This includes interpolation,
 inversion, smoothing, etc.
 """
 
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Tuple
 import numpy as np
 
-def prune_sort(x: Union[np.ndarray, list],
-                    y: Union[np.ndarray, list]) -> Tuple[np.ndarray, np.ndarray]:
+def prune_sort(x: np.ndarray | list, y: np.ndarray | list
+               ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Remove non, monotonic values in x so that x is strictly increasing or 
     decreasing. Then sort so that x is increasing. Whether we assume decreasing 
@@ -28,8 +28,7 @@ def prune_sort(x: Union[np.ndarray, list],
 
     return xn[idx], yn[idx]
 
-def pchip(xs: Union[np.ndarray, list], 
-          ys: Union[np.ndarray, list]
+def pchip(xs: np.ndarray | list, ys: np.ndarray | list
           ) -> Callable[[float], Tuple[float, float]]:
     """
     Implementation of shape preserving PCHIP (Piecewise Cubic Hermite 
@@ -47,8 +46,7 @@ def pchip(xs: Union[np.ndarray, list],
     xs, ys, c1s, c2s, c3s = pchip_params(xs, ys)
     return pchip_interp_from_params(xs, ys, c1s, c2s, c3s)
 
-def pchip_params(xs: Union[np.ndarray, list], 
-                 ys: Union[np.ndarray, list]
+def pchip_params(xs: np.ndarray | list, ys: np.ndarray | list
                 ) -> Callable[[float], Tuple[float, float]]:
     """
     Implementation of shape preserving PCHIP (Piecewise Cubic Hermite 

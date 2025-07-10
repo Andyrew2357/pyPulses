@@ -4,7 +4,6 @@ import sys
 import time
 import numpy as np
 import matplotlib
-from typing import Tuple
 matplotlib.use('Qt5Agg')
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure

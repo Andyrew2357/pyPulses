@@ -5,7 +5,7 @@ import subprocess
 import time
 import struct
 import numpy as np
-from typing import Optional, Tuple
+from typing import Tuple
 
 class FastFlight64():
     def __init__(self):
@@ -236,28 +236,28 @@ class FastFlight64():
     def get_tof_parms(self):
         return self._call_method('get_tof_parms')
     
-    def is_acq_running(self) -> Optional[bool]:
+    def is_acq_running(self) -> bool | None:
         return self._call_method('is_acq_running')
     
-    def device_count(self) -> Optional[int]:
+    def device_count(self) -> int | None:
         return self._call_method('device_count')
     
-    def FF_version(self) -> Optional[str]:
+    def FF_version(self) -> str | None:
         return self._call_method('FF_version')
     
-    def is_connected(self) -> Optional[bool]:
+    def is_connected(self) -> bool | None:
         return self._call_method('is_connected')
     
-    def num_records(self) -> Optional[int]:
+    def num_records(self) -> int | None:
         return self._call_method('num_records')
     
-    def serial_number(self) -> Optional[str]:
+    def serial_number(self) -> str | None:
         return self._call_method('serial_number')
     
-    def num_spectra(self) -> Optional[int]:
+    def num_spectra(self) -> int | None:
         return self._call_method('num_spectra')
     
-    def time_elapsed(self) -> Optional[float]:
+    def time_elapsed(self) -> float | None:
         return self._call_method('time_elapsed')
     
     def open(self) -> bool:
@@ -275,7 +275,7 @@ class FastFlight64():
     def stop_acq(self):
         return self._call_method('stop_acq')
     
-    def get_data(self) -> Optional[Tuple[np.ndarray, np.ndarray, dict]]:
+    def get_data(self) -> Tuple[np.ndarray, np.ndarray, dict] | None:
         """
         Get TOF data from the FastFlight.
         
@@ -309,7 +309,7 @@ class FastFlight64():
         """Set the number of spectra to include in a single trace"""
         return self._call_method('set_num_spectra_per_trace', N)
     
-    def get_trace(self) -> Optional[Tuple[np.ndarray, np.ndarray, dict]]:
+    def get_trace(self) -> Tuple[np.ndarray, np.ndarray, dict] | None:
         """
         Get a trace from the FastFlight.
         
@@ -343,7 +343,7 @@ class FastFlight64():
         """Set the dither length and prep protocols for a dithered trace"""
         return self._call_method('prep_dither', dither_len)
     
-    def get_trace_dither(self) -> Optional[Tuple[np.ndarray, np.ndarray, dict]]:
+    def get_trace_dither(self) -> Tuple[np.ndarray, np.ndarray, dict] | None:
         """
         Get a dithered trace from the FastFlight.
         

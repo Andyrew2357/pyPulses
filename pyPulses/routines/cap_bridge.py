@@ -6,23 +6,23 @@ Barrera's smartysweep implementations in MATLAB.
 from dataclasses import dataclass
 import numpy as np
 import time
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Tuple
 
 """Configuration dataclass for balanceCapBridge function"""
 @dataclass
 class BalanceCapBridgeConfig:
-    time_const  : float                                         # time constant for lock-in
-    small_step  : Optional[Tuple[float, float]] = (0.01, 0.01)  # small step in Vex/Vstd
-    large_step  : Optional[Tuple[float, float]] = (0.94, 0.94)  # large step in Vex/Vstd
-    Vex         : Optional[float] = None                        # Vex to use
-    Vstd_range  : Optional[float] = None                        # Vstd to use
-    Vex_gain    : float = 1                                     # gain associated with Vex
-    Vstd_gain   : float = 1                                     # gain associated with Vstd
-    Cstd        : float = 1                                     # standard capacitor Cstd
-    wait        : float = 3                                     # time to wait after changing voltage
-    samples     : int = 100                                     # number of averages to use  
-    logger      : Optional[object] = None                       # logger
-    callback    : Optional[Callable[[int, np.ndarray, np.ndarray], Any]] = None
+    time_const  : float                                 # time constant for lock-in
+    small_step  : Tuple[float, float] = (0.01, 0.01)    # small step in Vex/Vstd
+    large_step  : Tuple[float, float] = (0.94, 0.94)    # large step in Vex/Vstd
+    Vex         : float = None                          # Vex to use
+    Vstd_range  : float = None                          # Vstd to use
+    Vex_gain    : float = 1                             # gain associated with Vex
+    Vstd_gain   : float = 1                             # gain associated with Vstd
+    Cstd        : float = 1                             # standard capacitor Cstd
+    wait        : float = 3                             # time to wait after changing voltage
+    samples     : int = 100                             # number of averages to use  
+    logger      : object = None                         # logger
+    callback    : Callable[[int, np.ndarray, np.ndarray], Any] = None
     ignore_warning: bool = False
 
     def __str__(self):
@@ -41,16 +41,16 @@ class BalanceCapBridgeConfig:
 @dataclass
 class CapBridgeBalance:
     status          : bool
-    balance_matrix  : Optional[np.ndarray] = None
-    Cex             : Optional[float] = None
-    Closs           : Optional[float] = None
-    Vc0Vex          : Optional[float] = None
-    Vr0Vex          : Optional[float] = None
-    R               : Optional[float] = None
-    phase           : Optional[float] = None
-    error           : Optional[Tuple[float, float]] = None
-    Vex             : Optional[float] = None
-    Cstd            : Optional[float] = None
+    balance_matrix  : np.ndarray = None
+    Cex             : float = None
+    Closs           : float = None
+    Vc0Vex          : float = None
+    Vr0Vex          : float = None
+    R               : float = None
+    phase           : float = None
+    error           : Tuple[float, float] = None
+    Vex             : float = None
+    Cstd            : float = None
 
     def __str__(self):
         s  = f"        status: {'balanced' if self.status else 'unbalanced'}\n"
@@ -71,9 +71,9 @@ class CapBridgeBalance:
 
 """Balances the capacitance bridge. Run once before capacitance measurements"""
 def balanceCapBridge(C          : BalanceCapBridgeConfig,
-                     set_Vex    : Optional[Callable[[float], Any]],
+                     set_Vex    : Callable[[float], Any] | None,
                      get_Vex    : Callable[[], float],
-                     set_Vstd   : Optional[Callable[[float], Any]],
+                     set_Vstd   : Callable[[float], Any] | None,
                      get_Vstd   : Callable[[], float],
                      set_Vstd_ph: Callable[[float], Any],
                      get_XY      : Callable[[], Tuple[float, float]],

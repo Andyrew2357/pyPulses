@@ -6,16 +6,16 @@ converge on a balance point.
 """
 
 from .rootfinder import RootFinderState, RootFinderStatus
-from typing import Tuple, Optional
+from typing import Tuple
 
 class BrentSolver:
     def __init__(self, xa: float, xb: float,
-                 search_range: Optional[Tuple[float, float]] = None,
+                 search_range: Tuple[float, float] = None,
                  x_tolerance: float         = 1e-6,
                  y_tolerance: float         = 1e-6,
                  max_iter: int              = 100,
-                 max_reps: Optional[int]    = 6,
-                 max_coll: Optional[int]    = 3):
+                 max_reps: int              = 6,
+                 max_coll: int              = 3):
         
         """
         Initialize the Brent solver with external function evaluation.

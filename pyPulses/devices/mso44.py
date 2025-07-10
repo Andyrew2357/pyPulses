@@ -5,7 +5,7 @@ by the instrument.
 """
 
 from .pyvisa_device import pyvisaDevice
-from typing import Optional, Tuple
+from typing import Tuple
 import numpy as np
 
 class mso44(pyvisaDevice):
@@ -76,7 +76,7 @@ class mso44(pyvisaDevice):
         self.device.write("CLEAR")
         self.info("MSO44: Trace cleared.")
 
-    def fast_acquisition(self, on: Optional[bool] = None) -> Optional[bool]:
+    def fast_acquisition(self, on: bool = None) -> bool | None:
         """Query or set whether fast acquisition is enabled."""
         if on is None:
             return int(self.device.query("FASTAcq:STATE?")) == 1

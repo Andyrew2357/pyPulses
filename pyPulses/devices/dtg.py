@@ -10,7 +10,7 @@ import base64
 import numpy as np
 import matplotlib.pyplot as plt
 from bitarray import bitarray
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List
 
 """Base DTG class"""
 
@@ -81,7 +81,7 @@ class DTG(pyvisaDevice):
 
         return self.modules
     
-    def get_channel(self, ch: str | Channel) -> Optional[Channel]:
+    def get_channel(self, ch: str | Channel) -> Channel | None:
         if isinstance(ch, Channel):
             return ch
         
@@ -91,7 +91,7 @@ class DTG(pyvisaDevice):
         
         return self.channels[ch]
     
-    def operation_mode(self, pg: bool = None) -> Optional[bool]:
+    def operation_mode(self, pg: bool = None) -> bool | None:
         """Set or query the operation mode."""
 
         if pg is None:
@@ -102,7 +102,7 @@ class DTG(pyvisaDevice):
         self.device.write(f"TBAS:OMODE {self.mode}")
         self.info(f"Set operational mode to {'pulse' if pg else 'data'} mode.")
 
-    def burst_mode(self, burst: bool = None) -> Optional[bool]:
+    def burst_mode(self, burst: bool = None) -> bool | None:
         """
         Set or query whether we are in burst or continuous mode
         True = burst
@@ -114,7 +114,7 @@ class DTG(pyvisaDevice):
         self.device.write(f"TBAS:MODE {'BURS' if burst else 'CONT'}")
         self.device.write(f"Entered {'burst' if burst else 'continuous mode.'}")
     
-    def run(self, on: bool = None) -> Optional[bool]:
+    def run(self, on: bool = None) -> bool | None:
         """Enable/Disable sequencer or query sequencer state."""
 
         if on is None:
@@ -199,7 +199,7 @@ class DTG(pyvisaDevice):
         self.device.info(f"Set trigger input level to {V} V.")
         return V
 
-    def trigger_input_slope(self, pos: bool = None) -> Optional[bool]:
+    def trigger_input_slope(self, pos: bool = None) -> bool | None:
         """Set or query the trigger input slope"""
         
         if pos is None:
@@ -239,7 +239,7 @@ class DTG(pyvisaDevice):
         self.device.info(f"Set event input level to {V} V.")
         return V
 
-    def event_input_polarity(self, pos: bool = None) -> Optional[bool]:
+    def event_input_polarity(self, pos: bool = None) -> bool | None:
         """Set or query the event input polarity"""
         
         if pos is None:
@@ -303,7 +303,7 @@ class DTG(pyvisaDevice):
         self.info(f"Set relative rate of channel {ch._id()} to {ch.prate}.")
 
     @mode_required("PULS")
-    def polarity(self, ch: str | Channel, pos: bool = None) -> Optional[bool]:
+    def polarity(self, ch: str | Channel, pos: bool = None) -> bool | None:
         """Set or query the polarity of channel."""
 
         ch = self.get_channel(ch)
@@ -450,7 +450,7 @@ class DTG(pyvisaDevice):
         self.info(f"Set logical low level of channel {ch._id()} to {V} V.")
         return V
     
-    def chan_output(self, ch: str | Channel, on: bool = None) -> Optional[bool]:
+    def chan_output(self, ch: str | Channel, on: bool = None) -> bool | None:
         """Set or query the output state of the channel."""
         
         ch = self.get_channel(ch)

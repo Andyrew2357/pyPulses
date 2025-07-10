@@ -6,7 +6,7 @@ to converge on a balance point if its first two guesses are insufficient.
 
 from .rootfinder import RootFinderState, RootFinderStatus
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Callable, Tuple
 
 @dataclass
 class BalanceConfig:
@@ -20,10 +20,9 @@ class BalanceConfig:
     max_iter        : int                       # Max root finder iterations
     max_reps        : int                       # Guard against cycles
     max_coll        : int                       # Max boundary collisions
-    logger          : Optional[object]          # Logger
+    logger          : object                    # Logger
 
-def balance1d(p: Union[float, Tuple[float, ...]], 
-              C: BalanceConfig) -> RootFinderState:
+def balance1d(p: float | Tuple[float, ...], C: BalanceConfig) -> RootFinderState:
 
     if C.logger:
         C.logger.info("=" * 80)

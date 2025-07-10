@@ -4,7 +4,7 @@ amplifier.
 """
 
 from .pyvisa_device import pyvisaDevice
-from typing import Optional, Tuple
+from typing import Tuple
 from collections import defaultdict
 import numpy as np
 from math import log2
@@ -226,7 +226,7 @@ class sr865a(pyvisaDevice):
     
     # DATA ACQUISITION
     def setup_data_acquisition(self, buffer_size: int, config: str = 'XY',
-                               sample_rate: Optional[float] = None) -> float:
+                               sample_rate: float = None) -> float:
         """
         Configure the data acquisition system.
 

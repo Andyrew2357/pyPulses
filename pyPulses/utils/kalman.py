@@ -32,7 +32,7 @@ Other variables:
 import numpy as np
 from numpy.linalg import inv
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Callable, Tuple
 
 @dataclass
 class kalman:

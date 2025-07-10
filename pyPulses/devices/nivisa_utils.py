@@ -21,7 +21,7 @@ def find_and_load_gpib(paths = [], logger = None):
     for path in potential_paths:
         if os.path.exists(path):
             try:
-                import gpib_ctypes.gpib
+                import gpib_ctypes.gpib # type: ignore
                 gpib_ctypes.gpib.gpib._load_lib(path)
                 if logger:
                     logger.info(f"Successfully loaded GPIB library from {path}")

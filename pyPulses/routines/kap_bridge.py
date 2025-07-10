@@ -20,7 +20,7 @@ import time
 import numpy as np
 from numpy.linalg import inv
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Tuple
 from collections import deque
 
 def extrap(x: np.ndarray, order: int) -> float:
@@ -159,7 +159,7 @@ class KapBridge():
     raw_samples     : int = 100                 # samples for a raw balance
     raw_wait        : float = 3                 # wait time for a raw balance
     raw_time_const  : float = 0.01              # time constant (raw balance)
-    logger          : Optional[object] = None   # logger
+    logger          : object = None             # logger
 
     def __post_init__(self):
         self.filter_key = None
@@ -488,7 +488,7 @@ class KapBridge():
         self.balance_state = self.balance(filter_key)
         return self.balance_state.success
 
-    def get_param(self, field: str) -> Union[bool, float, int, np.ndarray]:
+    def get_param(self, field: str) -> bool | float | int | np.ndarray:
         return getattr(self.balance_state, field)
 
     def get_Cex(self) -> float:

@@ -6,13 +6,13 @@ import datetime
 import time
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple
 
 from .tandem_sweep import tandemSweep
 from .getsetter import getSetter
 
 def get_data_str(coords: np.ndarray, data: np.ndarray, 
-                 now: Optional[datetime.datetime]) -> str:
+                 now: datetime.datetime | None) -> str:
     """Pretty formatting for output data"""
     coord_cols = "".join(f'\t{val:12g}' for val in coords)
     data_cols = "".join(f'\t{val:12g}' for val in data)
@@ -104,38 +104,30 @@ COMMON_ARGS = [
 
 @dataclass(kw_only=True)
 class ParamSweepMeasure:
-    measurements    : Union[Dict[str, Any], List[Dict[str, Any]]]               # measured variables
-    coordinates     : Union[Dict[str, Any], List[Dict[str, Any]]]               # swept variables
+    measurements    : Dict[str, Any] | List[Dict[str, Any]]                     # measured variables
+    coordinates     : Dict[str, Any] | List[Dict[str, Any]]                     # swept variables
     time_per_point  : float = 0.
     file_prefix     : str = None                                                # string prefix for output file
     points_per_file : int = None                                                # number of points per output file
     starting_fnum   : int = 1                                                   # starting file number
     retain_return   : bool = True                                               # whether we return results (can be memory intensive)
     logger          : logging.Logger = None                                     # logger
-    pre_callback    : Union[None,                                               # callback before measurement
-                            Callable[[datetime.datetime,
-                                     np.ndarray, np.ndarray],
-                            Any],
-                            Callable[[np.ndarray, np.ndarray],
-                            Any],    
-                        ] = None
-    post_callback   : Union[None,                                               # callback after measurement
-                            Callable[[datetime.datetime, np.ndarray, 
-                                      np.ndarray, np.ndarray],
-                            Any],
-                            Callable[[np.ndarray, np.ndarray, 
-                                      np.ndarray],
-                            Any],    
-                        ] =None
-    space_mask      : Callable[                                                 # mask for which points to take
-                            [Union[int, np.ndarray],
-                            np.ndarray], 
-                        bool] = lambda *args: True
-    timestamp       : Optional[bool] = True                                     # whether to include a timestamp for each point
+    pre_callback    : Callable[                                                 # callback before measurement
+                        [datetime.datetime, np.ndarray, np.ndarray], Any
+                        ] | \
+                      Callable[[np.ndarray, np.ndarray], Any] = None
+    post_callback   : Callable[                                                 # callback after measurement
+                        [datetime.datetime, np.ndarray, np.ndarray, np.ndarray], 
+                        Any
+                        ] | \
+                      Callable[[np.ndarray, np.ndarray, np.ndarray], Any] = None
+    space_mask      : Callable[[int | np.ndarray, np.ndarray], bool] \
+                        = lambda *args: True                                    # mask for which points to take
+    timestamp       : bool = True                                               # whether to include a timestamp for each point
     
     # If tandem sweeping is desired, need to provide these
-    ramp_wait       : Optional[float] = None                                    # wait time between steps when ramping
-    ramp_kwargs     : Optional[dict] = None                                     # keyword arguments for tandem sweep
+    ramp_wait       : float = None                                              # wait time between steps when ramping
+    ramp_kwargs     : dict = None                                               # keyword arguments for tandem sweep
 
     def __post_init__(self):
         """Input validation"""
@@ -168,7 +160,7 @@ class ParamSweepMeasure:
         self.dim = 0
         self.dimensions = ()
 
-    def run(self) -> Optional[np.ndarray]:
+    def run(self) -> np.ndarray | None:
         """Run the parameter sweep."""
 
         if self.retain_return:
@@ -306,7 +298,7 @@ class ParamSweepMeasure:
         self.log('info', header_str)
 
     def log_data(self, coords: np.ndarray, data: np.ndarray, 
-                 now: Optional[datetime.datetime]):
+                 now: datetime.datetime | None):
         if not self.file_prefix and not self.logger:
             return
         data_str = get_data_str(coords, data, now)
@@ -567,9 +559,9 @@ measurements at each point.
 
 @dataclass(kw_only=True)
 class SweepMeasureCut(ParamSweepMeasure):
-    numpoints: int                                   # number of points to take
-    start    : Union[float, np.ndarray, List[float]] # starting parameters
-    end      : Union[float, np.ndarray, List[float]] # ending parameters
+    numpoints: int                              # number of points to take
+    start    : float | np.ndarray | List[float] # starting parameters
+    end      : float | np.ndarray | List[float] # ending parameters
 
     def __post_init__(self):
         super().__post_init__()

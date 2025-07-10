@@ -4,7 +4,7 @@ Utility classes for tracking DTG state
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import List
 from bitarray import bitarray
 
 @dataclass
@@ -38,7 +38,7 @@ class Channel:
         return f"{self.mf}{self.slot}{self.ch}"
     
     @property
-    def high(self) -> Optional[float]:
+    def high(self) -> float | None:
         return self._high
     
     @high.setter
@@ -48,7 +48,7 @@ class Channel:
         self._high = V
 
     @property
-    def low(self) -> Optional[float]:
+    def low(self) -> float | None:
         return self._low
     
     @low.setter
@@ -58,7 +58,7 @@ class Channel:
         self._low = V
 
     @property
-    def width(self) -> Optional[float]:
+    def width(self) -> float | None:
         return self._width
     
     @width.setter
@@ -68,7 +68,7 @@ class Channel:
         self._width = W
     
     @property
-    def ldelay(self) -> Optional[float]:
+    def ldelay(self) -> float | None:
         return self._ldelay
     
     @ldelay.setter
@@ -78,7 +78,7 @@ class Channel:
         self._ldelay = l
 
     @property
-    def tdelay(self) -> Optional[float]:
+    def tdelay(self) -> float | None:
         return self._tdelay
     
     @tdelay.setter

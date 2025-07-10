@@ -3,7 +3,6 @@ Predict future balance points by performing a polynomial fit on the last few.
 The user must provide functions for default0 and default1.
 """
 
-
 import numpy as np
 from typing import Callable, Tuple
 

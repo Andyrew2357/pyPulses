@@ -4,7 +4,7 @@ This class is an interface for communicating with the PID DC box.
 
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
-from typing import Optional, Tuple
+from typing import Tuple
 from math import ceil
 import numpy as np
 import time
@@ -84,21 +84,21 @@ class PIDbox(pyvisaDevice):
         self.device.write(f"PID:{'ON' if on else 'OFF'}\n")
         self.info(f"{'En' if on else 'Dis'}abled PID loop on channel {ch}.")
 
-    def P(self, P: float = None) -> Optional[float]:
+    def P(self, P: float = None) -> float | None:
         """Query or set proportional coefficient for PID loop."""
         if P is None:
             return float(self.device.query("PID:P?\n"))
         else:
             self.device.write(f"PID:P {P}\n")
 
-    def I(self, I: float = None) -> Optional[float]:
+    def I(self, I: float = None) -> float | None:
         """Query or set integral coefficient for PID loop."""
         if I is None:
             return float(self.device.query("PID:I?\n"))
         else:
             self.device.write(f"PID:I {I}\n")
 
-    def D(self, D: float = None) -> Optional[float]:
+    def D(self, D: float = None) -> float | None:
         """Query or set derivative coefficient for PID loop."""
         if D is None:
             return float(self.device.query("PID:D?\n"))
@@ -109,8 +109,7 @@ class PIDbox(pyvisaDevice):
         """Get the current ADC reading."""
         return float(self.device.query("ADC?\n"))
 
-    def set_channel_lim(self, ch: int, 
-                        lim: Tuple[Optional[float], Optional[float]]):
+    def set_channel_lim(self, ch: int, lim: Tuple[float | None, float | None]):
         """Manually set the voltage limits for a channel"""
         self.select_channel(ch)
         

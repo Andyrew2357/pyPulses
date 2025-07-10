@@ -2,7 +2,6 @@
 These are utility datastructures for root finding algorithms.
 """
 
-from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum, auto
 
@@ -33,7 +32,7 @@ class RootFinderStatus(Enum):
 class RootFinderState:
     status      : RootFinderStatus
     point       : float             # Point where function evaluation is needed
-    root        : Optional[float]   # Final root if found
+    root        : float | None      # Final root if found
     iterations  : int               # Number of iterations used
     message     : str               # Descriptive status message
     best_value  : float             # Best function value seen

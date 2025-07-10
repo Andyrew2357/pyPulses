@@ -5,7 +5,7 @@ This is a class for balancing a resistor bridge using pulsing.
 from ..utils import balance1d, BalanceConfig, RootFinderStatus, RootFinderState
 from dataclasses import dataclass
 import numpy as np
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Callable, Tuple
 
 @dataclass
 class PulsedR():
@@ -17,14 +17,14 @@ class PulsedR():
     set_Vg              : Callable[[float], Any]
     background_mean     : float = 0.0
     background_std      : float = 0.0
-    logger              : Optional[object] = None
+    logger              : object = None
 
     def __post_init__(self):
         self.get_y = self.Vy_balance_config.get_y
         if not self.background_mean == 0:
             self.set_background(self.background_mean)
 
-    def balance(self, p: Union[float, Tuple[float, ...]]) -> bool:
+    def balance(self, p: float | Tuple[float, ...]) -> bool:
         self.info(
             f"Attempting balance at point:\n    |"
             + ''.join([f"{x:.5f}|" for x in p])

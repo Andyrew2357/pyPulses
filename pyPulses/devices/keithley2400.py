@@ -3,7 +3,6 @@ This class is an interface for communicating with the Keithley 2400 SMU.
 """
 
 from .pyvisa_device import pyvisaDevice
-from typing import Optional
 from math import ceil
 import numpy as np
 import time
