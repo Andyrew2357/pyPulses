@@ -12,7 +12,7 @@ from .cryomagnetics_4G import cryomagnetics4G
 from .dtg import dtg5274
 from .dtg_diff_pair import DifferentialPair
 from .fastflight2 import FastFlight2
-from .hf2li import hf2li
+from .hf2li import hf2li, hf2liACout
 from .hp34401a import hp34401a
 from .ips120 import ips120
 from .keithley2000 import keithley2000
@@ -33,6 +33,7 @@ __all__ = [
     "dtg5274",
     "FastFlight2",
     "hf2li",
+    "hf2liACout",
     "hp34401a",
     "ips120",
     "keithley2000",

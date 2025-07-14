@@ -50,6 +50,11 @@ class zhinstDevice(abstractDevice):
         self.info(f"ZHINST: Got {full_path} = {value}")
         return value
 
+    def set_int(self, path: str, value) -> int:
+        full_path = self._get_full_path(path)
+        value = self.daq.setInt(full_path, value)
+        self.info(f"ZHINST: Set {full_path} = {value}")
+        
     def get_int(self, path: str) -> int:
         full_path = self._get_full_path(path)
         value = self.daq.getInt(full_path)
