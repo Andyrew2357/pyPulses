@@ -9,9 +9,9 @@ from typing import Tuple
 
 class hf2li(zhinstDevice):
     def __init__(self, 
-                 device_id: str, 
+                 device_id: str = 'dev1616', 
                  server_host: str = 'localhost',
-                 server_port: int = 8004, 
+                 server_port: int = 8005, 
                  API_level: int = 1,
                  logger = None):
         super().__init__(device_id, server_host, server_port, API_level, 
@@ -56,39 +56,40 @@ class DemodChannel:
     def _p(self, subpath: str) -> str:
         return f"demods/{self.index}/{subpath}"
 
-    def get_xy(self) -> Tuple[float, float]:
+    def get_xy(self) -> Tuple[float | None, float | None]:
         """Get in and out of phase signals"""
-        x = self.parent.get_param(self._p("sample/x"))
-        y = self.parent.get_param(self._p("sample/y"))
-        return x, y
+        data = self.parent.get_sample(self._p("sample"))
+        return data.get('x'), data.get('y')
 
-    def get_r(self) -> float:
+    def get_r(self) -> float | None:
         """Get magnitude of signal"""
         x, y = self.get_xy()
         return np.sqrt(x**2 + y**2)
 
-    def get_theta(self) -> float:
+    def get_theta(self) -> float | None:
         """Get phase of signal"""
         x, y = self.get_xy()
         return np.degrees(np.arctan2(y, x))
 
-    def get_frequency(self) -> float:
-        """Get the frequency of the demodulator (internal/external reference)"""
-        return self.parent.get_param(self._p("freq"))
+    """FIX ME FREQUENCY IS CONTROLLED BY EXTERNAL OR INTERNAL OSCILLATOR..."""
+    """NEED WAY OF ASSOCIATING DEMODULATOR TO OSCILLATOR"""
+    # def get_frequency(self) -> float:
+    #     """Get the frequency of the demodulator (internal/external reference)"""
+    #     return self.parent.get_double(self._p("freq"))
 
-    def set_frequency(self, freq: float):
-        """Set the frequency of the demodulator (internal reference)"""
-        self.parent.set_param(self._p("freq"), freq)
+    # def set_frequency(self, freq: float):
+    #     """Set the frequency of the demodulator (internal reference)"""
+    #     self.parent.set_double(self._p("freq"), freq)
 
     def get_time_const(self) -> float:
         """Get the demodulator time constant"""
-        tau = self.parent.get_param(self._p("timeconstant"))
+        tau = self.parent.get_double(self._p("timeconstant"))
         self.parent.settings['demods'][self.index]['time_const'] = tau
         return tau
 
     def set_time_const(self, tau: float):
         """Set the time constant of the demodulator"""
-        self.parent.set_param(self._p("timeconstant"), tau)
+        self.parent.set_double(self._p("timeconstant"), tau)
         self.parent.settings['demods'][self.index]['time_const'] = tau
 
     def acquire_samples(self, duration=0.1, timeout=0.2) -> np.ndarray:
@@ -117,37 +118,37 @@ class OutputChannel:
         return f"sigouts/{self.index}/{subpath}"
 
     def enable(self, on: bool = True):
-        self.parent.set_param(self._p("on"), int(on))
+        self.parent.set_double(self._p("on"), int(on))
 
     def is_enabled(self) -> bool:
-        return bool(self.parent.get_param(self._p("on")))
+        return bool(self.parent.get_double(self._p("on")))
 
     def set_amplitude(self, value: float):
-        self.parent.set_param(self._p("amplitude"), value)
+        self.parent.set_double(self._p("amplitude"), value)
 
     def get_amplitude(self) -> float:
-        return self.parent.get_param(self._p("amplitude"))
+        return self.parent.get_double(self._p("amplitude"))
 
     def set_offset(self, value: float):
-        self.parent.set_param(self._p("offset"), value)
+        self.parent.set_double(self._p("offset"), value)
 
     def get_offset(self) -> float:
-        return self.parent.get_param(self._p("offset"))
+        return self.parent.get_double(self._p("offset"))
 
     def set_range(self, value: float):
-        self.parent.set_param(self._p("range"), value)
+        self.parent.set_double(self._p("range"), value)
 
     def get_range(self) -> float:
-        return self.parent.get_param(self._p("range"))
+        return self.parent.get_double(self._p("range"))
     
     def set_phase(self, degrees: float):
-        self.parent.set_param(self._p("phase"), degrees)
+        self.parent.set_double(self._p("phase"), degrees)
 
     def get_phase(self) -> float:
-        return self.parent.get_param(self._p("phase"))
+        return self.parent.get_double(self._p("phase"))
 
     def connect_to_demod(self, demod_index: int):
-        self.parent.set_param(self._p(f"enables/{demod_index}"), 1)
+        self.parent.set_double(self._p(f"enables/{demod_index}"), 1)
 
     def disconnect_demod(self, demod_index: int):
-        self.parent.set_param(self._p(f"enables/{demod_index}"), 0)
+        self.parent.set_double(self._p(f"enables/{demod_index}"), 0)

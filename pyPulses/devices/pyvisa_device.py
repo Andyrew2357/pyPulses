@@ -134,7 +134,11 @@ class pyvisaDevice(abstractDevice):
         self.connect()
 
     def __del__(self):
-        self.device.close()
+        try:
+            self.device.close()
+        except Exception as e:
+            self.warn(f"Exception during pyvisaDevice cleanup: {e}")
+            
         super().__del__()
 
 """

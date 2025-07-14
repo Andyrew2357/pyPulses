@@ -3,9 +3,8 @@ This class is an interface for communicating with the Keithley 2000 multimeter
 """
 
 from .pyvisa_device import pyvisaDevice
-from math import ceil
 
-class keithley2400(pyvisaDevice):
+class keithley2000(pyvisaDevice):
     def __init__(self, logger: str = None, instrument_id: str = None):
 
         self.pyvisa_config = {
