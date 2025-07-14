@@ -6,7 +6,7 @@ It is suggested that the user pass common arguments in a dictionarry à la **kwa
 Typically this will looks like
 
 {
-'cb'        : <bottom gate capacitance per unit area in F-m^-1>
+'cb'        : <bottom gate capacitance per unit area in F-m^-2>
               (Note that this value has no effect on the calculated gap, since 
               it factors into both n and cq in ways that cancel each other.)
 'gamma'     : <top gate capacitance / bottom gate capacitance>

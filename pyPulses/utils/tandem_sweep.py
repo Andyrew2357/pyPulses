@@ -121,12 +121,14 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     
     return True
 
-def ezTandemSweep(parms: List[dict], target: List[float], wait: float, 
+def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float, 
                   handle_exceptions: bool = True) -> bool:
     """
     Wrapper for more human syntax. Pass parameters as a list of dictionaries 
     describing their behavior. Automatically gets the start values, by requiring 
-    users to provide the getters.
+    users to provide the getters. Target can be provided as a bare list or as a
+    dictionary. Elements of parms that are missing from said dictionary are
+    presumed to remain unchanged throughout the sweep.
     
     Recognized fields for parms elements:
     'f'         : <getsetter (function)> 
@@ -147,6 +149,8 @@ def ezTandemSweep(parms: List[dict], target: List[float], wait: float,
     min_step = [P.get('min_step') for P in parms]
     tolerance = [P.get('tolerance') for P in parms]
     start = [G() for G in setters]
+    if isinstance(target, dict):
+        target = [target.get(p, start[i]) for i, p in enumerate(parms)]
 
     return tandemSweep(setters, start, target, 
                        wait, max_step, min_step, tolerance, 
