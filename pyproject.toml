@@ -25,7 +25,8 @@ dependencies = [
     "pyserial>=3.5",
     "PyQT5",
     "PyVISA>=1.14",
-    "PyVISA-py>=0.7"
+    "PyVISA-py>=0.7",
+    "zhinst-toolkit"
 ]
 
 [project.optional-dependencies]

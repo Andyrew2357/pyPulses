@@ -1,3 +1,8 @@
+"""
+This class is a bare-bones framework for low-level devices that use the 
+zhinst-toolkit package for communication.
+"""
+
 from ._registry import DeviceRegistry
 from .abstract_device import abstractDevice
 
@@ -10,7 +15,7 @@ class zhinstDevice(abstractDevice):
                  server_host: str = 'localhost',
                  server_port: int = 8004, 
                  API_level: int = 6, 
-                 logger=None):
+                 logger = None):
         
         super().__init__(logger)
 
