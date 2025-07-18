@@ -1,3 +1,5 @@
+# I want to significantly alter how this works in the future.
+
 """
 Predict future balance points for an N dimensional phase space. 
 
@@ -27,6 +29,7 @@ import numpy as np
 from typing import Callable, Tuple
 
 class ExtrapPredNd():
+    """Predict future balance points for an N dimensional phase space."""
     def __init__(self,
                  pspace_shape   : Tuple[int, ...],      # phase space shape 
                  support        : Tuple[int, ...],      # support
@@ -35,7 +38,20 @@ class ExtrapPredNd():
                  default1       : Callable[..., float], # default second guess
                  axes           : Tuple[np.ndarray, ...]# phase space axes
                  ):
-        
+        """
+        Parameters
+        ----------
+        pspace_shape : tuple of int
+            shape of the phase space.
+        support : tupe of int
+            number of previous points to use for extrapolation in each dimension.
+        order : tuple of int
+            order of the polynomial to use for extrapolation in each dimension.
+        default0, default1 : Callable
+            functions for making uninformed first and second guesses.
+        axes : tuple of np.ndarray
+            axes in each parameter of the phase space
+        """
         for n, x in zip(pspace_shape, axes):
             if not n == x.size:
                 raise IndexError("Provided axes must match pspace_shape.")
@@ -154,7 +170,17 @@ class ExtrapPredNd():
         
         return self.z1_guess
 
-    def update(self, p, z):
+    def update(self, p: Tuple[float, ...], z: float):
+        """
+        Add a new point to the record of previous points
+
+        Parameters
+        ----------
+        p : tuple of float
+            location in phase space
+        z : float
+            value at that point in phase space
+        """
         self.pointer = np.array(
             [np.sum(np.where(self.axes[d] == p[d])) 
                                 for d in range(self.ndim)]

@@ -6,8 +6,9 @@ import numpy as np
 from typing import Any, List, Tuple
 from .param_sweep_measure import ParamSweepMeasure
 
-def create_plotter_config(swept_names: List[str], measured_names: List[str],
-                                        total_points: int, **kwargs) -> dict:
+def _create_plotter_config(swept_names: List[str], 
+                           measured_names: List[str],
+                           total_points: int, **kwargs) -> dict:
     """
     Create a standard configuration dictionary for the SweepPlotter.
     """
@@ -25,9 +26,20 @@ def create_plotter_config(swept_names: List[str], measured_names: List[str],
     return config
 
 def plotSweep(sweep: ParamSweepMeasure, plotter_class = None, 
-              plotter_kwargs: dict = {}) -> Tuple[np.ndarray, Any]:
+              plotter_kwargs: dict = {}) -> Tuple[np.ndarray | None, Any]:
     """
     Run a parameter sweep with asynchronous plotting.
+
+    Parameters
+    ----------
+    sweep : ParamSweepMeasure
+    plotter_class : optional
+    plotter_kwargs : dict, default={}
+
+    Returns
+    -------
+    dataset : np.ndarray or None
+    plotter : Any
     """
 
     # Import the plotter class here to avoid circular imports
@@ -55,7 +67,7 @@ def plotSweep(sweep: ParamSweepMeasure, plotter_class = None,
     total_points = getattr(sweep, 'npoints', None)
     
     # Set up the plotter
-    plotter_config = create_plotter_config(
+    plotter_config = _create_plotter_config(
         total_points=total_points,
         **plotter_kwargs
     )

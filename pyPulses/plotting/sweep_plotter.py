@@ -21,6 +21,7 @@ from bokeh.palettes import Category10
 from jupyter_bokeh.widgets import BokehModel
 
 class SweepPlotter:
+    """Asynchronous live plotter for parameter sweeps"""
     def __init__(self, 
                  swept_names    : List[str], 
                  measured_names : List[str],
@@ -30,27 +31,25 @@ class SweepPlotter:
                  plot_height    : int = 300,
                  max_history    : int = None,
                  total_points   : int = None):
-        """
-        Initialize the SweepPlotter.
-        
-        Parameters:
+        """        
+        Parameters
         -----------
-        swept_names     : List[str]
-            Names of the swept parameters
-        measured_names  : List[str]
-            Names of the measured parameters
-        plot_layout     : str, optional
-            Layout style for plots ('grid' or 'matrix')
+        swept_names : List[str]
+            Names of the swept parameters.
+        measured_names : List[str]
+            Names of the measured parameters.
+        plot_layout : str, optional
+            Layout style for plots {'grid', 'matrix'}.
         update_interval : float, optional
-            Minimum time between plot updates (seconds)
-        plot_width      : int, optional
-            Width of each plot in pixels
-        plot_height     : int, optional
-            Height of each plot in pixels
-        max_history     : int, optional
-            Maximum number of data points to keep (for memory management)
-        total_points    : int, optional
-            Total number of points in the sweep (for progress indicator)
+            Minimum time between plot updates (seconds).
+        plot_width : int, optional
+            Width of each plot in pixels.
+        plot_height : int, optional
+            Height of each plot in pixels.
+        max_history : int, optional
+            Maximum number of data points to keep (for memory management).
+        total_points : int, optional
+            Total number of points in the sweep (for progress indicator).
         """
         # Clean up parameter names and create masks
         self.swept_names = [n for n in swept_names if n is not None]
@@ -358,7 +357,12 @@ class SweepPlotter:
         Callback function to update plots during a sweep.
         
         This function is designed to be used as the post_callback in 
-        sweepMeasureCut and similar methods.
+        sweepMeasureCut and similar parameter sweeps.
+
+        Parameters
+        ----------
+        index : int
+        swept_values, measured_values : np.ndarray
         """
 
         # Apply masks if needed
@@ -403,7 +407,13 @@ class SweepPlotter:
             source.data = {'x': [], 'y': []}
     
     def get_data(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Return the collected data as numpy arrays."""
+        """
+        Return the collected data as numpy arrays.
+        
+        Returns
+        -------
+        swept_data, measured_data : np.ndarray
+        """
         return np.array(self.swept_data), np.array(self.measured_data)
     
     def stop(self):

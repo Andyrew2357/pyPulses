@@ -15,6 +15,7 @@ from typing import Callable, Dict, List
 """Base DTG class"""
 
 class DTG(pyvisaDevice):
+    """Base DTG control class for the 5000 series data timing generators"""
     def __init__(self, logger = None, instrument_id: str = None,
                  pyvisa_config = None, MODULES = None, 
                  mainframes = None, slots = None):
@@ -40,10 +41,10 @@ class DTG(pyvisaDevice):
         self._time_offset   : float = None
         self._burst_count   : int   = None
 
-        self.get_installed_modules()
+        self._get_installed_modules()
         self.operation_mode()
     
-    def mode_required(*allowed_modes) -> Callable:
+    def _mode_required(*allowed_modes) -> Callable:
         """Check to see if we are in the right mode to call this function."""
 
         def decorator(f: Callable) -> Callable:
@@ -58,7 +59,7 @@ class DTG(pyvisaDevice):
             return wrapper
         return decorator
 
-    def get_installed_modules(self) -> dict:
+    def _get_installed_modules(self) -> dict:
         """Determine installed hardware modules"""
 
         for mf in self.mainframes:
@@ -82,6 +83,18 @@ class DTG(pyvisaDevice):
         return self.modules
     
     def get_channel(self, ch: str | Channel) -> Channel | None:
+        """
+        Get a channel by its string id (if it exists).
+
+        Parameters
+        ----------
+        ch : str
+            channel name.
+        
+        Returns
+        -------
+        channel : Channel
+        """
         if isinstance(ch, Channel):
             return ch
         
@@ -92,7 +105,19 @@ class DTG(pyvisaDevice):
         return self.channels[ch]
     
     def operation_mode(self, pg: bool = None) -> bool | None:
-        """Set or query the operation mode."""
+        """
+        Set or query the operation mode.
+        
+        Parameters
+        ----------
+        pg : bool, optional
+            true = pulse generator mode, false = data generator mode.
+        
+        Returns
+        -------
+        operation_mode : bool or None
+            only returns if `pg` is None (query mode).
+        """
 
         if pg is None:
             self.mode = self.device.query("TBAS:OMODE?").strip()
@@ -104,8 +129,17 @@ class DTG(pyvisaDevice):
 
     def burst_mode(self, burst: bool = None) -> bool | None:
         """
-        Set or query whether we are in burst or continuous mode
-        True = burst
+        Set or query whether we are in burst or continuous mode.
+        
+        Parameters
+        ----------
+        burst : bool, optional
+            true = burst mode, false = continuous mode.
+        
+        Returns
+        -------
+        burst_mode : bool or None
+            only returns if `burst` is None (query mode).
         """
 
         if burst is None:
@@ -115,7 +149,19 @@ class DTG(pyvisaDevice):
         self.device.write(f"Entered {'burst' if burst else 'continuous mode.'}")
     
     def run(self, on: bool = None) -> bool | None:
-        """Enable/Disable sequencer or query sequencer state."""
+        """
+        Enable/Disable sequencer or query sequencer state.
+        
+        Parameters
+        ----------
+        on : bool, optional
+            true = sequencer on, false = sequencer off.
+        
+        Returns
+        -------
+        sequencer_state : bool or None
+            only returns if `on` is None (query mode).
+        """
 
         if on is None:
             return int(self.device.query("TBAS:RUN?"))
@@ -124,13 +170,32 @@ class DTG(pyvisaDevice):
         self.info(f"{'En' if on else 'Dis'}abled sequencer.")
 
     def output_enable(self, on: bool):
-        """Enable or disable all outputs"""
+        """
+        Enable or disable all outputs.
+        
+        Parameters
+        ----------
+        on : bool
+            true = enable, false = disable.
+        """
 
         self.device.write(f"OUTPut:STATe:ALL {'ON' if on else 'OFF'}")
         self.info(f"{'En' if on else 'Dis'}abled outputs.")
         
     def frequency(self, f: float = None) -> float:
-        """Set or query the internal clock frequency."""
+        """
+        Set or query the internal clock frequency.
+        
+        Parameters
+        ----------
+        f : float, optional
+            frequency in Hz.
+        
+        Returns
+        -------
+        frequency : float
+            frequency in Hz.
+        """
 
         if f is None:
             f = float(self.device.query("TBAS:FREQ?"))
@@ -144,7 +209,19 @@ class DTG(pyvisaDevice):
         return f
     
     def period(self, T: float = None) -> float:
-        """Set or query the internal clock period."""
+        """
+        Set or query the internal clock period.
+        
+        Parameters
+        ----------
+        T : float, optional
+            period in s.
+        
+        Returns
+        -------
+        period : float
+            period in s.
+        """
 
         if T is None:
             T = float(self.device.query("TBAS:PERiod?"))
@@ -158,7 +235,19 @@ class DTG(pyvisaDevice):
         return T
 
     def time_offset(self, d: float = None) -> float:
-        """Set or query the global time offset post-trigger"""
+        """
+        Set or query the global time offset post-trigger.
+        
+        Parameters
+        ----------
+        d : float, optional
+            offset in s.
+        
+        Returns
+        -------
+        delay : float
+            offset in s.
+        """
 
         if d is None:
             self._time_offset = float(self.device.query("TBAS:DOFFset?"))
@@ -175,7 +264,19 @@ class DTG(pyvisaDevice):
         return d
     
     def trigger_input_Z(self, Z: float = None) -> float:
-        """Set or query the trigger input impedence"""
+        """
+        Set or query the trigger input impedence.
+        
+        Parameters
+        ----------
+        Z : float, optional
+            input impedence in Ohms (rounded to 1 kOhm or 50 Ohm).
+        
+        Returns
+        -------
+        Z : float
+            input impedence in Ohms.
+        """
 
         if Z is None:
             return float(self.device.query("TBAS:TIN:IMPedance?"))
@@ -189,7 +290,19 @@ class DTG(pyvisaDevice):
         self.device.info(f"Set trigger input impedence to {Z} Ohm.")
 
     def trigger_input_level(self, V: float = None) -> float:
-        """Set or query the trigger input level"""
+        """
+        Set or query the trigger input level.
+        
+        Parameters
+        ----------
+        V : float, optional
+            input level for external trigger in volts.
+
+        Returns
+        -------
+        V : float
+            input level for external trigger in volts.
+        """
 
         if V is None:
             return float(self.device.query("TBAS:TIN:LEVel?"))
@@ -200,7 +313,19 @@ class DTG(pyvisaDevice):
         return V
 
     def trigger_input_slope(self, pos: bool = None) -> bool | None:
-        """Set or query the trigger input slope"""
+        """
+        Set or query the trigger input slope.
+        
+        Parameters
+        ----------
+        pos : bool
+            true = positive slope, false = negative slope.
+
+        Returns
+        -------
+        positive : bool
+            only returns if `pos` is None (query mode).
+        """
         
         if pos is None:
             return self.device.query(f"TBAS:TIN:SLOPe?").strip() == 'POS'
@@ -215,7 +340,19 @@ class DTG(pyvisaDevice):
         self.info("Manually flagged event on device.")
     
     def event_input_Z(self, Z: float = None) -> float:
-        """Set or query the event input impedence"""
+        """
+        Set or query the event input impedence.
+        
+        Parameters
+        ----------
+        Z : float, optional
+            input impedence in Ohms (rounded to 1 kOhm or 50 Ohm).
+        
+        Returns
+        -------
+        Z : float
+            input impedence in Ohms.
+        """
 
         if Z is None:
             return float(self.device.query("TBAS:EIN:IMPedance?"))
@@ -229,7 +366,19 @@ class DTG(pyvisaDevice):
         self.device.info(f"Set event input impedence to {Z} Ohm.")
 
     def event_input_level(self, V: float = None) -> float:
-        """Set or query the event input level"""
+        """
+        Set or query the event trigger input level.
+        
+        Parameters
+        ----------
+        V : float, optional
+            input level for external event trigger in volts.
+
+        Returns
+        -------
+        V : float
+            input level for external event trigger in volts.
+        """
 
         if V is None:
             return float(self.device.query("TBAS:EIN:LEVel?"))
@@ -240,7 +389,19 @@ class DTG(pyvisaDevice):
         return V
 
     def event_input_polarity(self, pos: bool = None) -> bool | None:
-        """Set or query the event input polarity"""
+        """
+        Set or query the event trigger input polarity.
+
+        Parameters
+        ----------
+        pos : bool
+            true = positive, false = negative.
+
+        Returns
+        -------
+        positive : bool
+            only returns if `pos` is None (query mode).      
+        """
         
         if pos is None:
             return self.device.query(f"TBAS:EIN:POLarity?").strip() == 'NORM'
@@ -249,7 +410,18 @@ class DTG(pyvisaDevice):
         self.info(f"Set event input polarity {'posi' if pos else 'nega'}tive.")
 
     def burst_count(self, N: int = None) -> int:
-        """Set or query the burst count"""
+        """
+        Set or query the burst count.
+        
+        Parameters
+        ----------
+        N : int, optional
+            burst count.
+
+        Returns
+        -------
+        burst_count : int
+        """
         
         if N is None:
             self._burst_count = int(self.device.query("TBAS:COUNt?"))
@@ -264,9 +436,23 @@ class DTG(pyvisaDevice):
 
     # --------------------- Pulse Generator Mode Specific ----------------------
 
-    @mode_required("PULS")
+    @_mode_required("PULS")
     def prate(self, ch: str | Channel, prate: float = None) -> float:
-        """Set or query the relative rate of channel, rounded appropriately"""
+        """
+        Set or query the relative rate of a channel, rounded appropriately
+        
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        prate : float, optional
+            rate of the channel relative to the internal clock frequency
+            (rounded to 1, 1/2, 1/4, 1/8, 1/16, or OFF).
+        
+        Returns
+        -------
+        prate : float
+        """
 
         ch = self.get_channel(ch)
         if ch is None:
@@ -301,10 +487,25 @@ class DTG(pyvisaDevice):
         ch.prate = relrates[val]
         self.device.write(f"{ch}:PRATE {val}")
         self.info(f"Set relative rate of channel {ch._id()} to {ch.prate}.")
+        return ch.prate
 
-    @mode_required("PULS")
+    @_mode_required("PULS")
     def polarity(self, ch: str | Channel, pos: bool = None) -> bool | None:
-        """Set or query the polarity of channel."""
+        """
+        Set or query the polarity of a channel.
+
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        pos : bool, optional
+            true = positive, false = negative.
+        
+        Returns
+        -------
+        polarity : bool or None
+            only returns if `pos` is None.
+        """
 
         ch = self.get_channel(ch)
         if ch is None:
@@ -321,9 +522,22 @@ class DTG(pyvisaDevice):
             f"{'posi' if pos else 'nega'}tive."
         )
 
-    @mode_required("PULS")
+    @_mode_required("PULS")
     def pulse_width(self, ch: str | Channel, W: float = None) -> float:
-        """Set or query the pulse width of a channel."""
+        """
+        Set or query the pulse width of a channel.
+
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        W : float, optional
+            pulse width in s.
+        
+        Returns
+        -------
+        pulse width : float
+        """
 
         ch = self.get_channel(ch)
         if ch is None:
@@ -346,9 +560,22 @@ class DTG(pyvisaDevice):
         self.info(f"Set pulse width of channel {ch._id()} to {W} s.")
         return W
 
-    @mode_required("PULS")
+    @_mode_required("PULS")
     def lead_delay(self, ch: str | Channel, l: float = None) -> float:
-        """Set or query the lead delay of a channel"""
+        """
+        Set or query the lead delay of a channel.
+
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        l : float, optional
+            lead delay in s.
+        
+        Returns
+        -------
+        lead_delay : float
+        """
 
         ch = self.get_channel(ch)
         if ch is None:
@@ -368,9 +595,22 @@ class DTG(pyvisaDevice):
         self.info(f"Set lead delay on channel {ch._id()} to {l} s.")
         return l
     
-    @mode_required("PULS")
+    @_mode_required("PULS")
     def trail_delay(self, ch: str | Channel, t: float = None) -> float:
-        """Set or query the trail delay of a channel"""
+        """
+        Set or query the trail delay of a channel.
+
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        t : float, optional
+            trail delay in s.
+        
+        Returns
+        -------
+        trail_delay : float
+        """
 
         ch = self.get_channel(ch)
         if ch is None:
@@ -400,7 +640,22 @@ class DTG(pyvisaDevice):
 
     def low_level(self, ch: str | Channel, V: float = None, force: bool = False
                   ) -> float:
-        """Set or query the low level for a channel."""
+        """
+        Set or query the logical low level of a channel.
+
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel
+        V : float, optional
+            logical low level in volts.
+        force : bool, default=False
+            force set the level (can change the other logical level).
+        
+        Returns
+        -------
+        logical_low : float
+        """
 
         ch = self.get_channel(ch)
         if ch is None:
@@ -426,7 +681,22 @@ class DTG(pyvisaDevice):
 
     def high_level(self, ch: str | Channel, V: float = None, force: bool = False
                    ) -> float:
-        """Set or query the high level for a channel."""
+        """
+        Set or query the logical high level of a channel.
+
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        V : float, optional
+            logical high level in volts.
+        force : bool, default=False
+            force set the level (can change the other logical level).
+
+        Returns
+        -------
+        logical_high : float
+        """
 
         ch = self.get_channel(ch)
         if ch is None:
@@ -451,7 +721,21 @@ class DTG(pyvisaDevice):
         return V
     
     def chan_output(self, ch: str | Channel, on: bool = None) -> bool | None:
-        """Set or query the output state of the channel."""
+        """
+        Set or query the output state of the channel.
+        
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        on : bool, optional
+            true = enabled, false = disabled.
+        
+        Returns
+        -------
+        output_state : bool or None
+            only returns if `on` is None (query mode). 
+        """
         
         ch = self.get_channel(ch)
         if ch is None:
@@ -466,7 +750,20 @@ class DTG(pyvisaDevice):
         self.info(f"{'En' if on else 'Dis'}abled channel {ch._id()}.")
 
     def termination_Z(self, ch, Z: float = None) -> float:
-        """Set or query the termination impedence of the channel."""
+        """
+        Set or query the termination impedence of the channel.
+        
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        Z : float, optional
+            impedence in Ohms (rounded to 1 kOhm or 50 Ohms).
+        
+        Returns
+        -------
+        Z : float
+        """
 
         ch = self.get_channel(ch)
         if ch is None:
@@ -487,7 +784,20 @@ class DTG(pyvisaDevice):
         return Z
 
     def termination_V(self, ch, V: float = None) -> float:
-        """Set or query the termination voltage of the channel"""
+        """
+        Set or query the termination voltage of the channel.
+        
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        V : float, optional
+            termination voltage.
+        
+        Returns
+        -------
+        V : float
+        """
 
         ch = self.get_channel(ch)
         if ch is None:
@@ -507,9 +817,19 @@ class DTG(pyvisaDevice):
 
     # ---------------------------- Handling Groups ----------------------------
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def new_group(self, name: str, channels: int | List[None | str | Channel]):
-        """Define a new group."""
+        """
+        Define a new group.
+        
+        Parameters
+        ----------
+        name : str
+            name of the new group
+        channels : int or list of str, optional
+            width of the new group or list of channels to be included;
+            empty slots should be represented by None.
+        """
 
         if type(channels) == int:
             N = channels
@@ -523,10 +843,19 @@ class DTG(pyvisaDevice):
         if type(channels) != int:
             self.assign_signals(name, channels)
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def assign_signals(self, group_name: str, 
                        channels: List[None | str | Channel]):
-        """Assign physical channels to a group."""
+        """
+        Assign physical channels to a group.
+        
+        Parameters
+        ----------
+        group_name : str
+        channels : list of str, optional
+            list of channels to be included; empty slots should be 
+            represented by None.
+        """
 
         width = self.groups[group_name].width
         if len(channels) != width:
@@ -540,9 +869,19 @@ class DTG(pyvisaDevice):
                 continue
             self.assign_signal(group_name, i, ch)
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def assign_signal(self, group_name: str, idx: int, ch: str | Channel):
-        """Assign a physical channel to a group slot."""
+        """
+        Assign a physical channel to a group slot.
+        
+        Parameters
+        ----------
+        group_name : str
+        idx : int
+            index at which to assign the channel.
+        ch : str or Channel
+            channel to assign.
+        """
 
         if idx >= self.groups[group_name].width:
             self.error(f"Index {idx} is out of bounds for group {group_name}")
@@ -559,15 +898,22 @@ class DTG(pyvisaDevice):
             f"Added channel {ch._id()} to group element {group_name}[{idx}]"
         )
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def delete_group(self, name: str):
-        """Delete a group."""
+        """
+        Delete a group.
+
+        Parameters
+        ----------
+        name : str
+            group name.
+        """
 
         del self.groups[name]
         self.device.write(f'GROup:DELete "{name}"')
         self.info(f"Deleted group: {name}")
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def clear_groups(self):
         """Delete all groups."""
 
@@ -575,21 +921,44 @@ class DTG(pyvisaDevice):
         self.device.write("GROup:DELete:ALL")
         self.info("Deleted all groups")
 
-    # ---------------------------- Handling Blocks ----------------------------
-    
-    
-    @mode_required('DATA')
+    # ---------------------------- Handling Blocks ----------------------------    
+    @_mode_required('DATA')
     def new_block(self, name: str, N: int):
-        """Create a new block of a given length"""
+        """
+        Create a new block of a given length
+        
+        Parameters
+        ----------
+        name : str
+            name of new block.
+        N : int
+            length of the block.
+        """
 
         self.blocks[name] = Block(name, N)
         self.device.write(f'BLOCk:NEW "{name}", {N}')
         self.info(f"Created new block {name} of length {N}")
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def add_block_data(self, block_name:str, group_name: str, ch_idx: int,
                     data: str | bytes, start_idx: int = 0, num_bits: int = None):
-        """Add data to the block associated to some logical channel"""
+        """
+        Add data to the block associated to some logical channel.
+        
+        Parameters
+        ----------
+        block_name : str
+        group_name : str
+            group to associate with this section of the block.
+        ch_idx : int
+            particular channel index within the group to associate.
+        data : str or bytes
+            data to insert into the block eg. ("10..." or b'\\x01...').
+        start_idx : int, default=0
+            index within the block at which to start the insertion.
+        num_bits : int, default=None
+            number of data bits to insert (by default, all of them).
+        """
 
         B = self.blocks[block_name]
         G = self.groups[group_name]
@@ -613,15 +982,22 @@ class DTG(pyvisaDevice):
             f"{group_name} channel {ch_idx}"
         )
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def delete_block(self, name: str):
-        """Delete a block."""
+        """
+        Delete a block.
+        
+        Parameters
+        ----------
+        name : str
+            name of the block to delete.
+        """
 
         del self.blocks[name]
         self.device.write(f'BLOCk:DELete "{name}"')
         self.info(f"Deleted block {name}")
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def clear_blocks(self):
         """Delete all blocks."""
 
@@ -631,9 +1007,21 @@ class DTG(pyvisaDevice):
 
     # --------------------------- Handling Sequences ---------------------------
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def sequence_length(self, N: int = None) -> int:
-        """Set or query the sequence length."""
+        """
+        Set or query the sequence length. The sequence essentially functions
+        like a low level script. This determines the number of lines.
+        
+        Parameters
+        ----------
+        N : int or None
+            sequence length.
+
+        Returns
+        -------
+        sequence_length : int
+        """
 
         if N is None:
             self.seq_length = int(self.device.query("SEQuence:LENGth?"))
@@ -646,17 +1034,52 @@ class DTG(pyvisaDevice):
         self.info(f"Set sequence length to {N}")
         return N
     
-    @mode_required('DATA')
-    def get_sequence_line(self, idx: int):
-        """Query a line of the sequence"""
+    @_mode_required('DATA')
+    def get_sequence_line(self, idx: int) -> str:
+        """
+        Query a line of the sequence.
+        
+        Parameters
+        ----------
+        idx : int
+            index of the line to query.
+
+        Returns
+        -------
+        line : str
+            string representation of the sequence line.
+        """
 
         self.sequence[idx] = self.device.query(f"SEQuence:DATA? {idx}").strip()
         return self.sequence[idx]
     
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def set_sequence_line(self, idx: int, label: str, wait_trigger: bool,
                 block_name: str, repetitions: int, jump_to: str, go_to: str):
-        """Set a line of the sequence """
+        """
+        Set a line of the sequence. Consult the DTG manual for a more thorough
+        explanation of these.
+        
+        Parameters
+        ----------
+        idx : int
+            index of the line within the sequence.
+        label : str
+            label used to jump to this line. 'START' is used for the
+            start of a program; often this can be kept blank ('').
+        wait_trigger : bool
+            whether to await a trigger signal after executing.
+        block_name : str
+            name of the block to play (each line emits data encoded by
+            some block on the associated logical channels).
+        repetitions : int
+            number of times to repeat the block.
+        jump_to : str
+            label to jump to on a trigger; often left blank ('').
+        go_to : str
+            label to jump to after execution; often left blank (''),
+            meaning: continue to the next line.
+        """
 
         line  = f'"{label}", {int(wait_trigger)}, "{block_name}", '
         line += f'{repetitions}, "{jump_to}", "{go_to}"'
@@ -666,9 +1089,16 @@ class DTG(pyvisaDevice):
 
     # =========================== Simulating Outputs ===========================
 
-    @mode_required('PULS')
+    @_mode_required('PULS')
     def simulate_puls_output(self):
-        """Plot a simulation of the PULS mode output given current settings."""
+        """
+        Plot a simulation of the PULS mode output given current settings.
+        
+        Returns
+        -------
+        fig : Figure
+        axes : list of Axes
+        """
 
         fig, axes = plt.subplots(len(self.channels), 1, sharex = True)
         period = self.period()
@@ -715,9 +1145,21 @@ class DTG(pyvisaDevice):
         ax.set_xlabel("s")
         return fig, axes
 
-    @mode_required('DATA')
+    @_mode_required('DATA')
     def simulate_block_output(self, block_name: str):
-        """Plot a simulation of the output of some specified block"""
+        """
+        Plot a simulation of the output of some specified block
+        
+        Parameters
+        ----------
+        block_name : str
+            name of the block to simulate.
+
+        Returns
+        -------
+        fig : Figure
+        Axes : list of Axes
+        """
 
         period = self.period()
         B = self.blocks[block_name]
@@ -764,23 +1206,51 @@ class DTG(pyvisaDevice):
     # --------------------------- Save / Load State ---------------------------
 
     def save_state_dev(self, path: str):
-        """Save the DTG state on the device. Use '.dtg' or '.dat' extension"""
+        """
+        Save the DTG state on the device. Use '.dtg' or '.dat' extension.
+        
+        Parameters
+        ----------
+        path : str
+            directory at which to save.
+        """
         self.device.write(f'MMEMory:STORe "{path}"')
         self.info(f"Saved DTG state to device at {path}")
 
     def load_state_dev(self, path: str):
-        """Load the DTG state from the device. Use '.dtg' or '.dat' extension"""
+        """
+        Load the DTG state from the device. Use '.dtg' or '.dat' extension.
+        
+        Parameters
+        ----------
+        path : str
+            directory from which to load.
+        """
         self.device.write(f'MMEMory:LOAD "{path}"')
         self.info(f"Loaded DTG state from device at {path}")
 
     def save_state_json(self, path: str):
-        """Save the DTG state to json on computer"""
+        """
+        Save the DTG state to JSON locally.
+
+        Parameters
+        ----------
+        path : str
+            directory at which to save.
+        """
         state = self._serialize_state()
         with open(path, 'w') as f:
             json.dump(state, f, indent=2)
 
     def load_state_json(self, path: str):
-        """Load the DTG state from json on computer"""
+        """
+        Load the DTG state from JSON locally.
+        
+        Parameters
+        ----------
+        path : str
+            directory from which to load.
+        """
         with open(path, 'r') as f:
             state = json.load(f)
         self._deserialize_state(state)
@@ -907,8 +1377,17 @@ class DTG(pyvisaDevice):
 """DTG5274 instrument class"""
 
 class dtg5274(DTG):
+    """Class interface for controlling the DTG5274"""
     def __init__(self, logger = None, instrument_id: str = None):
-        
+        """
+        Parameters
+        ----------
+        logger : Logger, optional
+            logger used by abstractDevice.
+        instrument_id : str, optional
+            VISA resource name.
+        """
+
         self.pyvisa_config = {
             "resource_name"     : "GPIB0::27::INSTR",
             "output_buffer_size": 512,

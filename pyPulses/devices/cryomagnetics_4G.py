@@ -7,8 +7,20 @@ from .pyvisa_device import pyvisaDevice
 import time
 
 class cryomagnetics4G(pyvisaDevice):
+    """
+    Class interface for communicating with the Cryomagnetics 4G Superconducting 
+    Magnet Power Supply.
+    """
     def __init__(self, logger = None, instrument_id: str = None):
-        
+        """
+        Parameters
+        ----------
+        logger : Logger, optional
+            logger used by abstractDevice
+        instrument_id : str, optional
+            VISA resource name
+        """
+
         self.pyvisa_config = {
             "resource_name" : "GPIB0::25::INSTR",
 
@@ -24,7 +36,14 @@ class cryomagnetics4G(pyvisaDevice):
         self.H_sweep_tol = 0.01
 
     def get_H(self) -> float:
-        """Get the current field strength setting in T."""
+        """
+        Get the current field strength setting.
+        
+        Returns
+        -------
+        H : float
+            field strength in T.
+        """
         imag_ = self.device.query("IMAG?").strip()
         units = imag_[-2:]
         if not units == 'kG':
@@ -35,7 +54,18 @@ class cryomagnetics4G(pyvisaDevice):
 
 
     def sweep_H(self, H_T: float) -> bool:
-        """Sweeps to a field H_T in Tesla."""
+        """
+        Sweeps to a field.
+        
+        Parameters
+        ----------
+        H_T : float
+            target field in T.
+
+        Returns
+        -------
+        success : bool
+        """
         H_kG        = 10*H_T    # field strength in kilogauss
 
         self.info(f"CM4G: Requested sweep to {H_T} T.")
@@ -57,24 +87,24 @@ class cryomagnetics4G(pyvisaDevice):
             return
         
         if H_strength_kG > 0:   # UP
-            if not self.set_sweep_lim(0.0, H_strength_kG):
+            if not self._set_sweep_lim(0.0, H_strength_kG):
                 self.error("sweep_H failed.")
                 return False
             self.device.write("SWEEP UP FAST")
         
         elif H_strength_kG < 0: # DOWN
-            if not self.set_sweep_lim(H_strength_kG, 0.0):
+            if not self._set_sweep_lim(H_strength_kG, 0.0):
                 self.error("sweep_H failed.")
                 return False
             self.device.write("SWEEP DOWN FAST")
 
-        self.wait_for_field(H_strength_kG, self.H_sweep_tol)
+        self._wait_for_field(H_strength_kG, self.H_sweep_tol)
 
         # pause to stabilize
-        self.pause_msg("Pausing to stabilize", 10)
+        self._pause_msg("Pausing to stabilize", 10)
         self.device.write("PSHTR ON")
 
-        self.pause_msg("Waiting for switch to go normal", 15)
+        self._pause_msg("Waiting for switch to go normal", 15)
         
         pshtr = self.device.query("PSHTR?").strip() == '1'
         if not pshtr:
@@ -82,13 +112,13 @@ class cryomagnetics4G(pyvisaDevice):
             return False
         
         if H_kG < H_strength_kG:
-            if not self.set_verify("LLIM", H_kG, self.H_tol_kG):
+            if not self._set_verify("LLIM", H_kG, self.H_tol_kG):
                 self.error("Error when setting and verifying.")
                 return False
             self.device.write("SWEEP DOWN")
         
         elif H_kG > H_strength_kG:
-            if not self.set_verify("ULIM", H_kG, self.H_tol_kG):
+            if not self._set_verify("ULIM", H_kG, self.H_tol_kG):
                 self.error("Error when setting and verifying.")
                 return False
             self.device.write("SWEEP UP")
@@ -97,22 +127,22 @@ class cryomagnetics4G(pyvisaDevice):
             self.error("Target and field setpoints identical.")
             return False
         
-        self.wait_for_field(H_kG, self.H_tol_kG)
+        self._wait_for_field(H_kG, self.H_tol_kG)
         self.device.write("PSHTR OFF")
         pshtr = self.device.query("PSHTR?").strip() == '1'
         if pshtr:
             self.error("Failed to disable switch heater")
             return False
         
-        self.pause_msg("Turning heater switch off", 15)
+        self._pause_msg("Turning heater switch off", 15)
         self.device.write("SWEEP ZERO FAST")
 
-        self.wait_for_field(0.0, self.H_sweep_tol)
+        self._wait_for_field(0.0, self.H_sweep_tol)
 
         self.info(f"CM4G: Successfully swept to {H_T} T.")
         return True
 
-    def set_verify(self, setting: str, H_kG: float, H_tol_kG: float) -> bool:
+    def _set_verify(self, setting: str, H_kG: float, H_tol_kG: float) -> bool:
         self.device.write(f"{setting} {H_kG}")
         set_H = float(self.device.query(f"{setting}?").strip()[:-2])
 
@@ -125,9 +155,9 @@ class cryomagnetics4G(pyvisaDevice):
         )
         return True
 
-    def set_sweep_lim(self, H_lo: float, H_hi: float) -> bool:
+    def _set_sweep_lim(self, H_lo: float, H_hi: float) -> bool:
         for _ in range(3):
-            if self._set_sweep_lim(H_lo, H_hi):
+            if self._set_sweep_lim_inner(H_lo, H_hi):
                 self.info(
                     f"CM4G: Successfully set sweep limits [{H_lo}, {H_hi}]."
                 )
@@ -136,7 +166,7 @@ class cryomagnetics4G(pyvisaDevice):
             self.error("Failed to set sweep limits three times.")
             return False
         
-    def _set_sweep_lim(self, H_lo: float, H_hi: float) -> bool:
+    def _set_sweep_lim_inner(self, H_lo: float, H_hi: float) -> bool:
         self.device.write(f"ULIM {H_hi}")
         time.sleep(0.5)
         set_H_hi = float(self.device.query("ULIM?").strip()[:-2])
@@ -157,7 +187,7 @@ class cryomagnetics4G(pyvisaDevice):
         
         return True
 
-    def wait_for_field(self, H_target_kG: float, H_tol_kG: float):
+    def _wait_for_field(self, H_target_kG: float, H_tol_kG: float):
         while True:
             iout_kG = float(self.device.query("IOUT?").strip()[:-2])
             self.info(
@@ -167,7 +197,7 @@ class cryomagnetics4G(pyvisaDevice):
             if abs(iout_kG - H_target_kG) < H_tol_kG:
                 break
 
-    def pause_msg(self, msg: str, t_s: int):
+    def _pause_msg(self, msg: str, t_s: int):
         """Print a waiting message with countdown"""
         self.info(msg)
         for i in range(t_s):

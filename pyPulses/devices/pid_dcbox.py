@@ -10,9 +10,21 @@ import numpy as np
 import time
 
 class PIDbox(pyvisaDevice):
+    """Class interface for communicating with the PID DC box."""
     def __init__(self, logger = None, max_step: float = 0.05,
                  wait: float = 0.1, instrument_id: str = None):
-        
+        """
+        Parameters
+        ----------
+        logger : Logger, optional
+            logger used by abstractDevice.
+        max_step : float, default=0.05
+            maximum voltage step to take when sweeping.
+        wait : float, default=0.1
+            time to wait between setting voltages while sweeping.
+        instrument_id : str, optional
+            VISA resource name.
+        """
         # configurations for pyvisa resource manager
         self.pyvisa_config = {
             "resource_name" : "ASRL6::INSTR",
@@ -37,12 +49,35 @@ class PIDbox(pyvisaDevice):
         self.wait       = wait
 
     def get_V(self, ch: int) -> float:
-        self.select_channel(ch)
+        """
+        Get the DC value on a given channel.
+
+        Parameters
+        ----------
+        ch : int
+            target channel
+
+        Returns
+        -------
+        V : float
+        """
+        self._select_channel(ch)
         return float(self.device.query("SOURce:VOLTage?\n"))
 
     def set_V(self, ch: int, V: float, chatty: bool = True):
-        """Set the DC value on a given channel."""
-        self.select_channel(ch)
+        """
+        Set the DC value of a given channel.
+        
+        Parameters
+        ----------
+        ch : int
+            target channel (0 through 7).
+        V : float
+            target voltage.
+        chatty : bool, default=True
+            whether to log the change in channel settings.
+        """
+        self._select_channel(ch)
         
         if V > self.max_V[ch] or V < self.min_V[ch]:
             Vt = min(self.max_V[ch], max(self.min_V[ch], V))
@@ -56,12 +91,30 @@ class PIDbox(pyvisaDevice):
             self.info(f"Set source on channel {ch} to {V} V.")
 
     def get_PID(self, ch: int) -> float:
-        self.select_channel(ch)
+        """
+        Get the target point for the PID loop.
+
+        Parameters
+        ----------
+        ch : int
+
+        Returns
+        -------
+        float
+        """
+        self._select_channel(ch)
         return float(self.device.query("PID:SET?\n"))
 
     def set_PID(self, ch: int, V: float):
-        """Set the DC value on a given channel."""
-        self.select_channel(ch)
+        """
+        Set the target level for the PID loop.
+        
+        Parameters
+        ----------
+        ch : int
+        V : float
+        """
+        self._select_channel(ch)
         
         if V > self.max_V[ch] or V < self.min_V[ch]:
             Vt = min(self.max_V[ch], max(self.min_V[ch], V))
@@ -74,44 +127,105 @@ class PIDbox(pyvisaDevice):
         self.info(f"Set PID loop on channel {ch} to {V} V.")
 
     def get_PID_status(self, ch: int) -> bool:
-        """Check whether PID loop is enabled on selected channel."""
-        self.select_channel(ch)
+        """
+        Check whether PID loop is enabled on selected channel.
+        
+        Parameters
+        ----------
+        ch : int
+
+        Returns
+        -------
+        bool
+        """
+        self._select_channel(ch)
         return self.device.query("PID:STAT?\n") != 'PID control disabled\r\n'
 
     def set_PID_status(self, ch: int, on: bool):
-        """Enable or disable the PID loop."""
-        self.select_channel(ch)
+        """
+        Enable or disable the PID loop.
+        
+        Parameters
+        ----------
+        ch : int
+        on : bool
+        """
+        self._select_channel(ch)
         self.device.write(f"PID:{'ON' if on else 'OFF'}\n")
         self.info(f"{'En' if on else 'Dis'}abled PID loop on channel {ch}.")
 
     def P(self, P: float = None) -> float | None:
-        """Query or set proportional coefficient for PID loop."""
+        """
+        Query or set proportional coefficient for PID loop.
+        
+        Parameters
+        ----------
+        P : float or None
+
+        Returns
+        -------
+        float or None
+        """
         if P is None:
             return float(self.device.query("PID:P?\n"))
         else:
             self.device.write(f"PID:P {P}\n")
 
     def I(self, I: float = None) -> float | None:
-        """Query or set integral coefficient for PID loop."""
+        """
+        Query or set integral coefficient for PID loop.
+        
+        Parameters
+        ----------
+        I : float or None
+
+        Returns
+        -------
+        float or None
+        """
         if I is None:
             return float(self.device.query("PID:I?\n"))
         else:
             self.device.write(f"PID:I {I}\n")
 
     def D(self, D: float = None) -> float | None:
-        """Query or set derivative coefficient for PID loop."""
+        """
+        Query or set derivative coefficient for PID loop.
+        
+        Parameters
+        ----------
+        D : float or None
+
+        Returns
+        -------
+        float or None
+        """
         if D is None:
             return float(self.device.query("PID:D?\n"))
         else:
             self.device.write(f"PID:D {D}\n")
 
     def get_ADC(self) -> float:
-        """Get the current ADC reading."""
+        """
+        Get the current ADC reading.
+        
+        Returns
+        -------
+        float
+        """
         return float(self.device.query("ADC?\n"))
 
     def set_channel_lim(self, ch: int, lim: Tuple[float | None, float | None]):
-        """Manually set the voltage limits for a channel"""
-        self.select_channel(ch)
+        """
+        Manually set the voltage limits for a channel.
+        
+        Parameters
+        ----------
+        ch : int
+        lim : tuple of float or none
+            (low, high). If either is None, the class default extreme is applied
+        """
+        self._select_channel(ch)
         
         vl, vh = lim
 
@@ -132,13 +246,24 @@ class PIDbox(pyvisaDevice):
 
     def sweep_V(self, ch: int, V: float, 
                 max_step: float = None, wait: float = None):
-        """Sweep the voltage on selected channel."""
+        """
+        Sweep the voltage on selected channel.
         
-        self.select_channel(ch)
+        Parameters
+        ----------
+        ch : int
+        V : float
+        max_step : float, default=None
+            maximum voltage step; uses `self.max_step` if None.
+        wait : float, default=None
+            wait time between steps; uses `self.wait` if None.
+        """
+        
+        self._select_channel(ch)
         if V > self.max_V[ch] or V < self.min_V[ch]:
             Vt = min(self.max_V[ch], max(self.min_V[ch], V))
             self.warn(
-                f"{V} on AD5764 channel {ch} is out of range; truncating to {Vt}."
+                f"{V} on channel {ch} is out of range; truncating to {Vt}."
             )
             V = Vt
 
@@ -156,7 +281,7 @@ class PIDbox(pyvisaDevice):
         
         self.info(f"Swept channel {ch} from {start} to {V} V.")
 
-    def select_channel(self, ch: int):
+    def _select_channel(self, ch: int):
         if ch < 0 or ch > 3:
             self.error(f"PID DC box does not have a channel {ch}.")
             return

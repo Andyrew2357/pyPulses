@@ -22,13 +22,13 @@ import os
 from typing import List, Tuple
 from ..utils import curves
 
-def pad_z(a: np.ndarray) -> np.ndarray:
+def _pad_z(a: np.ndarray) -> np.ndarray:
     """Pad zeros along the final axis"""
 
     pad_width = [(0, 0)] * (a.ndim - 1) + [(1, 0)]
     return np.pad(a, pad_width, mode = 'constant', constant_values = 0.0)
 
-def integrate_trapz(x: np.ndarray, f: np.ndarray, mask_nans: bool = False
+def _integrate_trapz(x: np.ndarray, f: np.ndarray, mask_nans: bool = False
                     ) -> np.ndarray:
     """
     Vectorized trapezoidal integration along the last axis.
@@ -46,12 +46,12 @@ def integrate_trapz(x: np.ndarray, f: np.ndarray, mask_nans: bool = False
 
     return np.cumsum(integrand, axis=-1)
 
-def integrate_trapz_padded(x: np.ndarray, f: np.ndarray, 
+def _integrate_trapz_padded(x: np.ndarray, f: np.ndarray, 
                            mask_nans: bool = False) -> np.ndarray:
-    """Like 'integrate_trapz', but prepends a zero for shape alignment."""
-    return pad_z(integrate_trapz(x, f, mask_nans))
+    """Like '_integrate_trapz', but prepends a zero for shape alignment."""
+    return _pad_z(_integrate_trapz(x, f, mask_nans))
 
-def squared_integral(dx: np.ndarray, f: np.ndarray, mask_nans: bool = False
+def _squared_integral(dx: np.ndarray, f: np.ndarray, mask_nans: bool = False
                      ) -> np.ndarray:
     """
     Compute cummulated sum of square of trapezoidal integrals along the last 
@@ -71,7 +71,7 @@ def squared_integral(dx: np.ndarray, f: np.ndarray, mask_nans: bool = False
 def ztan_inv(z: float) -> float: ...
 def ztan_invp(z: float) -> float: ...
 
-def get_ztan_inv(xrange = (0, 2), N = 1000):
+def _get_ztan_inv(xrange = (0, 2), N = 1000):
     inv_coeff_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), r'ztan_inv_coeff.npy'
     )
@@ -94,7 +94,7 @@ def get_ztan_inv(xrange = (0, 2), N = 1000):
         ztan_inv  = curves.pchip_rval_from_params(*pchip_coeff)
         ztan_invp = curves.pchip_dval_from_params(*pchip_coeff)
 
-get_ztan_inv()
+_get_ztan_inv()
 
 DERIVS_OUT = Tuple[float, float, float, float, float, float]
 
@@ -105,6 +105,26 @@ def lf_model(chi_r: float, chi_i: float, chi_g: float, chi_b: float,
     """
     Back out the quantum capacitance and AR from raw capacitance data using a
     low frequency model.
+
+    Parameters
+    ----------
+    chi_r : float or array-like
+        real part of the impedance ratio.
+    chi_i : float or array-like
+        imaginary part of the impedance ratio.
+    chi_g : float or array-like
+        impedance ratio in a hard gap (real).
+    chi_b : float or array-like
+        impedance ratio in a metallic region (real).
+    cb : float, default=1.0
+        bottom gate capacitance.
+    gamma : float, default=1.0
+        ct/cb.
+    **kwargs : dict
+        
+    Returns
+    -------
+    cq, AR : float
     """
     
     if np.isnan(chi_r) or np.isnan(chi_i):
@@ -119,6 +139,26 @@ def lf_model_deriv(chi_r: float, chi_i: float, chi_g: float, chi_b: float,
     """
     Back out the quantum capacitance and AR from raw capacitance data using a
     low frequency model. Return derivatives with respect to uncertain quantities.
+
+    Parameters
+    ----------
+    chi_r : float or array-like
+        real part of the impedance ratio.
+    chi_i : float or array-like
+        imaginary part of the impedance ratio.
+    chi_g : float or array-like
+        impedance ratio in a hard gap (real).
+    chi_b : float or array-like
+        impedance ratio in a metallic region (real).
+    cb : float, default=1.0
+        bottom gate capacitance.
+    gamma : float, default=1.0
+        ct/cb.
+    **kwargs : dict
+
+    Returns
+    -------
+    cq, AR, dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b: float
     """
 
     cq, AR = lf_model(chi_r, chi_i, chi_g, chi_b, cb, gamma, **kwargs)
@@ -138,6 +178,26 @@ def tl_model(chi_r: float, chi_i: float,
     """
     Back out the quantum capacitance and AR from raw capacitance data using a
     transmission line model. 
+
+    Parameters
+    ----------
+    chi_r : float or array-like
+        real part of the impedance ratio.
+    chi_i : float or array-like
+        imaginary part of the impedance ratio.
+    chi_g : float or array-like
+        impedance ratio in a hard gap (real).
+    chi_b : float or array-like
+        impedance ratio in a metallic region (real).
+    cb : float, default=1.0
+        bottom gate capacitance.
+    gamma : float, default=1.0
+        ct/cb.
+    **kwargs : dict
+        
+    Returns
+    -------
+    cq, AR : float
     """
 
     if np.isnan(chi_r) or np.isnan(chi_i):
@@ -193,6 +253,26 @@ def tl_model_deriv(chi_r: float, chi_i: float,
     Back out the quantum capacitance and AR from raw capacitance data using a
     transmission line model. Return derivatives with respect to uncertain
     quantities.
+
+    Parameters
+    ----------
+    chi_r : float or array-like
+        real part of the impedance ratio.
+    chi_i : float or array-like
+        imaginary part of the impedance ratio.
+    chi_g : float or array-like
+        impedance ratio in a hard gap (real).
+    chi_b : float or array-like
+        impedance ratio in a metallic region (real).
+    cb : float, default=1.0
+        bottom gate capacitance.
+    gamma : float, default=1.0
+        ct/cb.
+    **kwargs : dict
+
+    Returns
+    -------
+    cq, AR, dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b: float
     """
 
     cq, AR = tl_model(chi_r, chi_i, chi_g, chi_b, cb, gamma, omega, **kwargs)
@@ -211,7 +291,27 @@ def tl_model_deriv(chi_r: float, chi_i: float,
 def gap(vt: List[float], vb: List[float], cq: List[float], cb: float = 1.0, 
         gamma: float = 1.0, mask_nans: bool = False, **kwargs) -> np.ndarray:
     """
-    Calculate the change in chemical potential at all points along the domain
+    Calculate the change in chemical potential at all points along the domain.
+    Integration is performed along axis -1.
+
+    Parameters
+    ----------
+    vt, vb : array-like
+        top and bottom gate voltages.
+    cq : array-like
+        quantum capacitance.
+    cb : float, default=1.0
+        bottom gate capacitance.
+    gamma : float, default=1.0
+        ct/cb.
+    mask_nans : bool, default=False
+        whether to ignore NaNs when integrating
+    **kwargs : dict
+
+    Returns
+    -------
+    mu : np.ndarray
+        the shape matches `vt`, `vb`, and `cq`
     """
 
     vt = np.array(vt)
@@ -221,8 +321,8 @@ def gap(vt: List[float], vb: List[float], cq: List[float], cb: float = 1.0,
     mt = (1 + cq/ (gamma * cb))**-1
     mb = (1 + cq / cb)**-1
 
-    return integrate_trapz_padded(vt, mt, mask_nans) + \
-            integrate_trapz_padded(vb, mb, mask_nans)
+    return _integrate_trapz_padded(vt, mt, mask_nans) + \
+            _integrate_trapz_padded(vb, mb, mask_nans)
 
 def gap_unc(vt: List[float], vb: List[float], cq: List[float], 
             dcq_dchi_r: list[float], dcq_dchi_i: List[float], 
@@ -234,6 +334,29 @@ def gap_unc(vt: List[float], vb: List[float], cq: List[float],
     """
     Assign an uncertainty in the change of chemical potential at all points 
     along the domain.
+
+    Parameters
+    ----------
+    vt, vb : array-like
+        top and bottom gate voltages.
+    cq : array-like
+        quantum capacitance.
+    dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b : array-like
+        derivatives of `cq`.
+    cb : float, default=1.0
+        bottom gate capacitance.
+    gamma : float, default=1.0
+        ct/cb.
+    var_gamma : float, default=0.0
+        variance of `gamma`.
+    mask_nans : bool, default=False
+        whether to ignore NaNs when integrating.
+    **kwargs : dict
+
+    Returns
+    -------
+    mu_uncertainty : np.ndarray
+        the shape matches `vt`, `vb`, and `cq`
     """
 
     vt = np.array(vt)
@@ -259,11 +382,11 @@ def gap_unc(vt: List[float], vb: List[float], cq: List[float],
 
     dmb_dgamma = cq * mb2 / (cb * gamma**2)
 
-    gamma_part = var_gamma * integrate_trapz(vb, dmb_dgamma, mask_nans)**2
-    chi_g_part = var_chi_g * (integrate_trapz(vt, dmt_dchi_g, mask_nans) + \
-                              integrate_trapz(vb, dmb_dchi_g, mask_nans))**2
-    chi_b_part = var_chi_b * (integrate_trapz(vt, dmt_dchi_b, mask_nans) + \
-                              integrate_trapz(vb, dmb_dchi_b, mask_nans))**2
+    gamma_part = var_gamma * _integrate_trapz(vb, dmb_dgamma, mask_nans)**2
+    chi_g_part = var_chi_g * (_integrate_trapz(vt, dmt_dchi_g, mask_nans) + \
+                              _integrate_trapz(vb, dmb_dchi_g, mask_nans))**2
+    chi_b_part = var_chi_b * (_integrate_trapz(vt, dmt_dchi_b, mask_nans) + \
+                              _integrate_trapz(vb, dmb_dchi_b, mask_nans))**2
     
     # note, the square being inside for this one is intentional. See my document 
     # for notes on how this works out (note I am ignoring covariance terms here). 
@@ -276,16 +399,16 @@ def gap_unc(vt: List[float], vb: List[float], cq: List[float],
     dx_vb = np.diff(vb, axis = -1)
 
     chi_re_part = var_chi_r * (
-       squared_integral(dx_vt, dmt_dchi_r, mask_nans) + \
-       squared_integral(dx_vb, dmb_dchi_r, mask_nans)
+       _squared_integral(dx_vt, dmt_dchi_r, mask_nans) + \
+       _squared_integral(dx_vb, dmb_dchi_r, mask_nans)
     )
     
     chi_im_part = var_chi_i * (
-        squared_integral(dx_vt, dmt_dchi_i, mask_nans) + \
-        squared_integral(dx_vb, dmb_dchi_i, mask_nans)    
+        _squared_integral(dx_vt, dmt_dchi_i, mask_nans) + \
+        _squared_integral(dx_vb, dmb_dchi_i, mask_nans)    
     )
 
-    return pad_z(np.sqrt(gamma_part + chi_g_part + 
+    return _pad_z(np.sqrt(gamma_part + chi_g_part + 
                          chi_b_part + chi_re_part + chi_im_part))
 
 def mu(vt: List[float], vb: List[float], 
@@ -299,6 +422,29 @@ def mu(vt: List[float], vb: List[float],
     """
     Calculate jump in chemical potential and estimated uncertainty for all
     points along the domain.
+
+    Parameters
+    ----------
+    vt, vb : array-like
+        top and bottom gate voltages.
+    chi_r, chi_i : array-like
+        real and imaginary parts of the impedance ratio
+    var_chi_r, var_chi_i, var_chi_g, var_chi_b : float or array-like
+        variances of different impedance ratio quantities
+    cb : float, default=1.0
+        bottom gate capacitance.
+    gamma : float, default=1.0
+        ct/cb.
+    var_gamma : float, default=0.0
+        variance of `gamma`.
+    mask_nans : bool, default=False
+        whether to ignore NaNs when integrating.
+    **kwargs : dict
+
+    Returns
+    -------
+    mu, mu_uncertainty : np.ndarray
+        the shape matches `vt`, `vb`, and `cq`
     """
 
     mode = kwargs.get('mode', 'tl')
@@ -326,6 +472,13 @@ def phase_correct(chi_r_uncor: np.ndarray, chi_i_uncor: np.ndarray,
         Correct for unequal phase rotations between the excitation and standard
         lines. This manifests as a rotation of the in and out of phase signals,
         which we correct for by providing a spurious signal to zero out
+
+        Parameters
+        ----------
+        chi_r_uncor, chi_i_incor : array-like
+            uncorrected impedance ratio (real and imaginary parts)
+        X_spur, Y_spur : float
+            real and imaginary parts of the spurious signal
         """
 
         theta = np.arctan2(Y_spur, X_spur)

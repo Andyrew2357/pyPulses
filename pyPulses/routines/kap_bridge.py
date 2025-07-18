@@ -104,9 +104,32 @@ class KFilter():
     def extrapolate(self):
         return extrap(self.x_hist, self.order), extrap(self.y_hist, self.order)
 
-"""Describes a balance point reached after balancing the bridge."""
 @dataclass
 class KapBridgeBalance():
+    """
+    Describes a balance point reached after balancing a capacitance bridge using
+    a Kalman filter.
+
+    Attributes
+    ----------
+    success : bool
+    x_b, y_b : float
+        estimated true balance point (Vstd) as a complex voltage.
+    x_m, y_m : float
+        final achieved lock-in reading (volts).
+    R : np.ndarray
+        covariance matrix for the final lock-in reading.
+    A : np.ndarray
+        effective complex gain of the capacitance bridge (estimated).
+    P : np.ndarray
+        estimated covariance of the complex gain.
+    errt : float
+        error threshold used to terminate the balance.
+    iter : int
+        terminating iteration.
+    prev_x_b, prev_y_b : float
+        Vstd at which the final lock-in reading was taken.
+    """
     success : bool          # whether balance was successful
     x_b     : float         # estimated true balance point (x component)
     y_b     : float         # estimated true balance point (y component)
@@ -137,6 +160,48 @@ class KapBridgeBalance():
 
 @dataclass
 class KapBridge():
+    """
+    Object for performing capacitance measurements by iteratively balancing
+    using a Kalman filter.
+
+    Attributes
+    ----------
+    lockin : sr865a
+    acbox : ad9854
+    Vstd_range : float
+        allowed range of Vstd.
+    Vex : float
+    acbox_channels : default=((1, 'X'), (2, 'X'))
+        (excitation channel, standard channel) on the AC box.
+    time_const : float, default=1e-3
+    buffer_size : int, default=1
+        amount of data to take per acquisition in kB.
+    sample_rate : float, default=300
+        rate of sample acquisition in Hz.
+    min_tries : int, default=0
+        minimum iterations to take when balancing.
+    max_tries : int, default=10
+        maximum iterations to take when balancing.
+    order : int, default=2
+        order of the polynomial fit used to extrapolate balance points.
+    support : int, default=3
+        number of previous points to use when extrapolating balance points.
+    erroff : float, default=0.0
+        error offset for deciding error threshold.
+    errmult : float, default=2.0
+        error multiplier for deciding error threshold.
+    sens_increment : int, default=10
+        interval for pushing the sensitivity a little higher (points).
+    Cstd : float, default=1.0
+        reference capacitance.
+    raw_samples : int, default=100
+        samples to take for a raw balance.
+    raw_wait : float, default=3.0
+        wait time to use for a raw balance (in seconds).
+    raw_time_constant : float, default=0.01
+        time constant to use for a raw balance.
+    logger : Logger, optional
+    """
     lockin          : sr865a                    # lock-in amplifier
     acbox           : ad9854                    # ac box
     Vstd_range      : float                     # range of Vstd in volts
@@ -153,7 +218,7 @@ class KapBridge():
     support         : int = 3                   # support for extrapolation
     erroff          : float = 0.0               # error offset for balance
     errmult         : float = 2.0               # error multiplier for balance  
-    sens_increment  : float = 10                # push sensitivity and input 
+    sens_increment  : int = 10                  # push sensitivity and input 
                                                 # range every few points
     Cstd            : float = 1.0               # capacitance of the reference
     raw_samples     : int = 100                 # samples for a raw balance
@@ -184,8 +249,12 @@ class KapBridge():
 
     def add_filter(self, filter_key):
         """
-        Add a KFilter to self.kfilter
+        Add a KFilter (new Kalman filter) to self.kfilter
         For this, we need to perform a raw balance measurement.
+
+        Parameters
+        ----------
+        filter_key : Any
         """
 
         if self.logger:
@@ -261,6 +330,17 @@ class KapBridge():
         time.sleep(0.1)
 
     def balance(self, filter_key) -> KapBridgeBalance:
+        """
+        Balance using the Kalman filter associated to `filter_key`.
+
+        Parameters
+        ----------
+        filter_key : Any
+
+        Returns
+        -------
+        KapBridgeBalance
+        """
         x_b, y_b = None, None
 
         if self.filter_key != filter_key:
@@ -485,17 +565,54 @@ class KapBridge():
             )
     
     def measure_capacitance(self, filter_key) -> bool:
+        """
+        Measure capacitance by balancing the bridge with `filter_key`. Save the
+        balance result to `self.balance_state`.
+
+        Parameters
+        ----------
+        filter_key : Any
+
+        Returns
+        -------
+        success : bool
+        """
         self.balance_state = self.balance(filter_key)
         return self.balance_state.success
 
     def get_param(self, field: str) -> bool | float | int | np.ndarray:
+        """
+        Get a parameter from `self.balance_state`.
+
+        Parameters
+        ----------
+        field : str
+
+        Returns
+        -------
+        value : bool or float or int or np.ndarray
+        """
         return getattr(self.balance_state, field)
 
     def get_Cex(self) -> float:
+        """
+        Get the capacitance from `self.balance_state`.
+        
+        Returns
+        -------
+        float
+        """
         return -self.Cstd * self.balance_state.x_b / \
                             self.kfilter[self.filter_key].Vex
 
     def get_Closs(self) -> float:
+        """
+        Get the loss from `self.balance_state`.
+        
+        Returns
+        -------
+        float
+        """
         # Note that this one is lacking a negative sign to maintain consistency
         # with the outputs of cap_bridge
         return self.Cstd * self.balance_state.y_b / \

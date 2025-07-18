@@ -4,8 +4,15 @@ import time
 
 def sample(N: int, wait: float = 0) -> Callable:
     """
-    Sample a value N times, waiting 'wait' seconds each time, and return the 
-    mean.
+    Decorator that modifies a getter to sample a value several times and return 
+    the mean.
+
+    Parameters
+    ----------
+    N : int
+        number of samples to take.
+    wait : float, default=0.0
+        seconds between taking samples
     """
     
     def wrap(f: Callable) -> Callable:
@@ -22,7 +29,13 @@ def sample(N: int, wait: float = 0) -> Callable:
     return wrap
 
 def log_return(logger: Logger) -> Callable:
-    """Log the return values of a function"""
+    """
+    Decorator that modifies a function to log the return values.
+    
+    Parameters
+    ----------
+    logger : Logger
+    """
     
     def wrap(f: Callable) -> Callable:
 
@@ -36,7 +49,13 @@ def log_return(logger: Logger) -> Callable:
     return wrap
 
 def log_args(logger: Logger) -> Callable:
-    """Log the arguments passed to a function"""
+    """
+    Decorator that modifies a function to log the arguments passed.
+    
+    Parameters
+    ----------
+    logger : Logger
+    """
     
     def wrap(f: Callable) -> Callable:
 
@@ -52,7 +71,13 @@ def log_args(logger: Logger) -> Callable:
 
 def limit_setter(min: float, max:float) -> Callable:
     """
-    Limit the range of a function that takes a float as its argument
+    Decorator that limits the range of a function that takes a float as its 
+    argument.
+
+    Parameters
+    ----------
+    min : float
+    max : float
     """
 
     def wrap(f: Callable[[float], Any]) -> Callable:

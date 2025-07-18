@@ -30,35 +30,35 @@ class zhinstDevice(abstractDevice):
     def get_sample_val(self, path: str, key: str):
         full_path = self._get_full_path(path)
         value = self.daq.getSample(full_path)[key]
-        self.info(f"ZHINST: Got {full_path}/{key} = {value}")
+        self.debug(f"ZHINST: Got {full_path}/{key} = {value}")
         return value
     
     def get_sample(self, path: str) -> dict:
         full_path = self._get_full_path(path)
         data = self.daq.getSample(full_path)
-        self.info(f"ZHINST: Got {full_path} = {data}")
+        self.debug(f"ZHINST: Got {full_path} = {data}")
         return data
 
     def set_double(self, path: str, value):
         full_path = self._get_full_path(path)
         self.daq.setDouble(full_path, value)
-        self.info(f"ZHINST: Set {full_path} = {value}")
+        self.debug(f"ZHINST: Set {full_path} = {value}")
 
     def get_double(self, path: str):
         full_path = self._get_full_path(path)
         value = self.daq.getDouble(full_path)
-        self.info(f"ZHINST: Got {full_path} = {value}")
+        self.debug(f"ZHINST: Got {full_path} = {value}")
         return value
 
     def set_int(self, path: str, value) -> int:
         full_path = self._get_full_path(path)
         value = self.daq.setInt(full_path, value)
-        self.info(f"ZHINST: Set {full_path} = {value}")
+        self.debug(f"ZHINST: Set {full_path} = {value}")
         
     def get_int(self, path: str) -> int:
         full_path = self._get_full_path(path)
         value = self.daq.getInt(full_path)
-        self.info(f"ZHINST: GotInt {full_path} = {value}")
+        self.debug(f"ZHINST: GotInt {full_path} = {value}")
         return value
 
     def subscribe_and_poll(self, path: str, duration: float = 0.1,

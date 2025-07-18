@@ -1,22 +1,44 @@
 """
-Differential pair for use with Oliver's pulse shaper box
+Differential pair for use with Oliver's pulse shaper box. It manipulates two
+DTG channels in software to make them behave in the appropriate manner
 """
 
 from .dtg import DTG
 from .dtg_utils import Channel
 
 class DifferentialPair():
+    """Differential pair for use with Oliver's pulse shaper box"""
     def __init__(self, dtg: DTG, chx: str | Channel, chy: str | Channel):
+        """
+        Parameters
+        ----------
+        dtg : DTG
+            parent DTG control class that owns the channels
+        chx : str | Channel
+            channel on the dtg
+        chy : str | Channel
+            channel on the dtg
+        """
+
         self.dtg = dtg
         self.chx = dtg.get_channel(chx)
         self.chy = dtg.get_channel(chy)
 
     def enable(self, on: bool):
+        """
+        Enable or disable the pair output
+
+        Parameters
+        ----------
+        on : bool
+            true means enable
+        """
         self.dtg.chan_output(self.chx, on)
         self.dtg.chan_output(self.chy, on)
 
     @property
     def ldelay(self) -> float:
+        """Lead delay of `chx`"""
         if self.chx.ldelay is None:
             return self.dtg.lead_delay(self.chx)
         else:
@@ -30,6 +52,7 @@ class DifferentialPair():
 
     @property
     def toff(self) -> float:
+        """Lead delay of `chy` relative to `chx`"""
         if self.chy.ldelay is None:
             self.dtg.lead_delay(self.chy)
 
@@ -41,6 +64,7 @@ class DifferentialPair():
 
     @property
     def width(self) -> float:
+        """width of the `chx` pulse"""
         if self.chx.width is None:
             return self.dtg.pulse_width(self.chx)
         else:
@@ -54,6 +78,7 @@ class DifferentialPair():
 
     @property
     def woff(self) -> float:
+        """width of the `chy` pulse relative to `chx`"""
         if self.chy.width is None:
             wy = self.dtg.pulse_width(self.chy)
         else:
@@ -68,6 +93,7 @@ class DifferentialPair():
 
     @property
     def polarity(self) -> bool:
+        """polarity of `chx`; `chy` is opposite"""
         return self.chx.polarity
     
     @polarity.setter
@@ -77,6 +103,7 @@ class DifferentialPair():
 
     @property
     def Xlow(self) -> float:
+        """logical low level of `chx`"""
         if self.chx.low is None:
             return self.dtg.low_level(self.chx)
         else:
@@ -88,6 +115,7 @@ class DifferentialPair():
 
     @property
     def Xhigh(self) -> float:
+        """logical high level of `chx`"""
         if self.chx.high is None:
             return self.dtg.high_level(self.chx)
         else:
@@ -99,6 +127,7 @@ class DifferentialPair():
 
     @property
     def Ylow(self) -> float:
+        """logical low level of `chy`"""
         if self.chy.low is None:
             return self.dtg.low_level(self.chy)
         else:
@@ -110,6 +139,7 @@ class DifferentialPair():
 
     @property
     def Yhigh(self) -> float:
+        """logical high level of `chy`"""
         if self.chy.high is None:
             return self.dtg.high_level(self.chy)
         else:

@@ -9,6 +9,25 @@ from typing import Any, Callable, Tuple
 
 @dataclass
 class PulsedR():
+    """
+    Object for balancing a pulsed resistor bridge.
+
+    Attributes
+    ----------
+    Vg_predictor : object
+        predictor for future balance points of the reference transistor gate.
+    Vy_predictor : object
+        predictor for future balance points of the counter-pulse height.
+    Vg_balance_config, Vy_balance_config : BalanceConfig
+        configurations for balancing Vg and Vy
+    set_Vy, set_Vg : Callable
+        setters for Vy and Vg
+    background_mean : float, default=None
+        background signal if no pulses are applied (subtracted out when balancing)
+    background_std : float, default=0.0
+        standard deviation of the background signal if no pulses are applied
+    logger : Logger, optional
+    """
     Vg_predictor        : object
     Vy_predictor        : object
     Vg_balance_config   : BalanceConfig
@@ -25,7 +44,19 @@ class PulsedR():
             self.set_background(self.background_mean)
 
     def balance(self, p: float | Tuple[float, ...]) -> bool:
-        self.info(
+        """
+        Balance the resistor bridge.
+        
+        Parameters
+        ----------
+        p : float or tuple of floats
+            parameters describing our location in phase space
+
+        Returns
+        -------
+        success : bool
+        """
+        self._info(
             f"Attempting balance at point:\n    |"
             + ''.join([f"{x:.5f}|" for x in p])
         )
@@ -33,7 +64,7 @@ class PulsedR():
         Vy_guess = self.Vy_predictor.predict0(p)
         Vg_guess = self.Vg_predictor.predict0(p)
 
-        self.info(
+        self._info(
             f"Predicted balance point:\n"
           + f"    Vy_guess = {Vy_guess:.5f} V\n"
           + f"    Vg_guess = {Vg_guess:.5f} V"
@@ -44,12 +75,12 @@ class PulsedR():
         if (not min_Vy <= Vy_guess <= max_Vy) or \
             (not min_Vg <= Vg_guess <= max_Vg):
 
-            self.info("Predicted balance out of bounds; Truncating...")
+            self._info("Predicted balance out of bounds; Truncating...")
 
             Vy_guess = max(min(max_Vy, Vy_guess), min_Vy)
             Vg_guess = max(min(max_Vg, Vg_guess), min_Vg)
 
-            self.info(
+            self._info(
                 f"Truncated predicted balance:\n"
               + f"    Vy_guess = {Vy_guess:.5f} V\n"
               + f"    Vg_guess = {Vg_guess:.5f} V"
@@ -58,12 +89,12 @@ class PulsedR():
         self.set_Vy(Vy_guess)
         self.set_Vg(Vg_guess)
 
-        self.info("Attempting to balance using pulse heights...")
+        self._info("Attempting to balance using pulse heights...")
         Vy_balance_state = balance1d(p, self.Vy_balance_config)
-        self.info("Result:\n" + str(Vy_balance_state))
+        self._info("Result:\n" + str(Vy_balance_state))
 
         if Vy_balance_state.status == RootFinderStatus.CONVERGED:
-            self.info(
+            self._info(
                 "Successfully balanced using pulse heights.\n"
               + f"    Vy = {Vy_balance_state.root}\n"
               + f"    Vg = {Vg_guess}"
@@ -73,23 +104,23 @@ class PulsedR():
             self.Vg_predictor.update(p, Vg_guess)
             return True
 
-        self.info(
+        self._info(
             "Unable to balance using pulse heights alone.\n"
           + "Setting Vy back to Vy_guess and Rebalancing gate..."
         )
 
         self.set_Vy(Vy_guess)
         Vg_balance_state = balance1d(p, self.Vg_balance_config)
-        self.info("Result:\n" + str(Vg_balance_state))
+        self._info("Result:\n" + str(Vg_balance_state))
 
         if not Vg_balance_state.status == RootFinderStatus.CONVERGED:
-            self.info("Failed to rebalance the gate.")
+            self._info("Failed to rebalance the gate.")
             return False
         
-        self.info("Successfully rebalanced the gate.")
+        self._info("Successfully rebalanced the gate.")
 
         if Vy_balance_state.best_value < self.Vy_balance_config.y_tolerance:
-            self.info(
+            self._info(
                 "Rebalanced y is within allowed tolerance; Forgo refinement."
             )
 
@@ -102,16 +133,16 @@ class PulsedR():
                 best_value  = Vg_balance_state.best_value
             )
         else:
-            self.info("Attempting to balance using pulse heights...")
+            self._info("Attempting to balance using pulse heights...")
             Vy_balance_state = balance1d(p, self.Vy_balance_config)
 
-        self.info("Result:\n" + str(Vy_balance_state))
+        self._info("Result:\n" + str(Vy_balance_state))
 
         if not Vy_balance_state == RootFinderStatus.CONVERGED:
-            self.info("Failed to balance.")
+            self._info("Failed to balance.")
             return False
         
-        self.info(
+        self._info(
             "Successfully balanced using pulse heights.\n"
           + f"    Vy = {Vy_balance_state.root}\n"
           + f"    Vg = {Vg_guess}"
@@ -123,23 +154,25 @@ class PulsedR():
 
     def calibrate_background(self, samples: int = 300):
         """
-        Take samples using self.get_y to determine the subtracted background
+        Take samples to determine the subtracted background
+
+        Parameters
+        ----------
+        samples : int
         """
-        if self.logger:
-            self.logger.info(f"Calibrating background ({samples} samples)...")
+        self._info(f"Calibrating background ({samples} samples)...")
 
         # take samples of get_y and find the mean and standard deviation
         background = np.array([self.get_y() for _ in 
                                range(samples)])
         self.background_mean = background.mean()
         self.background_std  = background.std()
-        
-        if self.logger:
-            self.logger.info(
-                f"Calibrated background\n"
-              + f"    mean = {self.background_mean}\n"
-              + f"    std  = {self.background_std}"
-            )
+
+        self._info(
+            f"Calibrated background\n"
+            + f"    mean = {self.background_mean}\n"
+            + f"    std  = {self.background_std}"
+        )
         
         # update the balance configs
         self.set_background(self.background_mean)
@@ -147,11 +180,15 @@ class PulsedR():
     def set_background(self, background_mean: float):
         """
         Modify the balance config get_y functions to subtract off background
+
+        Parameters
+        ----------
+        background_mean : float
         """
         # update the balance configs
         self.VY1_balance_config.get_y   = self.get_y() - background_mean
         self.VGref_balance_config.get_y = self.get_y() - background_mean
 
-    def info(self, msg: str):
+    def _info(self, msg: str):
         if self.logger:
             self.logger.info(msg)

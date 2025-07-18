@@ -11,6 +11,35 @@ from typing import Any, Callable, Tuple
 """Configuration dataclass for balanceCapBridge function"""
 @dataclass
 class BalanceCapBridgeConfig:
+    """
+    Config for `balanceCapBridge`.
+    
+    Attributes
+    ----------
+    time_const : float
+        lock-in time constant (informs wait times).
+    small_step : Tuple[float, float], default=(0.01, 0.01)
+        small step in Vex, Vstd, as proportion of range.
+    large_step : Tuple[float, float], default=(0.94, 0.94)
+        large step in Vex, Vstd as a proportion of range.
+    Vex : float, optional
+    Vstd_range : float, optional
+    Vex_gain : float, default=1.0
+        gain associated with the excitation line.
+    Vstd_gain : float, default=1.0
+        gain associated with the standard line.
+    Cstd : float, default=1.0
+        Standard capacitor.
+    wait : float, default=3.0
+        seconds to wait after changing signal.
+    samples : int, default=100
+        number of samples to take at each point.
+    logger : Logger, default=None
+    callback : Callable, default=None
+        Callback during balance procedure (usually used for plotting).
+    ignore_warning : bool, default=False
+        override that lets Vstd exceed its allowed range.
+    """
     time_const  : float                                 # time constant for lock-in
     small_step  : Tuple[float, float] = (0.01, 0.01)    # small step in Vex/Vstd
     large_step  : Tuple[float, float] = (0.94, 0.94)    # large step in Vex/Vstd
@@ -40,6 +69,33 @@ class BalanceCapBridgeConfig:
 """Output for balanceCapBridge function, also used for CapBridge object"""
 @dataclass
 class CapBridgeBalance:
+    """
+    Result of `balanceCapBridge`.
+
+    Attributes
+    ----------
+    status : bool
+        whether balance was successful.
+    balance_matrix : np.ndarray
+    Cex : float
+        capacitance.
+    Closs : float
+        loss.
+    Vc0Vex : float
+        balanced Vc in units of Vex.
+    Vr0Vex : float
+        balanced Vr in units of Vex.
+    R : float
+        magnitude of the signal when balanced
+    phase : float
+        phase of the signal when balanced.
+    error : Tuple[float, float]
+        X and Y signals when at the balance point.
+    Vex : float
+        excitation voltage used.
+    Cstd : float
+        standard capacitance.
+    """
     status          : bool
     balance_matrix  : np.ndarray = None
     Cex             : float = None
@@ -69,7 +125,6 @@ class CapBridgeBalance:
         s += f"          Cstd: {self.Cstd:.5e}"
         return s
 
-"""Balances the capacitance bridge. Run once before capacitance measurements"""
 def balanceCapBridge(C          : BalanceCapBridgeConfig,
                      set_Vex    : Callable[[float], Any] | None,
                      get_Vex    : Callable[[], float],
@@ -78,7 +133,29 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
                      set_Vstd_ph: Callable[[float], Any],
                      get_XY      : Callable[[], Tuple[float, float]],
                     ) -> CapBridgeBalance:
-    
+    """
+    Balances the capacitance bridge. Run once before capacitance measurements.
+
+    Parameters
+    ----------
+    C : BalanceCapBridgeConfig
+    set_Vex : Callable or None
+        setter for Vex
+    get_Vex : Callable
+        getter for Vex
+    set_Vstd : Callable or None
+        setter for Vstd
+    get_Vstd : Callable
+        getter for Vstd
+    set_Vstd_ph : Callable
+        setter for Vstd phase relative to Vex
+    get_XY : Callable
+        getter for X and Y signals from the lock-in
+
+    Returns
+    -------
+    CapBridgeBalance
+    """
     # if an excitation amplitude is provided, set it
     if C.Vex is not None:
         set_Vex(C.Vex/C.Vex_gain)
@@ -218,8 +295,21 @@ Generally, measure_capacitance should be called as a pre-callback for a
 parameter sweep, with the getters being used as the measured parameters
 """
 class CapBridge():
+    """
+    Capacitance bridge object for taking off-balance measurements.
+    Generally, measure_capacitance should be called as a pre-callback for a 
+    parameter sweep, with the getters being used as the measured parameters
+    """
     def __init__(self, balance: CapBridgeBalance, 
                  get_XY: Callable[[], Tuple[float, float]], logger = None):
+        """
+        Parameters
+        ----------
+        balance : CapBridgeBalance
+        get_XY : Callable
+            getter for X and Y signals from the lock-in.
+        logger : Logger, optional
+        """
         if not balance.status:
             if logger:
                 logger.warning("WARNING: Provided balance was unsuccessful.") 
@@ -234,7 +324,17 @@ class CapBridge():
         self.Cstd  = balance.Cstd
 
     def XYtoC(self, X: float, Y: float) -> Tuple[float, float]:
-        """Convert lock-in measurement to capacitance."""
+        """
+        Convert lock-in measurement to capacitance.
+        
+        Parameters
+        ----------
+        X, Y : float
+
+        Returns
+        -------
+        Cex, Closs : float
+        """
         L1prime = X
         L2prime = Y
         detK = (self.Kc1 * self.Kr2 - self.Kr1 * self.Kc2)
@@ -254,28 +354,48 @@ class CapBridge():
         self.Cex, self.Closs = self.XYtoC(Xoffbal, Yoffbal)
 
     def get_Xoffbal(self) -> float:
-        """Query the measured in-phase signal"""
+        """
+        Query the measured in-phase signal
+        
+        Returns
+        -------
+        X : float
+        """
         if self.Xoffbal is not None:
             return self.Xoffbal
         else:
             raise RuntimeWarning("Attempted to 'get' before measurement.")
         
     def get_Yoffbal(self) -> float:
-        """Query the measured out-of-phase signal"""
+        """
+        Query the measured out-of-phase signal
+        
+        Returns
+        -------
+        Y : float
+        """
         if self.Yoffbal is not None:
             return self.Yoffbal
         else:
             raise RuntimeWarning("Attempted to 'get' before measurement.")
 
     def get_Cex(self) -> float:
-        """Query C_ex"""
+        """
+        Returns
+        -------
+        Cex : float
+        """
         if self.Cex is not None:
             return self.Cex
         else:
             raise RuntimeWarning("Attempted to 'get' before measurement.")
 
     def get_Closs(self) -> float:
-        """Query C_loss"""
+        """
+        Returns
+        -------
+        Closs : float
+        """
         if self.Closs is not None:
             return self.Closs
         else:

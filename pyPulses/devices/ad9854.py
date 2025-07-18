@@ -13,7 +13,17 @@ import pyvisa.constants
 from math import floor
 
 class ad9854(pyvisaDevice):
+    """Class interface for communicating with the AD5984 AC box."""
     def __init__(self, logger=None, instrument_id: str = None):
+        """
+        Parameters
+        ----------
+        logger : Logger, optional
+            logger used by abstractDevice.
+        instrument_id : str, optional
+            VISA resource name.
+        """
+
         self.pyvisa_config = {
             "resource_name": "ASRL3::INSTR",
             "baud_rate": 19200,
@@ -47,7 +57,15 @@ class ad9854(pyvisaDevice):
         self.freq = 0
 
     def set_frequency(self, f: float):
-        """Set output frequency for both chips simultaneously."""
+        """
+        Set output frequency for both chips simultaneously.
+        
+        Parameters
+        ----------
+        f : float
+            frequency in Hz.
+        """
+
         if f > self.sysclk/2:
             self.error(f"Frequency ({f} Hz) exceeds maximum {self.sysclk/2} Hz.")
             return
@@ -62,10 +80,25 @@ class ad9854(pyvisaDevice):
         return f
     
     def get_frequency(self) -> float:
+        """
+        Returns
+        -------
+        frequency : float
+        """
         return self.freq
 
     def set_phase(self, chip: int, phase: float):
-        """Set phase offset for specified chip (1 or 2)."""
+        """
+        Set phase offset for specified chip.
+        
+        Parameters
+        ----------
+        chip : int
+            chip number (1 or 2).
+        phase : float
+            phase offset in degrees.
+        """
+
         if not chip in [1, 2]:
             self.error(f"Chip ({chip}) must be either 1 or 2.")
             return
@@ -81,10 +114,28 @@ class ad9854(pyvisaDevice):
         return phase
 
     def get_phase(self) -> float:
+        """
+        Returns
+        -------
+        phase : float
+            phase offset in degrees.
+        """
         return self.phase
 
     def set_amplitude(self, chip: int, channel: str, Vrms: float):
-        """Set amplitude for specified chip (1/2) and channel (X/Y)."""
+        """
+        Set amplitude for specified chip and channel.
+        
+        Parameters
+        ----------
+        chip : int
+            chip number (1 or 2).
+        channel : str
+            channel name ('X' or 'Y').
+        Vrms : float
+            RMS voltage.
+        """
+
         if not chip in [1, 2]:
             self.error(f"Chip ({chip}) must be either 1 or 2.")
             return
@@ -108,6 +159,19 @@ class ad9854(pyvisaDevice):
         return amplitude
 
     def get_amplitude(self, chip, channel) -> float | None:
+        """
+        Parameters
+        ----------
+        chip : int
+            chip number (1 or 2).
+        channel : str
+            channel name ('X' or 'Y').
+
+        Returns
+        -------
+        Vrms : float
+            RMS voltage
+        """
         if chip not in [1, 2] or channel not in ['X', 'Y']:
             self.error(f"chip = {chip}, channel = {channel} is invalid.")
             return
@@ -115,7 +179,10 @@ class ad9854(pyvisaDevice):
         return self.amplitudes[(chip, channel)]
 
     def master_reset(self):
-        """Perform master reset of the system."""
+        """
+        Perform master reset of the system. This has to do with setting the 
+        reference clock.
+        """
         # this has something to do with setting the reference clock.
         # won't think about it too much until we have to build a new box...
         self._write_command(bytes([255, 254, 253, 12, 55, 1, 2, 3, 4, 5, 6]),

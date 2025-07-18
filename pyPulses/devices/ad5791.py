@@ -14,8 +14,21 @@ from math import ceil
 import time
 
 class ad5791(pyvisaDevice):
+    """Class interface for communicating with the AD5791 DC box."""
     def __init__(self, logger = None, max_step: float = 0.05, 
                  wait: float = 0.1, instrument_id: str = None):
+        """
+        Parameters
+        ----------
+        logger : Logger, optional
+            logger used by abstractDevice.
+        max_step : float, default=0.05
+            maximum voltage step to take when sweeping.
+        wait : float, default=0.1
+            time to wait between setting voltages while sweeping.
+        instrument_id : str, optional
+            VISA resource name.
+        """
 
         # configurations for pyvisa resource manager
         self.pyvisa_config = {
@@ -41,8 +54,22 @@ class ad5791(pyvisaDevice):
 
         self.V = [0] * 8
 
-    def sweep_V(self, ch, V, max_step = None, wait = None):
-        """Sweep smoothly to the DC value on a given channel."""
+    def sweep_V(self, ch: int, V: float, 
+                max_step: float = None, wait: float = None):
+        """
+        Sweep DC value of a given channel smoothly to the target.
+        
+        Parameters
+        ----------
+        ch : int
+            target channel (0 through 7).
+        V : float
+            target voltage.
+        max_step : float, default=None
+            maximum step between voltages while sweeping.
+        wait : float, default=None
+            wait time between steps while sweeping.
+        """
 
         if ch not in range(0, 8):
             self.error(f"AD5791 does not have a channel {ch}.")
@@ -69,10 +96,23 @@ class ad5791(pyvisaDevice):
         
         self.info(f"Channel Settings: {self.V}")
 
-    def get_V(self, ch):
+    def get_V(self, ch: int):
         """
         Get the DC value on a given channel.
+
+        Parameters
+        ----------
+        ch : int
+            target channel.
+
+        Returns
+        -------
+        V : float
+            voltage on the target channel Note: This is not a true query. It 
+            simply returns what is saved on the computer. There is currently 
+            no way to ask the arduino directly.
         """
+
         if ch not in range(0, 8):
             self.error(f"AD5791 does not have a channel {ch}.")
             return None
@@ -127,8 +167,19 @@ class ad5791(pyvisaDevice):
         self.V[ch] = float(voltage)
         return voltage
 
-    def set_V(self, ch, V, chatty = True):
-        """Set the DC value on a given channel."""
+    def set_V(self, ch: int, V: float, chatty: bool = True):
+        """
+        Set the DC value of a given channel.
+        
+        Parameters
+        ----------
+        ch : int
+            target channel (0 through 7).
+        V : float
+            target voltage.
+        chatty : bool, default=True
+            whether to log the change in channel settings.
+        """
 
         if ch not in range(0, 8):
             self.error(f"AD5791 does not have a channel {ch}.")

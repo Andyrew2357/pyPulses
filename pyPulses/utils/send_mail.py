@@ -5,6 +5,19 @@ from typing import List
 
 def sendMail(subject: str, message: str, email_cfg: str,
              recipients: str | List[str] = 'all'):
+    """
+    Send an email (with certain carriers, you can also use 'text by mail').
+
+    Parameters
+    ----------
+    subject : str
+    message : str
+    email_cfg : str
+        path to an .ini containing contact info
+    recipients : str or list of str, default='all'
+        recipients to send the email; by default it is sent to everyone in the 
+        .ini.
+    """
 
     cfg = configparser.ConfigParser()
     cfg.read(email_cfg)

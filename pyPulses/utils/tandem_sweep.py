@@ -23,7 +23,33 @@ def tandemSweep(setters: List[Callable[[float], Any]],
                 handle_exceptions: bool = True) -> bool:
     """
     Sweeps multiple parameters smoothly while respecting their maximum step
-    sizes. Returns a boolean indicating success or failure.
+    sizes.
+
+    Parameters
+    ----------
+    setters : list of Callable
+        setter functions for the swept parameters
+    start, end: list of float
+        starting and ending values of the swept parameters
+    wait : float
+        wait time between setting parameters
+    max_step : list of float or None
+        maximum step size each parameter can take; None is interpreted as inf
+    min_step : list of float or None
+        minimum step size to take (for costly setters); None is interpreted as 0.
+        If `tolerance` is larger than `min_step` for a given parameter, 
+        `tolerance` is used instead.
+    tolerance : list of float or None
+        allowed difference between `end` setting and the actual final point for 
+        each parameter; None is interpreted as 0.
+    handle_exceptions : bool, default=True
+        If we encounter an exception during the sweep, we sweep back to the 
+        beginning. This is done with a recursive call that sets this argument to
+        False. 
+
+    Returns
+    -------
+    success : bool
     """
     
     N = len(setters)
@@ -124,20 +150,42 @@ def tandemSweep(setters: List[Callable[[float], Any]],
 def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float, 
                   handle_exceptions: bool = True) -> bool:
     """
-    Wrapper for more human syntax. Pass parameters as a list of dictionaries 
-    describing their behavior. Automatically gets the start values, by requiring 
-    users to provide the getters. Target can be provided as a bare list or as a
-    dictionary. Elements of parms that are missing from said dictionary are
-    presumed to remain unchanged throughout the sweep.
+    Wrapper of `tandemSweep` for more human syntax. 
     
-    Recognized fields for parms elements:
-    'f'         : <getsetter (function)> 
-                    (must provide either 'f' or 'get' and 'set')
-    'get'       : <getter (function)> (Ignored if 'f' is provided)
-    'set'       : <setter (function)> (Ignored if 'f' is provided)
-    'min_step'  : <minimum step size (float)> (optional)
-    'max_step'  : <maximum step size (float)> (optional)
-    'tolerance' : <tolerance (float)> (optional)
+    Passes parameters as a list of dictionaries describing their behavior. 
+    Automatically gets the start values, by requiring users to provide the getters. 
+    
+    Target can be provided as a bare list or as a dictionary. Parameters that 
+    are missing from said dictionary are presumed to remain unchanged throughout the sweep.
+    
+    Parameters
+    ----------
+    parms : dict
+        Dictionary describing the behavior of each swept parameter.
+        Recognized fields for parms elements:
+            'f'         : <getsetter (function)> 
+                            (must provide either 'f' or 'get' and 'set')
+            'get'       : <getter (function)> (Ignored if 'f' is provided)
+            'set'       : <setter (function)> (Ignored if 'f' is provided)
+            'min_step'  : <minimum step size (float)> (optional)
+            'max_step'  : <maximum step size (float)> (optional)
+            'tolerance' : <tolerance (float)> (optional)
+        eg. `{'V': {'get': get_V, 'set': set_V, 'min_step': 0.0005, 
+            'max_step': 0.002, 'tolerance': 0.0005}}`
+    target : dict or list of float
+        If provided as a bare list, each float is associated to the parameter
+        with the same index in parms; this is not recommended, as it can be
+        confusing to keep track of the index of keys in a dict. If provided as
+        a dict, they keys should correspond to parameters. If there are
+        parameters missing from the target dict, they are assumed to remain
+        unchanged over the course of the sweep.
+    wait : float
+        wait time between steps
+    handle_exceptions : bool, default=True
+
+    Returns
+    -------
+    success : bool
     """
 
     for P in parms:

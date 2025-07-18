@@ -9,6 +9,10 @@ from .rootfinder import RootFinderState, RootFinderStatus
 from typing import Tuple
 
 class BrentSolver:
+    """
+    Class implementation of a modified version of the Brent-Dekker method for 
+    root finding.
+    """
     def __init__(self, xa: float, xb: float,
                  search_range: Tuple[float, float] = None,
                  x_tolerance: float         = 1e-6,
@@ -16,19 +20,23 @@ class BrentSolver:
                  max_iter: int              = 100,
                  max_reps: int              = 6,
                  max_coll: int              = 3):
-        
         """
-        Initialize the Brent solver with external function evaluation.
-       
-        Args:
-            xa          : First initial guess
-            xb          : Second initial guess
-            search_range: Optional tuple of (min, max) defining search range
-            max_iter    : Maximum iterations allowed
-            x_tolerance : Convergence tolerance for x
-            y_tolerance : Convergence tolerance for y (regardless of x status)
-            max_rep     : Maximum allowed repetitions before we assume a cycle
-            max_coll    : Maximum allowed collisions with the boundary
+        Parameters
+        ----------
+        xa, xb : float
+            first and second initial guesses
+        search_range : tuple of float, optional
+            (min, max) defining search range
+        x_tolerance : float, default=1e-6
+            convergence tolerance for x.
+        y_tolerance : float, default=1e-6
+            convergence tolerance for y (regardless of x status).
+        max_iter : int, default=100
+            maximum iterations allowed
+        max_reps : int, default=6
+            maximum allowed repetitions before we assume a cycle
+        max_coll : int, default=3
+            maximum allowed collisions with the boundary
         """
 
         self.search_range = search_range
@@ -85,6 +93,14 @@ class BrentSolver:
     def update(self, f_value: float) -> RootFinderState:
         """
         Provide a function evaluation and get the next state.
+
+        Parameters
+        ----------
+        f_value : float
+
+        Returns
+        -------
+        RootFinderState
         """
 
         # Handle initial evaluations
@@ -188,7 +204,7 @@ class BrentSolver:
                 )
                 return self.state
 
-            s = self.brent_iteration(f_value)
+            s = self._brent_iteration(f_value)
         
         else:
             # Case if we haven't yet entered Brent-Dekker iterations
@@ -205,11 +221,11 @@ class BrentSolver:
                     self.xa, self.xb = self.xb, self.xa
                     self.fa, self.fb = self.fb, self.fa
                 self.xc, self.fc = self.xa, self.fa
-                s = self.brent_iteration(f_value)
+                s = self._brent_iteration(f_value)
             
             elif  self.fa*self.fb > 0:
                 # Proceed by Unbracketed Iteration
-                s = self.unbracketed_iteration(f_value)
+                s = self._unbracketed_iteration(f_value)
 
         # Truncate to the search range and check for collisions
         if self.search_range:
@@ -256,10 +272,8 @@ class BrentSolver:
         )
         return self.state
         
-    def brent_iteration(self, f_value: float) -> float:
-        """
-        Perform an iteration using the Brent-Dekker method.
-        """
+    def _brent_iteration(self, f_value: float) -> float:
+        """Perform an iteration using the Brent-Dekker method."""
 
         if self.fa != self.fc and self.fb != self.fc:
             # Attempt Inverse Quadratic Interpolation
@@ -287,10 +301,10 @@ class BrentSolver:
 
         return s
     
-    def unbracketed_iteration(self, f_value) -> float:
+    def _unbracketed_iteration(self, f_value) -> float:
         """
-        Perform an iteration without any bracket.
-        This proceeds either with IQI or Secant Method.
+        Perform an iteration without any bracket. This proceeds either with IQI 
+        or Secant Method.
         """
 
         if self.fa != self.fc and self.fb != self.fc:

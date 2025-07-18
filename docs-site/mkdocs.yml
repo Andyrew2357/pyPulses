@@ -1,0 +1,68 @@
+site_name: pyPulses
+theme:
+  name: material
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [".."]
+          options:
+            docstring_style: numpy
+            show_signature: true
+            show_source: false
+            merge_init_into_class: true
+            group_by_category: true
+            inherited_members: true
+
+nav:
+  - Home: index.md
+  - Reference:
+    - Devices:
+      - DeviceRegistry: reference/devices/DeviceRegistry.md
+      - DifferentialPair: reference/devices/DifferentialPair.md
+      - FastFlight2: reference/devices/FastFlight2.md
+      - PIDbox: reference/devices/PIDbox.md
+      - ad5764: reference/devices/ad5764.md
+      - ad9854: reference/devices/ad9854.md
+      - cryomagnetics4G: reference/devices/cryomagnetics4G.md
+      - dtg5274: reference/devices/dtg5274.md
+      - hf2li: reference/devices/hf2li.md
+      - hf2liACout: reference/devices/hf2liACout.md
+      - hp34401a: reference/devices/hp34401a.md
+      - ips120: reference/devices/ips120.md
+      - keithley2000: reference/devices/keithley2000.md
+      - keithley2400: reference/devices/keithley2400.md
+      - keithley2450: reference/devices/keithley2450.md
+      - mso44: reference/devices/mso44.md
+      - sr865a: reference/devices/sr865a.md
+      - watdScope: reference/devices/watdScope.md
+      - Functions: reference/devices/functions.md
+    - Plotting:
+      - SweepPlotter: reference/plotting/SweepPlotter.md
+    - Routines:
+      - BalanceCapBridgeConfig: reference/routines/BalanceCapBridgeConfig.md
+      - CapBridge: reference/routines/CapBridge.md
+      - CapBridgeBalance: reference/routines/CapBridgeBalance.md
+      - KapBridge: reference/routines/KapBridge.md
+      - KapBridgeBalance: reference/routines/KapBridgeBalance.md
+      - PulsedR: reference/routines/PulsedR.md
+      - RPredictor: reference/routines/RPredictor.md
+      - Functions: reference/routines/functions.md
+    - Utils:
+      - BalanceConfig: reference/utils/BalanceConfig.md
+      - BrentSolver: reference/utils/BrentSolver.md
+      - DummyPred: reference/utils/DummyPred.md
+      - DummyPredFunc: reference/utils/DummyPredFunc.md
+      - ExtrapPred1d: reference/utils/ExtrapPred1d.md
+      - ExtrapPredNd: reference/utils/ExtrapPredNd.md
+      - ParamSweepMeasure: reference/utils/ParamSweepMeasure.md
+      - RootFinderState: reference/utils/RootFinderState.md
+      - RootFinderStatus: reference/utils/RootFinderStatus.md
+      - SweepMeasure: reference/utils/SweepMeasure.md
+      - SweepMeasureCut: reference/utils/SweepMeasureCut.md
+      - SweepMeasureParallelepiped: reference/utils/SweepMeasureParallelepiped.md
+      - SweepMeasureProduct: reference/utils/SweepMeasureProduct.md
+      - kalman: reference/utils/kalman.md
+      - Functions: reference/utils/functions.md

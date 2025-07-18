@@ -11,8 +11,16 @@ from math import log2
 import time
 
 class sr865a(pyvisaDevice):
+    """Class interface for communicating with the SR865A"""
     def __init__(self, logger = None, instrument_id: str = None):
-        
+        """
+        Parameters
+        ----------
+        logger : Logger, optional
+            logger used by abstractDevice.
+        instrument_id : str, optional
+            VISA resource name.
+        """        
         self.pyvisa_config = {
             "resource_name"     : "USB0::0xB506::0x2000::003931::INSTR",
             "output_buffer_size": 512
@@ -54,59 +62,131 @@ class sr865a(pyvisaDevice):
     # INPUT RELATED
 
     def get_x(self) -> float:
-        """Get the X (in-phase) component of the measured signal."""
+        """
+        Get the X (in-phase) component of the measured signal.
+        
+        Returns
+        -------
+        X : float
+        """
         return float(self.device.query("OUTP? 0"))
     
     def get_y(self) -> float:
-        """Get the Y (quadrature) component of the measured signal."""
+        """
+        Get the Y (quadrature) component of the measured signal.
+        
+        Returns
+        -------
+        Y : float
+        """
         return float(self.device.query("OUTP? 1"))
     
     def get_r(self) -> float:
-        """Get the R (magnitude) component of the measured signal."""
+        """
+        Get the R (magnitude) component of the measured signal.
+        
+        Returns
+        -------
+        R : float
+        """
         return float(self.device.query("OUTP? 2"))
     
     def get_theta(self) -> float:
-        """Get the θ (phase) component of the measured signal in degrees."""
+        """
+        Get the θ (phase) component of the measured signal in degrees.
+        
+        Returns
+        -------
+        theta : float
+        """
         return float(self.device.query("OUTP? 3"))
     
     def get_xy(self) -> Tuple[float, float]:
-        """Get X and Y components simultaneously for better timing accuracy."""
+        """
+        Get X and Y components simultaneously for better timing accuracy.
+        
+        Returns
+        -------
+        X, Y : float
+        """
         result = self.device.query("SNAP? 0,1")
         return tuple(map(float, result.strip().split(',')))
     
     #REFERENCE RELATED
 
     def get_frequency(self) -> float:
-        """Get the reference frequency in Hz."""
+        """
+        Get the reference frequency in Hz.
+        
+        Returns
+        -------
+        f : float
+        """
         return float(self.device.query("FREQ?"))
     
     def set_frequency(self, freq: float):
-        """Set the reference frequency in Hz."""
+        """
+        Set the reference frequency in Hz.
+        
+        Parameters
+        ----------
+        freq : float
+        """
         self.device.write(f"FREQ {freq}")
         self.info(f"SR865A: Set reference frequency to {freq} Hz.")
 
     def get_phase(self) -> float:
-        """Get the reference phase shift in degrees."""
+        """
+        Get the reference phase shift in degrees.
+        
+        Returns
+        -------
+        phase : float
+        """
         return float(self.device.query("PHAS?"))
     
     def set_phase(self, phase: float):
-        """Set the reference phase shift in degrees."""
+        """
+        Set the reference phase shift in degrees.
+        
+        Parameters
+        ----------
+        phase : float
+        """
         self.device.write(f"PHAS {phase}")
         self.info(f"SR865A: Set reference phase shift to {phase} degrees.")
 
     def get_ref_amplitude(self) -> float:
-        """Get the reference amplitude in volts."""
+        """
+        Get the reference amplitude in volts.
+        
+        Returns
+        -------
+        V : float
+        """
         return float(self.device.query("SLVL?"))
     
     def set_ref_amplitude(self, amplitude: float):
-        """Set the reference amplitude in volts."""
+        """
+        Set the reference amplitude in volts.
+        
+        Parameters
+        ----------
+        amplitude : float
+        """
         self.device.write(f"SLVL {amplitude}")
         self.info(f"SR865A: Set reference amplitude to {amplitude} V.")
 
     # INPUT SETTINGS
 
     def get_input_range(self) -> float:
-        """Get the input signal range in volts."""
+        """
+        Get the input signal range in volts.
+        
+        Returns
+        -------
+        Vrange : float
+        """
         idx = int(self.device.query("IRNG?"))
         self.settings['irng_ind'] = idx
         return self._input_range_value(idx)
@@ -114,8 +194,11 @@ class sr865a(pyvisaDevice):
     def set_input_range(self, range_v: float):
         """
         Set the input signal range in volts.
-        valid values are: 1.0, 0.3, 0.1, 0.03, 0.01 V
-        The closest valid value will be selected
+
+        Parameters
+        ----------
+        range_v : float
+            rounded to 1.0, 0.3, 0.2, 0.03, or 0.01.
         """ 
         idx = self._input_range_index(range_v)
         self.device.write(f"IRNG {idx}")
@@ -125,7 +208,13 @@ class sr865a(pyvisaDevice):
         )
 
     def get_sensitivity(self) -> float:
-        """Get the current sensitivity in volts."""
+        """
+        Get the current sensitivity in volts.
+        
+        Returns
+        -------
+        sensitivity : float
+        """
         idx = int(self.device.query("SCAL?"))
         self.settings['sens_ind'] = idx
         return self._sens_value(idx)
@@ -133,7 +222,11 @@ class sr865a(pyvisaDevice):
     def set_sensitivity(self, sensitivity: float):
         """
         Set the sensitivity in volts.
-        The closest valid sensitivity value will be selected.
+        
+        Parameters
+        ----------
+        sensitivity : float
+            rounded to the closest valid sensitivity value.
         """
         idx = self._sens_index(sensitivity)
         self.device.write(f"SCAL {idx}")
@@ -141,7 +234,13 @@ class sr865a(pyvisaDevice):
         self.info(f"SR865A: Set sensitivity to {self._sens_value(idx)} V.")
 
     def get_time_const(self) -> float:
-        """Get the time constant in seconds."""
+        """
+        Get the time constant in seconds.
+        
+        Returns
+        -------
+        tau : float
+        """
         idx = int(self.device.query("OFLT?"))
         self.settings['time_const'] = self._tau_value(idx)
         return self._tau_value(idx)
@@ -149,7 +248,11 @@ class sr865a(pyvisaDevice):
     def set_time_const(self, time_const: float):
         """
         Set the time constant in seconds.
-        The closest valid time constant will be selected.
+        
+        Parameters
+        ----------
+        time_const : float
+            rounded to the closest valid time constant.
         """
         idx = self._tau_index(time_const)
         self.device.write(f"OFLT {idx}")
@@ -159,11 +262,24 @@ class sr865a(pyvisaDevice):
     # SYNC FILTER CONTROL
 
     def get_sync_filter_status(self) -> bool:
-        """Get the sync filter status (True = enabled, False = disabled)."""
+        """
+        Get the sync filter status.
+        
+        Returns
+        -------
+        bool
+            true = enabled, false = disabled.
+        """
         return bool(int(self.device.query("SYNC?")))
     
     def set_sync_filter(self, enabled: bool):
-        """Enable or disable the sync filter."""
+        """
+        Enable or disable the sync filter.
+        
+        Parameters
+        ----------
+        enabled : bool
+        """
         self.device.write(f"SYNC {1 if enabled else 0}")
         self.info(
             f"SR865A: {'Enabled' if enabled else 'Disabled'} sync filter."
@@ -172,19 +288,46 @@ class sr865a(pyvisaDevice):
     # AUXILIARY I/O
 
     def get_aux_input(self, ch: int) -> float:
-        """Get the voltage at an auxiliary input."""
+        """
+        Get the voltage at an auxiliary input.
+        
+        Parameters
+        ----------
+        ch : int
+
+        Returns
+        -------
+        float
+        """
         if not ch in [1, 2, 3, 4]:
             raise ValueError("Aux input channel must be 1, 2, 3, or 4.")
         return float(self.device.query(f"AUXV? {ch}"))
     
     def get_aux_output(self, ch: int) -> float:
-        """Get the voltage at an auxiliary output."""
+        """
+        Get the voltage at an auxiliary output.
+        
+        Parameters
+        ----------
+        ch : int
+
+        Returns
+        -------
+        float
+        """
         if not ch in [1, 2, 3, 4]:
             raise ValueError("Aux output channel must be 1, 2, 3, or 4.")
         return float(self.device.query(f"OAUX? {ch}"))
     
     def set_aux_output(self, ch: int, V: float):
-        """Set the voltage at an auxiliary output."""
+        """
+        Set the voltage at an auxiliary output.
+        
+        Parameters
+        ----------
+        ch : int
+        V : float
+        """
         if not ch in [1, 2, 3, 4]:
             raise ValueError("Aux output channel must be 1, 2, 3, or 4.")
         if not -10.5 <= V <= 10.5:
@@ -195,11 +338,23 @@ class sr865a(pyvisaDevice):
         self.info(f"SR865A: Set channel {ch} auxiliary output to {V} V.")
 
     def get_dc_offset(self) -> float:
-        """Get the DC offset in percent."""
+        """
+        Get the DC offset in percent.
+        
+        Returns
+        -------
+        float
+        """
         return float(self.device.query("SOFF?"))
     
     def set_dc_offset(self, off: float):
-        """Set the DC offset in percent (-100 to 100%)."""
+        """
+        Set the DC offset in percent (-100 to 100%).
+        
+        Parameters
+        ----------
+        off : float
+        """
         if not -100 <= off <= 100:
             raise ValueError("DC offset must be between -100 and 100%.")
         self.device.write(f"SOFF {off}")
@@ -208,19 +363,35 @@ class sr865a(pyvisaDevice):
     # STATUS / DIAGNOSTICS
 
     def is_input_overloaded(self) -> bool:
-        """Check if the input signal is overloaded."""
+        """
+        Check if the input signal is overloaded.
+        
+        Returns
+        -------
+        bool
+        """
         status = int(self.device.query("CUROVLDSTAT?"))
         return bool((status >> 4) & 1) # extract bit 4
     
     def is_reference_unlocked(self) -> bool:
-        """Check if the external reference is unlocked."""
+        """
+        Check if the external reference is unlocked.
+        
+        Returns
+        -------
+        bool
+        """
         status = int(self.device.query("CUROVLDSTAT?"))
         return bool((status >> 3) & 1) # extract bit 3
     
     def get_input_level(self) -> int:
         """
         Get the input signal level indicator.
-        This is an integer from 0 - 4 with 0 = weak signal, 4 = overload
+
+        Returns
+        -------
+        int
+            ranges from 0 to 4; 0 = weak signal, 4 = overload.
         """
         return int(self.device.query("ILVL?"))
     
@@ -230,11 +401,19 @@ class sr865a(pyvisaDevice):
         """
         Configure the data acquisition system.
 
-        buffer_size = size of the buffer in kilobytes
-        sample_rate = desired sample rate in Hz
-        config = 'X', 'XY', 'RT' or 'XYRT', describing the data format
+        Parameters
+        ----------
+        buffer_size : int
+            size of the buffer in kilobytes.
+        config : str
+            One of {'X', 'XY', 'RT', 'XYRT'}.
+        sample_rate : float
+            desired sample rate in Hz.
 
-        Returns the actual sample rate used.
+        Returns
+        -------
+        sample_rate : float
+            the actual sample rate used.
         """
 
         if not config in ['X', 'XY', 'RT', 'XYRT']:
@@ -287,7 +466,10 @@ class sr865a(pyvisaDevice):
     def get_buffered_data(self, max_tries: int = 5) -> np.ndarray:
         """
         Get buffered data.
-        Returns a numpy ndarray of acquired data points
+
+        Returns
+        -------
+        np.ndarray
         """
         # wait until enough points are available
         seen = defaultdict(int)
@@ -327,7 +509,7 @@ class sr865a(pyvisaDevice):
             )
             return np.array([])
 
-        data = self.parse_binary_block(raw)
+        data = self._parse_binary_block(raw)
         match self.data_config:
             case 'X':
                 data = data.reshape(-1, 1)
@@ -343,7 +525,7 @@ class sr865a(pyvisaDevice):
 
     # UTILITY
 
-    def parse_binary_block(self, data: bytes) -> np.ndarray:
+    def _parse_binary_block(self, data: bytes) -> np.ndarray:
         if not data.startswith(b'#'):
             raise ValueError("Invalid binary block format.")
         
@@ -390,6 +572,7 @@ class sr865a(pyvisaDevice):
         self.get_time_const()
 
     def increment_sensitivity(self):
+        """Up the sensitivity to the next available value (more sensitive)"""
         idx = self.settings['sens_ind']
         if idx is None:
             idx = self._sens_index(self.get_sensitivity())
@@ -404,6 +587,7 @@ class sr865a(pyvisaDevice):
         return False
 
     def decrement_sensitivity(self):
+        """Reduce the sensitivity to the next available value (less sensitive)"""
         idx = self.settings['sens_ind']
         if idx is None:
             idx = self._sens_index(self.get_sensitivity())
@@ -418,6 +602,10 @@ class sr865a(pyvisaDevice):
         return False
 
     def increment_input_range(self):
+        """
+        Reduce the input range to the next available value (Note that we refer
+        to this as incrementing so that it is similar to increment_sensitivity)
+        """
         idx = self.settings['irng_ind']
         if idx is None:
             idx = self._input_range_index(self.get_input_range())
@@ -432,6 +620,10 @@ class sr865a(pyvisaDevice):
         return False
 
     def decrement_input_range(self):
+        """
+        Increase the input range to the next available value (Note that we refer
+        to this as dencrementing so that it is similar to decrement_sensitivity)
+        """
         idx = self.settings['irng_ind']
         if idx is None:
             idx = self._input_range_index(self.get_input_range())
@@ -451,9 +643,16 @@ class sr865a(pyvisaDevice):
         Adjust sensitivity (and, if desired, input range) so that the current
         vector (X, Y) sits at about 'margin' of full scale.
 
-        margin: fraction of full-scale you'd like to occupy
-        max_iters: how many times to try before giving up
-        returns the current R, sensitivity and input range
+        Parameters
+        ----------
+        margin : float
+            fraction of full-scale you'd like to occupy
+        max_iters : float
+            how many times to try before giving up.
+             
+        Returns
+        -------
+        ratio_of_input_range_filled, sensitivity, input_range : float
         """
 
         tau = self.settings['time_const']
@@ -494,7 +693,20 @@ class sr865a(pyvisaDevice):
         Sample X,Y some desired number of times and return an average along with
         covariance in the measured values.
 
-        Assumes that you have already called setup_acquisition
+        (Assumes that you have already called setup_acquisition)
+
+        Parameters
+        ----------
+        auto_rescale : bool, default=False
+            whether to call `auto_rescale` prior to taking the average
+        rescale_args : tuple, default=()
+            args passed to `auto_rescale`
+        rescale_kwargs : dict, default={}
+            kwargs passed to `auto_rescale`
+
+        Returns
+        -------
+        mean, cov : np.ndarray
         """
 
         # adjust the lock-in range so that the signal fills some prescribed

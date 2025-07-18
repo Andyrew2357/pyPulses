@@ -18,3 +18,6 @@ dist/
 *.egg-info/
 .eggs/
 *.egg
+
+# Docs
+docs-site/docs/reference

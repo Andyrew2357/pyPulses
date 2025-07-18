@@ -12,6 +12,14 @@ def prune_sort(x: np.ndarray | list, y: np.ndarray | list
     Remove non, monotonic values in x so that x is strictly increasing or 
     decreasing. Then sort so that x is increasing. Whether we assume decreasing 
     or increasing is determined by the first two elements.
+
+    Parameters
+    ----------
+    x, y : array-like
+
+    Returns
+    -------
+    x, y : array-like
     """
     x = np.array(x)
     y = np.array(y)
@@ -35,11 +43,17 @@ def pchip(xs: np.ndarray | list, ys: np.ndarray | list
     Interpolating Polynomial) interpolation. Notably, this interpolation method
     preserves the monotonicity of the underlying data.
 
-    It takes in xt and yt, the x and y values of the data points, and returns a
-    function that maps x values to interpolated y and dy/dx values.
-
     See wikipedia.org/wiki/Monotone_cubic_interpolation for the algorithm and
     JavaScript implementation on which this is based.
+
+    Parameters
+    ----------
+    xs, ys : array-like
+
+    Returns
+    -------
+    f : Callable
+        function maps (x) -> (y, dy/dx)
     """
 
     # calculate the interpolation parameters
@@ -47,17 +61,23 @@ def pchip(xs: np.ndarray | list, ys: np.ndarray | list
     return pchip_interp_from_params(xs, ys, c1s, c2s, c3s)
 
 def pchip_params(xs: np.ndarray | list, ys: np.ndarray | list
-                ) -> Callable[[float], Tuple[float, float]]:
+                ) -> Tuple[np.ndarray, ...]:
     """
     Implementation of shape preserving PCHIP (Piecewise Cubic Hermite 
     Interpolating Polynomial) interpolation. Notably, this interpolation method
     preserves the monotonicity of the underlying data.
 
-    It takes in xt and yt, the x and y values of the data points, and returns a
-    set of parameters describing the interpolation.
-
     See wikipedia.org/wiki/Monotone_cubic_interpolation for the algorithm and
     JavaScript implementation on which this is based.
+
+    Parameters
+    ----------
+    xs, ys : array-like
+
+    Returns
+    -------
+    xs, ys, c1s, c2s, c3s : np.ndarray
+        input samples and coefficients required for piecewise interpolation.
     """
     xs = np.array(xs, dtype = float)
     ys = np.array(ys, dtype = float)
@@ -119,6 +139,16 @@ def pchip_interp_from_params(xs, ys, c1s, c2s, c3s):
     """
     Interpolation functiom compatible with numpy arrays that returns both
     the interpolated value and interpolated derivative
+
+    Parameters
+    ----------
+    xs, ys, c1s, c2s, c3s : np.ndarray
+        sample points and interpolation coefficients.
+    
+    Returns
+    -------
+    f : Callable
+        f maps (x) -> (y, dy/dx).
     """
     length = len(xs)
 
@@ -147,7 +177,19 @@ def pchip_interp_from_params(xs, ys, c1s, c2s, c3s):
     return interp
 
 def pchip_rval_from_params(xs, ys, c1s, c2s, c3s):
-    """Interpolation function compatible with numpy arrays"""
+    """
+    Interpolation function compatible with numpy arrays
+    
+    Parameters
+    ----------
+    xs, ys, c1s, c2s, c3s : np.ndarray
+        sample points and interpolation coefficients.
+    
+    Returns
+    -------
+    f : Callable
+        f maps (x) -> (y).
+    """
 
     length = len(xs)
     @np.vectorize
@@ -174,7 +216,19 @@ def pchip_rval_from_params(xs, ys, c1s, c2s, c3s):
     return interp
 
 def pchip_dval_from_params(xs, ys, c1s, c2s, c3s):
-    """Derivative interpolation function compatible with numpy arrays"""
+    """
+    Derivative interpolation function compatible with numpy arrays
+    
+    Parameters
+    ----------
+    xs, ys, c1s, c2s, c3s : np.ndarray
+        sample points and interpolation coefficients.
+    
+    Returns
+    -------
+    f : Callable
+        f maps (x) -> (dy/dx).
+    """
     
     length = len(xs)
     @np.vectorize

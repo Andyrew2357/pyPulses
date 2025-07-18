@@ -9,8 +9,17 @@ import time
 from enum import IntEnum
 
 class ips120(pyvisaDevice):
+    """Class interface for controlling the IPS120."""
     def __init__(self, logger = None, instrument_id: str = None):
-        
+        """
+        Parameters
+        ----------
+        logger : Logger, optional
+            logger used by abstractDevice.
+        instrument_id : str, optional
+            VISA resource name.
+        """
+
         self.pyvisa_config = {
             'resource_name'     : "",
             'read_termination'  : '\r',
@@ -94,13 +103,34 @@ class ips120(pyvisaDevice):
             )            
 
     def get(self, p: 'ips120.parm') -> float | None:
-        """Get a parameter from the parameter table"""
+        """
+        Get a parameter from the parameter table
+        
+        Parameters
+        ----------
+        p : ips120.parm
+
+        Returns
+        -------
+        float or None
+        """
         
         resp = self._send_cmd(f"R{p.value}")
         return resp if resp is None else float(resp)
     
     def get_status(self, flag: 'ips120.status') -> str | None:
-        """Get the status of the power supply"""
+        """
+        Get the status of the power supply from the status table
+        
+        Parameters
+        ----------
+        flag : ips120.status
+            {'HEATER', 'ATREST', 'MODE', 'SYSTEM', 'LIMIT'}
+
+        Returns
+        -------
+        str or None
+        """
 
         return self._send_cmd("X")[flag.value]
     
@@ -111,7 +141,14 @@ class ips120(pyvisaDevice):
         self.info(f"Set power supply mode to {mode.name}")
 
     def get_mode(self) -> bool:
-        """Query the mode"""
+        """
+        Query the mode of magnet operation.
+
+        Returns
+        -------
+        mode : ips120.mode
+            {'HOLD', 'GOTOTARGET', 'GOTOZERO', 'CLAMP'}.
+        """
 
         return self.mode(self.get_status(self.status.MODE))
 
@@ -140,7 +177,13 @@ class ips120(pyvisaDevice):
         return True
 
     def is_at_rest(self) -> bool:
-        """Is the power supply state at rest"""
+        """
+        Is the power supply state at rest
+        
+        Returns
+        -------
+        bool
+        """
 
         return self.get_status(self.status.ATREST) == '0'
     
@@ -148,12 +191,22 @@ class ips120(pyvisaDevice):
         """
         We define the controller to be in persistent mode if the heater is off,
         regardless of whether we are at field.
+
+        Returns
+        -------
+        bool
         """
 
         return self.get_status(self.status.HEATER) in ['0', '2']
     
     def is_heater_on(self) -> bool | None:
-        """Query whether the heater is on"""
+        """
+        Query whether the heater is on
+        
+        Returns
+        -------
+        bool
+        """
 
         c = self.get_status(self.status.HEATER)
         if c == '1':
@@ -273,7 +326,18 @@ class ips120(pyvisaDevice):
     """User level methods"""
 
     def set_B(self, B: float) -> bool:
-        """Set the field of the magnet"""
+        """
+        Set the field of the magnet
+        
+        Parameters
+        ----------
+        B : float
+            target persistent field in T
+
+        Returns
+        -------
+        success : bool
+        """
 
         if abs(B) > self.max_B:
             B = min(self.max_B, max(-self.max_B, B))
@@ -310,8 +374,12 @@ class ips120(pyvisaDevice):
 
     def get_B(self) -> float:
         """
-        Query the field value 
-        (Persistent if in persistent mode, else output)
+        Query the field value in T (Persistent if in persistent mode, else 
+        output).
+
+        Returns
+        -------
+        B : float
         """
 
         if self.is_persistent_mode():
@@ -320,7 +388,14 @@ class ips120(pyvisaDevice):
             return self._get_output_field()
         
     def set_sweep_rate(self, rate: float):
-        """Set the target sweep rate in T / min"""
+        """
+        Set the target sweep rate in T / min.
+
+        Parameters
+        ----------
+        rate: float
+            sweep rate in T / min.
+        """
 
         if rate > self.max_rate:
             rate = self.max_rate

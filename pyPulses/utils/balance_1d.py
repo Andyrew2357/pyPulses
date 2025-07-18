@@ -10,6 +10,36 @@ from typing import Any, Callable, Tuple
 
 @dataclass
 class BalanceConfig:
+    """
+    Configurations specifying how we should balance.
+
+    Attributes
+    ----------
+    set_x : Callable
+        setter for the `x` parameter.
+    get_y : Callable
+        getter for the `y` parameter.
+    predictor : object
+        object for making initial guesses of the balance_point; it must have
+        methods `predict0` and `predict1`.
+    rootfinder : Callable
+        numerical root finding class.
+    search_range : tupkle of float
+        (min, max) range of values `x` can take.
+    x_tolerance : float
+        acceptable error in `x` to terminate.
+    y_tolerance : float
+        acceptable error in `y` to terminate.
+    max_iter : int
+        maximum iterations to take.
+    max_reps : int
+        maximum number of repeated values allowed when root finding (guards 
+        against cycles).
+    max_coll : int
+        maximum number of collisions with the boundary of the search range 
+        before deciding no root exists there.
+    logger : Logger, optional
+    """
     set_x           : Callable[[float], Any]    # Set independent parameter
     get_y           : Callable[[], float]       # Function we are driving to 0
     predictor       : object                    # Helps make initial guess
@@ -23,7 +53,19 @@ class BalanceConfig:
     logger          : object                    # Logger
 
 def balance1d(p: float | Tuple[float, ...], C: BalanceConfig) -> RootFinderState:
+    """
+    Balance `x` by attempting to drive the `y` parameter to zero.
 
+    Parameters
+    ----------
+    p : float or tuple of float
+        parameters characterizing our position in phase space.
+    C : BalanceConfig
+
+    Returns
+    -------
+    RootFinderState
+    """
     if C.logger:
         C.logger.info("=" * 80)
         C.logger.info(f"1D Balance Procedure: p = {p}")
