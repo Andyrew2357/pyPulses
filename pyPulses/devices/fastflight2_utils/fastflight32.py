@@ -15,6 +15,7 @@ except:
 class FastFlight32():
     def __init__(self):
         self._num_spectra_per_trace = 1
+        self._acq_timeout = 5.0         # seconds to wait for new spectrum
         self.dither_len = 0.0           # Dithering length to use (V)
         self.dither_ready = False       # Are our protocols set for dithering?
 
@@ -227,7 +228,7 @@ class FastFlight32():
         timeout = time.time() + self._acq_timeout
         while True:
             current = self.num_spectra() or 0
-            if current > baseline:
+            if current > baseline + 1:
                 return
             if time.time() > timeout:
                 raise TimeoutError("Timed out waiting for new spectrum.")
