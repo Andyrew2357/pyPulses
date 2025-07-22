@@ -4,9 +4,11 @@ to inform its initial guesses and undergoes a numerical root finding procedure
 to converge on a balance point if its first two guesses are insufficient.
 """
 
-from .rootfinder import RootFinderState, RootFinderStatus
+from .rootfinder import RootFinder, RootFinderState, RootFinderStatus
+from .balance_predictor import BalancePredictor
 from dataclasses import dataclass
-from typing import Any, Callable, Tuple
+from logging import Logger
+from typing import Any, Callable, Tuple, Type
 
 @dataclass
 class BalanceConfig:
@@ -19,10 +21,10 @@ class BalanceConfig:
         setter for the `x` parameter.
     get_y : Callable
         getter for the `y` parameter.
-    predictor : object
+    predictor : BalancePredictor
         object for making initial guesses of the balance_point; it must have
         methods `predict0` and `predict1`.
-    rootfinder : Callable
+    rootfinder : Type[RootFinder]
         numerical root finding class.
     search_range : tupkle of float
         (min, max) range of values `x` can take.
@@ -42,15 +44,15 @@ class BalanceConfig:
     """
     set_x           : Callable[[float], Any]    # Set independent parameter
     get_y           : Callable[[], float]       # Function we are driving to 0
-    predictor       : object                    # Helps make initial guess
-    rootfinder      : Callable[..., object]     # Numerical root finder class
+    predictor       : BalancePredictor          # Helps make initial guess
+    rootfinder      : Type[RootFinder]          # Numerical root finder class
     search_range    : Tuple                     # Range of values x can take
     x_tolerance     : float                     # Acceptable x error for guesses
     y_tolerance     : float                     # Acceptable y error for guesses
     max_iter        : int                       # Max root finder iterations
     max_reps        : int                       # Guard against cycles
     max_coll        : int                       # Max boundary collisions
-    logger          : object                    # Logger
+    logger          : Logger = None             # Logger
 
 def balance1d(p: float | Tuple[float, ...], C: BalanceConfig) -> RootFinderState:
     """

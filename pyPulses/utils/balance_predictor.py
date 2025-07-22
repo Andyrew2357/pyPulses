@@ -1,5 +1,137 @@
-# I want to significantly alter how this works in the future.
+import numpy as np
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Tuple
 
+class BalancePredictor(ABC):
+    @abstractmethod
+    def predict0(self, *args, **kwargs) -> float: ...
+
+    @abstractmethod
+    def predict1(self, *args, **kwargs) -> float: ...
+
+    @abstractmethod
+    def update(self, *args, **kwargs): ...
+
+class DummyPred(BalancePredictor):
+    """
+    Dummy predictor that always returns the same values for initial and second 
+    guess.
+    """
+    def __init__(self, x0: float, x1: float):
+        """
+        Parameters
+        ----------
+        x0, x1 : float
+            first and second guesses
+        """
+        self.x0 = x0
+        self.x1 = x1
+
+    def predict0(self, *args, **kwargs) -> float:
+        return self.x0
+    
+    def predict1(self, *args, **kwargs) -> float:
+        return self.x1
+    
+    def update(self, *args, **kwargs):
+        pass
+
+class DummyPredFunc(BalancePredictor):
+    """
+    Dummy predictor that excepts arbitrary functions for its first and second
+    guesses.
+    """
+    def __init__(self, f0: Callable[[Any], float], f1: Callable[[Any], float]):
+        """
+        Parameters
+        ----------
+        f0, f1 : Callable
+            functions used for first and second guess respectively
+        """
+        self.predict0 = f0
+        self.predict1 = f1
+
+    def update(self, *args, **kwargs):
+        pass
+
+class ExtrapPred1d(BalancePredictor):
+    """
+    Predict future balance points by performing a polynomial fit on the last few.
+    The user must provide functions for default0 and default1.
+    """
+    def __init__(self, support: int, order: int, 
+                 default0: Callable[..., float], default1: Callable[..., float]):
+        """
+        Parameters
+        ----------
+        support : int
+            number of previous points to use for extrapolation
+        order : int
+            order of polynomial to use for extrapolation
+        default0, default1 : Callable
+            functions for making uninformed first and second guesses.
+        """
+        if order >= support:
+            raise RuntimeError(
+                f"order exceeds the maximum supported ({order} >= {support})."
+            ) 
+        self.support    = support
+        self.order      = order
+        self.default0   = default0
+        self.default1   = default1
+
+        self.X = np.zeros(support, dtype = float)
+        self.Y = np.zeros(support, dtype = float)
+        self.seen: int = 0
+
+    def predict0(self, x: float) -> float:
+        if self.seen == 0:
+            return self.default0(x)
+        
+        coeff = np.polyfit(self.X[:self.seen], self.Y[:self.seen], 
+                           min(self.order, self.seen - 1))
+        poly = np.poly1d(coeff)
+        return poly(x)
+    
+    def predict1(self, x: float, p: Tuple[float, float]) -> float:
+        if self.seen == 0:
+            return self.default1(x, p, self)
+        
+        xp, yp = self.get_last()
+        return yp
+    
+    def update(self, x: float, y: float):
+        """
+        Add a point to the record of previous points
+
+        Parameters
+        ----------
+        x, y : float
+        """
+        self.X[1:] = self.X[0:-1]
+        self.X[0] = x
+
+        self.Y[1:] = self.Y[0:-1]
+        self.Y[0] = y
+
+        if self.seen < self.support:
+            self.seen += 1
+
+    def reset(self):
+        """Reset the predictor."""
+        self.seen = 0
+
+    def get_last(self) -> Tuple[float, float]:
+        """
+        Get the previous added point
+        
+        Returns
+        -------
+        x, y : float
+        """
+        return self.X[0], self.Y[0]
+
+# I want to significantly alter how this works in the future.
 """
 Predict future balance points for an N dimensional phase space. 
 
@@ -28,7 +160,7 @@ direction. For the second, we use the next highest priority direction.
 import numpy as np
 from typing import Callable, Tuple
 
-class ExtrapPredNd():
+class ExtrapPredNd(BalancePredictor):
     """Predict future balance points for an N dimensional phase space."""
     def __init__(self,
                  pspace_shape   : Tuple[int, ...],      # phase space shape 

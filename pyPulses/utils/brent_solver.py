@@ -5,10 +5,10 @@ help in reducing the required number of function calls (costly measurements) to
 converge on a balance point.
 """
 
-from .rootfinder import RootFinderState, RootFinderStatus
+from .rootfinder import RootFinder, RootFinderState, RootFinderStatus
 from typing import Tuple
 
-class BrentSolver:
+class BrentSolver(RootFinder):
     """
     Class implementation of a modified version of the Brent-Dekker method for 
     root finding.

@@ -395,7 +395,13 @@ class FastFlightBridge():
             
             elif method in ['get_data', 'get_trace', 'get_trace_dither']:
                 # Special handling for get_data to use binary transfer
-                result = self.ff2.get_data()
+                if method == 'get_data':
+                    result = self.ff2.get_data()
+                elif method == 'get_trace':
+                    result = self.ff2.get_trace()
+                elif method == 'get_trace_dither':
+                    result = self.ff2.get_trace_dither()
+                    
                 if result is None:
                     return {'success': True, 'result': None}
                 

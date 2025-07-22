@@ -4,6 +4,8 @@ These are utility datastructures for root finding algorithms.
 
 from dataclasses import dataclass
 from enum import Enum, auto
+from abc import ABC, abstractmethod
+from typing import Tuple
 
 class RootFinderStatus(Enum):
     """
@@ -75,3 +77,19 @@ class RootFinderState:
         s += f"message      : {self.message}\n"
         s += f"best_value   : {self.best_value:.2e}\n"
         return s
+
+class RootFinder(ABC):
+    xa: float
+    xb: float
+
+    @abstractmethod
+    def __init__(xa: float, xb: float,
+                 search_range: Tuple[float, float],
+                 x_tolerance: float,
+                 y_tolerance: float,
+                 max_iter: int,
+                 max_reps: int,
+                 max_coll: int): ...
+
+    @abstractmethod
+    def update(self, f_value: float) -> RootFinderState: ...
