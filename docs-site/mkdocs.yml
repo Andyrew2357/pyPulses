@@ -21,15 +21,18 @@ nav:
   - Reference:
     - Devices:
       - DeviceRegistry: reference/devices/DeviceRegistry.md
-      - DifferentialPair: reference/devices/DifferentialPair.md
       - FastFlight2: reference/devices/FastFlight2.md
       - PIDbox: reference/devices/PIDbox.md
       - ad5764: reference/devices/ad5764.md
       - ad9854: reference/devices/ad9854.md
       - cryomagnetics4G: reference/devices/cryomagnetics4G.md
       - dtg5274: reference/devices/dtg5274.md
+      - dtgDifferentialPair: reference/devices/dtgDifferentialPair.md
       - hf2li: reference/devices/hf2li.md
       - hf2liACout: reference/devices/hf2liACout.md
+      - hf2liDemodChannel: reference/devices/hf2liDemodChannel.md
+      - hf2liOscillator: reference/devices/hf2liOscillator.md
+      - hf2liOutputChannel: reference/devices/hf2liOutputChannel.md
       - hp34401a: reference/devices/hp34401a.md
       - ips120: reference/devices/ips120.md
       - keithley2000: reference/devices/keithley2000.md

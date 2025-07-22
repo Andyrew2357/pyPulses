@@ -6,7 +6,7 @@ DTG channels in software to make them behave in the appropriate manner
 from .dtg import DTG
 from .dtg_utils import Channel
 
-class DifferentialPair():
+class dtgDifferentialPair():
     """Differential pair for use with Oliver's pulse shaper box"""
     def __init__(self, dtg: DTG, chx: str | Channel, chy: str | Channel):
         """

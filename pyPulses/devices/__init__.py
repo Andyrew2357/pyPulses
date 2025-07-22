@@ -10,9 +10,10 @@ from .ad5764 import ad5764
 from .ad9854 import ad9854
 from .cryomagnetics_4G import cryomagnetics4G
 from .dtg import dtg5274
-from .dtg_diff_pair import DifferentialPair
+from .dtg_diff_pair import dtgDifferentialPair
 from .fastflight2 import FastFlight2
-from .hf2li import hf2li, hf2liACout
+from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel, 
+                    hf2liOscillator, hf2liOutputChannel)
 from .hp34401a import hp34401a
 from .ips120 import ips120
 from .keithley2000 import keithley2000
@@ -29,11 +30,14 @@ __all__ = [
     "ad9854",
     "cryomagnetics4G",
     "DeviceRegistry",
-    "DifferentialPair"
+    "dtgDifferentialPair",
     "dtg5274",
     "FastFlight2",
     "hf2li",
     "hf2liACout",
+    "hf2liDemodChannel",
+    "hf2liOscillator",
+    "hf2liOutputChannel",
     "hp34401a",
     "ips120",
     "keithley2000",

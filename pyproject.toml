@@ -21,6 +21,7 @@ dependencies = [
     "bitarray",
     "gpib-ctypes>=0.2",
     "matplotlib",
+    "mkdocs",
     "numpy>=2.0",
     "pyserial>=3.5",
     "PyQT5",
