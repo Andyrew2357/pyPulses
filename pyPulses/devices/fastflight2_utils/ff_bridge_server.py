@@ -228,17 +228,18 @@ class FastFlight32():
         return vaXData.value, vaYData.value, self.get_tof_parms()
     
     def get_spectrum(self) -> Tuple[list, list, dict] | None:
-        self.stop_acq()
+        if self.is_acq_running():
+            self.stop_acq()
         self.start_acq()
         
         prot = self.Protocols[self.GSObj.ActiveProtoNumber]
-        rec_len = 1e-6 * prot.RecordLength
-        target_rec = prot.RecordsPerSpectrum
+        rec_len = 1e-6 * float(prot.RecordLength)
+        target_rec = float(prot.RecordsPerSpectrum)
         wait_time = max(target_rec * rec_len * 0.1, 0.01)
-        while self.num_spectra() < 1:
+        while self.num_spectra() <= 1:
             time.sleep(wait_time)
-            # if not self.is_acq_running():
-            #     raise RuntimeError("Acquisition did not start successfully.")
+            if not self.is_acq_running():
+                raise RuntimeError("Acquisition did not start successfully.")
             
         # This is broken.
         # FF2CtrlObj.Records does not behave as I would expect...
@@ -261,9 +262,10 @@ class FastFlight32():
     def get_trace(self) -> Tuple[list, list, dict] | None:
         """Get TOF data repeatedly"""
         T, V, D = self.get_spectrum()
+        V = list(V)  # Ensure V is a mutable list
         for _ in range(self._num_spectra_per_trace):
             t, v, d = self.get_spectrum()
-            for i in len(t):
+            for i in range(len(t)):
                 V[i] += v[i]
             D['ErrFlags'] |= d['ErrFlags']
 
@@ -298,11 +300,12 @@ class FastFlight32():
             self.set_general_settings(ActiveProtoNumber = i % 16)
             if i == 0:
                 T, V, D = self.get_spectrum()
+                V = list(V)  # Ensure V is a mutable list
 
             t, v, d = self.get_spectrum()
             voff = self.Protocols[0].VerticalOffset
             num_avg = self.Protocols[0].RecordsPerSpectrum
-            for i in len(t):
+            for i in range(len(t)):
                 offset = self.Protocols[i].VerticalOffset - voff
                 offset_int = int(offset * num_avg * 256 / 0.5) # Volts to integer rep
                 V[i] += v[i] - offset_int
