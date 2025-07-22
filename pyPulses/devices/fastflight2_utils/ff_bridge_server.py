@@ -227,31 +227,33 @@ class FastFlight32():
             return
         return vaXData.value, vaYData.value, self.get_tof_parms()
     
-    def get_spectrum(self) -> Tuple[list, list, dict] | None:
-        if self.is_acq_running():
-            self.stop_acq()
-        self.start_acq()
-        
+    def _wait_for_new_spectrum(self, baseline: int):
         prot = self.Protocols[self.GSObj.ActiveProtoNumber]
         rec_len = 1e-6 * float(prot.RecordLength)
         target_rec = float(prot.RecordsPerSpectrum)
-        wait_time = max(target_rec * rec_len * 0.1, 0.01)
-        while self.num_spectra() <= 1:
-            time.sleep(wait_time)
+        wait_step = max(target_rec * rec_len * 0.1, 0.01)
+
+        timeout = time.time() + self._acq_timeout
+        while True:
+            current = self.num_spectra() or 0
+            if current > baseline:
+                return
+            if time.time() > timeout:
+                raise TimeoutError("Timed out waiting for new spectrum.")
             if not self.is_acq_running():
-                raise RuntimeError("Acquisition did not start successfully.")
-            
-        # This is broken.
-        # FF2CtrlObj.Records does not behave as I would expect...
-        # while True:
-        #     n_rec = self.num_records()
-        #     if n_rec >= target_rec:
-        #         break
-        #     time.sleep((target_rec - n_rec) * rec_len / 2)
-        
-        res = self.get_data()
-        self.stop_acq()
-        return res
+                raise RuntimeError("Acquisition unexpectedly stopped.")
+            time.sleep(wait_step)
+
+
+    def get_spectrum(self) -> Tuple[list, list, dict] | None:
+        baseline = self.num_spectra() or 0
+
+        if not self.is_acq_running():
+            self.start_acq()
+
+        self._wait_for_new_spectrum(baseline)
+        return self.get_data()
+
     
     def get_num_spectra_per_trace(self) -> int:
         return self._num_spectra_per_trace
@@ -260,18 +262,24 @@ class FastFlight32():
         self._num_spectra_per_trace = N
     
     def get_trace(self) -> Tuple[list, list, dict] | None:
-        """Get TOF data repeatedly"""
-        T, V, D = self.get_spectrum()
-        V = list(V)  # Ensure V is a mutable list
-        for _ in range(self._num_spectra_per_trace):
-            t, v, d = self.get_spectrum()
-            for i in range(len(t)):
-                V[i] += v[i]
-            D['ErrFlags'] |= d['ErrFlags']
+        self.start_acq()
+        try:
+            T, V, D = self.get_spectrum()
+            V = list(V)
 
-        prot = self.Protocols[self.GSObj.ActiveProtoNumber]
-        D['SpecNum'] = self._num_spectra_per_trace * prot.RecordsPerSpectrum
-        return T, V, D
+            for _ in range(self._num_spectra_per_trace - 1):
+                t, v, d = self.get_spectrum()
+                for i in range(len(t)):
+                    V[i] += v[i]
+                D['ErrFlags'] |= d['ErrFlags']
+
+            prot = self.Protocols[self.GSObj.ActiveProtoNumber]
+            D['SpecNum'] = self._num_spectra_per_trace * prot.RecordsPerSpectrum
+
+            return T, V, D
+        finally:
+            self.stop_acq()
+
     
     def get_dither_len(self) -> float:
         return self.dither_len
@@ -290,29 +298,32 @@ class FastFlight32():
         self.dither_len = dither_len
         self.dither_ready = True
         
-    def get_trace_dither(self) -> Tuple[list, list, dict] | None:
-        """Get TOF data repeatedly with dithering."""
+def get_trace_dither(self) -> Tuple[list, list, dict] | None:
+    if not self.dither_ready:
+        raise RuntimeError("Protocols are not prepped for dithering.")
 
-        if not self.dither_ready:
-            raise RuntimeError("Protocols are not prepped for dithering.")
-        
+    self.start_acq()
+    try:
         for i in range(self._num_spectra_per_trace):
-            self.set_general_settings(ActiveProtoNumber = i % 16)
+            self.set_general_settings(ActiveProtoNumber=i % 16)
+
             if i == 0:
                 T, V, D = self.get_spectrum()
-                V = list(V)  # Ensure V is a mutable list
-
-            t, v, d = self.get_spectrum()
-            voff = self.Protocols[0].VerticalOffset
-            num_avg = self.Protocols[0].RecordsPerSpectrum
-            for i in range(len(t)):
-                offset = self.Protocols[i].VerticalOffset - voff
-                offset_int = int(offset * num_avg * 256 / 0.5) # Volts to integer rep
-                V[i] += v[i] - offset_int
-            D['ErrFlags'] |= d['ErrFlags']
+                V = list(V)
+            else:
+                t, v, d = self.get_spectrum()
+                voff = self.Protocols[0].VerticalOffset
+                num_avg = self.Protocols[0].RecordsPerSpectrum
+                for j in range(len(t)):
+                    offset = self.Protocols[i % 16].VerticalOffset - voff
+                    offset_int = int(offset * num_avg * 256 / 0.5)
+                    V[j] += v[j] - offset_int
+                D['ErrFlags'] |= d['ErrFlags']
 
         D['SpecNum'] = self._num_spectra_per_trace * num_avg
         return T, V, D
+    finally:
+        self.stop_acq()
 
 ################################################################################
 
