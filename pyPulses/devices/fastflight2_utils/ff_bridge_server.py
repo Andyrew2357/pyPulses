@@ -228,16 +228,25 @@ class FastFlight32():
         return vaXData.value, vaYData.value, self.get_tof_parms()
     
     def get_spectrum(self) -> Tuple[list, list, dict] | None:
+        self.stop_acq()
         self.start_acq()
         
         prot = self.Protocols[self.GSObj.ActiveProtoNumber]
-        rec_len = 1e6 * prot.RecordLen
+        rec_len = 1e-6 * prot.RecordLength
         target_rec = prot.RecordsPerSpectrum
-        while True:
-            n_rec = self.num_records()
-            if n_rec >= target_rec:
-                break
-            time.sleep((target_rec - n_rec) * rec_len / 2)
+        wait_time = max(target_rec * rec_len * 0.1, 0.01)
+        while self.num_spectra() < 1:
+            time.sleep(wait_time)
+            # if not self.is_acq_running():
+            #     raise RuntimeError("Acquisition did not start successfully.")
+            
+        # This is broken.
+        # FF2CtrlObj.Records does not behave as I would expect...
+        # while True:
+        #     n_rec = self.num_records()
+        #     if n_rec >= target_rec:
+        #         break
+        #     time.sleep((target_rec - n_rec) * rec_len / 2)
         
         res = self.get_data()
         self.stop_acq()
@@ -258,8 +267,8 @@ class FastFlight32():
                 V[i] += v[i]
             D['ErrFlags'] |= d['ErrFlags']
 
-        D['SpecNum'] = self._num_spectra_per_trace * \
-                        self.Protocols[0].RecordsPerSpectrum
+        prot = self.Protocols[self.GSObj.ActiveProtoNumber]
+        D['SpecNum'] = self._num_spectra_per_trace * prot.RecordsPerSpectrum
         return T, V, D
     
     def get_dither_len(self) -> float:
@@ -299,10 +308,8 @@ class FastFlight32():
                 V[i] += v[i] - offset_int
             D['ErrFlags'] |= d['ErrFlags']
 
-        D['SpecNum'] = self._num_spectra_per_trace * \
-                        self.Protocols[0].RecordsPerSpectrum
+        D['SpecNum'] = self._num_spectra_per_trace * num_avg
         return T, V, D
-
 
 ################################################################################
 

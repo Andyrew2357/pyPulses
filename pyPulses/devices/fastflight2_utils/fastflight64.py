@@ -133,7 +133,7 @@ class FastFlight64():
             self._process.stdin.flush()
 
             # Special handling for get_data which returns binary
-            if method == 'get_data':
+            if method in ['get_data', 'get_trace', 'get_trace_dither']:
                 # Read the first line to see if it's a JSON or binary
                 response_line_bytes = self._process.stdout.readline()
                 if not response_line_bytes:
