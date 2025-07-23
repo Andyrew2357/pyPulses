@@ -26,7 +26,7 @@ def _create_plotter_config(swept_names: List[str],
     return config
 
 def plotSweep(sweep: ParamSweepMeasure, plotter_class = None, 
-              plotter_kwargs: dict = {}) -> Tuple[np.ndarray | None, Any]:
+              plotter_kwargs: dict = None) -> Tuple[np.ndarray | None, Any]:
     """
     Run a parameter sweep with asynchronous plotting.
 
@@ -42,6 +42,7 @@ def plotSweep(sweep: ParamSweepMeasure, plotter_class = None,
     plotter : Any
     """
 
+    plotter_kwargs = plotter_kwargs or {}
     # Import the plotter class here to avoid circular imports
     if plotter_class is None:
         # Import default plotter here - keeping this import local prevents 

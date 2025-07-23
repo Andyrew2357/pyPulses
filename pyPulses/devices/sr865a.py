@@ -687,8 +687,8 @@ class sr865a(pyvisaDevice):
         sens = self._sens_value(self.settings['sens_ind'])
         return r, sens, irng
 
-    def get_average(self, auto_rescale: bool = False, rescale_args = (), 
-                    rescale_kwargs = {}) -> Tuple[np.ndarray, np.ndarray]:
+    def get_average(self, auto_rescale: bool = False, rescale_args = None, 
+                    rescale_kwargs = None) -> Tuple[np.ndarray, np.ndarray]:
         """
         Sample X,Y some desired number of times and return an average along with
         covariance in the measured values.
@@ -709,6 +709,8 @@ class sr865a(pyvisaDevice):
         mean, cov : np.ndarray
         """
 
+        rescale_args = rescale_args or ()
+        rescale_kwargs = rescale_kwargs or {}
         # adjust the lock-in range so that the signal fills some prescribed
         # portion of the range
         if auto_rescale:
