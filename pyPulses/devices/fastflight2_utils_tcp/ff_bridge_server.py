@@ -430,11 +430,11 @@ class FastFlightTCPHandler(socketserver.StreamRequestHandler):
 
             header = struct.pack(
                 '<IIIId',
-                int(meta['sampling_interval']),
-                int(meta['Errflags']),
-                int(meta['ProtoNum']),
-                int(meta['SpecNum']),
-                float(meta['TimeStamp'])
+                int(meta.get('sampling_interval', 0)),
+                int(meta.get('Errflags', 0)),
+                int(meta.get('ProtoNum', 0)),
+                int(meta.get('SpecNum', 0)),
+                float(meta.get('TimeStamp', 0.0))
             )
 
             self.wfile.write(b"BINARY_DATA_FOLLOWS\n")

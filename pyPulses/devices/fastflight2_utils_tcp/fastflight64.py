@@ -49,13 +49,16 @@ class FastFlight64():
 
             header = self.rfile.readline()
             if header == b'BINARY_DATA_FOLLOWS\n':
+                # Read fixed-size metadata: sampling_interval(4) + err_flags(4) + 
+                # proto_num(4) + spec_num(4) + timestamp(8) = 24 bytes
                 meta = self.rfile.read(24)
-                sampling_interval, err_flags, proto_num, spec_num = struct.unpack(
-                    '<IIII', meta[:16]
-                )
+                sampling_interval, err_flags, proto_num, spec_num = \
+                    struct.unpack('<IIII', meta[:16])
                 timestamp = struct.unpack('<d', meta[16:24])[0]
-                n = struct.unpack('<I', self.rfile.read(4))[0]
-                y_data = np.frombuffer(self.rfile.read(4 * n), dtype = '<i4')
+                print(sampling_interval, err_flags, proto_num, spec_num, timestamp) # ADDED THIS FOR DEBUGGING -- GETS HERE
+                n = struct.unpack('<I', self.rfile.read(4))[0] # data length
+                print(n) # ADDED THIS FOR DEBUGGING -- GETS HERE BUT HANGS... NOT SURE WHY (I am trying to transfer 200_000 points, 800 kB)
+                y_data = np.frombuffer(self.rfile.read(4 * n), dtype = '<i4') # 4 bytes per little-endian int32
                 x_data = self._reconstruct_x_data(n, sampling_interval)
                 return x_data, y_data.astype(float), {
                     'ErrFlags': err_flags,
@@ -68,7 +71,8 @@ class FastFlight64():
             if response['success']:
                 return response['result']
             
-            raise RuntimeError(response['error'])
+            raise RuntimeError(response['error'] + '\n' + \
+                               response.get('traceback', ''))
         
     def _reconstruct_x_data(self, length, sampling_interval):
         interval_map = {0: 0.25, 1: 0.25, 2: 0.5, 3: 1.0, 4: 2.0}
