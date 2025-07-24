@@ -70,7 +70,10 @@ class FastFlight2(abstractDevice):
         self._settings_synced = False
 
     def __del__(self):
+        if self.is_connected():
+            self.disconnect()
         del self.ff2
+        self.ff2 = None
         super().__del__()
 
     def _ensure_settings_synced(self):

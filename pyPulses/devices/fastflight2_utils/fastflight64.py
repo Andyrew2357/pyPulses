@@ -1,212 +1,100 @@
 from .ff_package_manager import FastFlightPackageManager
 
+import socket
 import json
+import struct
 import subprocess
 import time
-import struct
+import threading
 import numpy as np
 from typing import Tuple
 
 class FastFlight64():
-    def __init__(self):
-        self.package_manager = FastFlightPackageManager()
-        self.python32_path = self.package_manager.get_python32_path()
-        self.bridge_script_path = self.package_manager.get_bridge_script_path()
+    def __init__(self, host='127.0.0.1', port=50432, server_cmd=None):
+        self.host = host
+        self.port = port
 
-        self._process = None
-        self._start_bridge()
+        if server_cmd is None:
+            package_manager = FastFlightPackageManager()
+            python32_path = package_manager.get_python32_path()
+            bridge_script_path = package_manager.get_bridge_script_path()
+            self.server_cmd = server_cmd or [python32_path, bridge_script_path,
+                                             host, str(port)]
+        else:
+            self.server_cmd = server_cmd
 
-    def _start_bridge(self):
-        """Start the 32-bit bridge process"""
+        self._lock = threading.Lock()
+        self._connect_or_start()
 
-        if self._process is not None:
-            return
-        
+    def _connect_or_start(self):
         try:
-            self._process = subprocess.Popen(
-                [self.python32_path, self.bridge_script_path],
-                stdin   = subprocess.PIPE,
-                stdout  = subprocess.PIPE,
-                stderr  = subprocess.PIPE,
-                text    = False,
-                bufsize = 0
-            )
+            self._connect()
+        except (ConnectionRefusedError, OSError):
+            print("Starting TCP bridge server...")
+            self._server_proc = subprocess.Popen(self.server_cmd)
+            time.sleep(1.5)
+            self._connect()
 
-            time.sleep(0.5)
+    def _connect(self):
+        self.sock = socket.create_connection((self.host, self.port))
+        self.rfile = self.sock.makefile('rb')
+        self.wfile = self.sock.makefile('wb')
 
-            # Check if the process started successfully
-            if self._process.poll() is not None:
-                # Process already terminated
-                stderr_output = self._process.stderr.read().decode('utf-8')
-                stdout_output = self._process.stdout.read().decode('utf-8')
-                raise RuntimeError(
-                    f"Bridge process terminated immediately."
-                    f"STDERR: {stderr_output}, STDOUT: {stdout_output}"
-                )
-
-            print("Bridge process started, attempting to initialize...")
-
-            self._call_method('init')
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to start 32-bit Python bridge: {e}")
+    def _call_method(self, method, *args, **kwargs):
+        request = {'method': method, 'args': list(args), 'kwargs': kwargs}
         
-    def _reconstruct_x_data(self, length: int, sampling_interval: int
-                            ) -> np.ndarray:
-        """Reconstruct X data from sampling interval and length"""
+        with self._lock:
+            self.wfile.write((json.dumps(request) + '\n').encode('utf-8'))
+            self.wfile.flush()
 
-        interval_map = {
-            0: 0.25,
-            1: 0.25,
-            2: 0.5,
-            3: 1.0,
-            4: 2.0
-        }
-
-        return interval_map[sampling_interval] * np.arange(length)
-    
-    def _read_exact(self, size: int) -> bytes:
-        """Read exactly 'size' bytes from stdout, handling partial reads"""
+            header = self.rfile.readline()
+            if header == b'BINARY_DATA_FOLLOWS\n':
+                # Read fixed-size metadata: sampling_interval(4) + err_flags(4) + 
+                # proto_num(4) + spec_num(4) + timestamp(8) = 24 bytes
+                meta = self._read_exact(24)
+                sampling_interval, err_flags, proto_num, spec_num = \
+                    struct.unpack('<IIII', meta[:16])
+                timestamp = struct.unpack('<d', meta[16:24])[0]
+                n = struct.unpack('<I', self._read_exact(4))[0] # data length
+                y_data = np.frombuffer(self._read_exact(4 * n), dtype = '<i4') # 4 bytes per little-endian int32
+                x_data = self._reconstruct_x_data(n, sampling_interval)
+                return x_data, y_data.astype(float), {
+                    'ErrFlags': err_flags,
+                    'ProtoNum': proto_num,
+                    'SpecNum': spec_num,
+                    'TimeStamp': timestamp
+                }
+            
+            response = json.loads(header.decode('utf-8'))
+            if response['success']:
+                return response['result']
+            
+            raise RuntimeError(response['error'] + '\n' + \
+                               response.get('traceback', ''))
+        
+    def _read_exact(self, n_bytes: int) -> bytes:
+        """Read exactly n_bytes from the socket, handling partial reads."""
         data = b''
-        while len(data) < size:
-            chunk = self._process.stdout.read(size - len(data))
+        while len(data) < n_bytes:
+            chunk = self.rfile.read(n_bytes - len(data))
             if not chunk:
-                raise RuntimeError(
-                    f"Unexpected end of stream. Expected {size} bytes, "
-                    f"got {len(data)}")
+                raise ConnectionError("Socket closed unexpectedly")
             data += chunk
         return data
+        
+    def _reconstruct_x_data(self, length, sampling_interval):
+        interval_map = {0: 0.25, 1: 0.25, 2: 0.5, 3: 1.0, 4: 2.0}
+        return interval_map[sampling_interval] * np.arange(length)
     
-    def _read_binary_data(self):
-        """Read binary data response from bridge process"""
-        try:
-            # Read fixed-size metadata: sampling_interval(4) + err_flags(4) + 
-            # proto_num(4) + spec_num(4) + timestamp(8) = 24 bytes
-            metadata_bytes = self._read_exact(24)
-            
-            sampling_interval, err_flags, proto_num, spec_num = \
-                struct.unpack('<IIII', metadata_bytes[:16])
-            timestamp = struct.unpack('<d', metadata_bytes[16:24])[0]
-            
-            # Read data length
-            data_len_bytes = self._read_exact(4)
-            data_length = struct.unpack('<I', data_len_bytes)[0]
-            
-            if data_length == 0:
-                # Handle empty data case
-                x_data = np.array([])
-                y_data = np.array([])
-            else:
-                # Read Y data
-                y_bytes = self._read_exact(data_length * 4)  # 4 bytes per int32
-                y_data = np.frombuffer(y_bytes, dtype='<i4')  # Little-endian int32
-                x_data = self._reconstruct_x_data(data_length, sampling_interval)
-            
-            tof_parms = {
-                'ErrFlags'  : err_flags,
-                'ProtoNum'  : proto_num,
-                'SpecNum'   : spec_num,
-                'TimeStamp' : timestamp
-            }
-            
-            return x_data, y_data.astype(float), tof_parms
-            
-        except Exception as e:
-            raise RuntimeError(f"Failed to read binary data: {e}")
-        
-    def _call_method(self, method, *args, **kwargs):
-        """Call a method on the remote FastFlight instance"""
-
-        if self._process is None or self._process.poll() is not None:
-            raise RuntimeError("Bridge process is not running")
-        
-        request = {
-            'method': method,
-            'args'  : list(args),
-            'kwargs': kwargs
-        }
-
-        try:
-            # send request
-            request_json = json.dumps(request) + '\n'
-            self._process.stdin.write(request_json.encode('utf-8'))
-            self._process.stdin.flush()
-
-            # Special handling for get_data which returns binary
-            if method in ['get_data', 'get_trace', 'get_trace_dither']:
-                # Read the first line to see if it's a JSON or binary
-                response_line_bytes = self._process.stdout.readline()
-                if not response_line_bytes:
-                    raise RuntimeError("No response from bridge process")
-                
-                response_line = response_line_bytes.decode('utf-8').strip()
-                
-                # Check if it's the binary data marker
-                if response_line == "BINARY_DATA_FOLLOWS":
-                    return self._read_binary_data()
-                else:
-                    # It's a regular JSON response (probably None case)
-                    try:
-                        response = json.loads(response_line)
-                        if response['success']:
-                            return response['result']
-                        else:
-                            error_msg = response['error']
-                            if 'traceback' in response:
-                                error_msg += '\n' + response['traceback']
-                            raise RuntimeError(f"Remote error: {error_msg}")
-                    except json.JSONDecodeError as e:
-                        raise RuntimeError(
-                            f"Failed to decode JSON response: {response_line}, "
-                            f"error: {e}")
-                            
-            else:
-                # Read regular JSON response
-                response_line_bytes = self._process.stdout.readline()
-                if not response_line_bytes:
-                    raise RuntimeError("No response from bridge process")
-                
-                response_line = response_line_bytes.decode('utf-8').strip()
-                
-                try:
-                    response = json.loads(response_line)
-                    if response['success']:
-                        return response['result']
-                    else:
-                        error_msg = response['error']
-                        if 'traceback' in response:
-                            error_msg += '\n' + response['traceback']
-                        raise RuntimeError(f"Remote error: {error_msg}")
-                except json.JSONDecodeError as e:
-                    raise RuntimeError(f"Failed to decode JSON response: "
-                                       f"{response_line}, error: {e}")
-                
-        except Exception as e:
-            raise RuntimeError(f"Communication error: {e}")
-        
     def __del__(self):
         """Clean up the bridge process"""
-        self.close_bridge()
+        if self.is_connected():
+            self.close()
 
-    def close_bridge(self):
-        """Explicitly close the bridge process"""
-        if self._process is None:
-            return
-        
         try:
-            self._process.stdin.write(b'QUIT\n')
-            self._process.stdin.flush()
-            self._process.wait(timeout = 5)
-
+            self.sock.close()
         except:
-            self._process.terminate()
-            try:
-                self._process.wait(timeout = 2)
-            except:
-                self._process.kill()
-
-        finally:
-            self._process = None
+            pass
 
     """Mirror all FastFlight32 methods"""
     def get_prot_parms(self, prot_num: int):

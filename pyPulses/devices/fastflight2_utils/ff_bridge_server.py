@@ -1,9 +1,10 @@
-import json
+import socketserver
 import sys
-import traceback
+import json
 import struct
-import time
-from typing import Any, Dict
+import traceback
+import numpy as np
+from typing import Tuple
 
 ################################################################################
 """Copy of fastflight32 (imports get tricky with the subprocess)"""
@@ -11,6 +12,7 @@ from typing import Any, Dict
 from comtypes.client import CreateObject # type: ignore
 from comtypes.automation import VARIANT # type: ignore
 from typing import Tuple
+import time
 
 try:
     # If the library has already been generated, import it
@@ -328,187 +330,138 @@ class FastFlight32():
 
 ################################################################################
 
-class FastFlightBridge():
-    def __init__(self):
-        self.ff2 = None
+class FastFlightTCPHandler(socketserver.StreamRequestHandler):
+    def handle(self):
+        self.ff2 = FastFlight32()
 
-    def _send_binary_response(self, y_data, sampling_interval, tof_parms):
-        """Send binary response for get_data method"""
         try:
-            data_len = len(y_data) if y_data else 0
-            
-            # Ensure we have valid values for all parameters
-            sampling_interval = int(sampling_interval) if sampling_interval \
-                                                            is not None else 0
-            err_flags = int(tof_parms.get('ErrFlags', 0))
-            proto_num = int(tof_parms.get('ProtoNum', 0))
-            spec_num = int(tof_parms.get('SpecNum', 0))
-            timestamp = float(tof_parms.get('TimeStamp', 0.0))
-            
-            # Pack metadata: sampling_interval(4) + err_flags(4) + proto_num(4) 
-            # + spec_num(4) + timestamp(8) = 24 bytes
-            metadata = struct.pack('<IIIId', 
-                                 sampling_interval, 
-                                 err_flags,
-                                 proto_num, 
-                                 spec_num,
-                                 timestamp)
-            
-            # Pack data length
-            data_length_bytes = struct.pack('<I', data_len)
-            
-            # Write metadata and data length first
-            sys.stdout.buffer.write(metadata)
-            sys.stdout.buffer.write(data_length_bytes)
-            
-            # Convert and write Y data if present
-            if data_len > 0:
-                if hasattr(y_data, '__iter__'):  # List or array-like
-                    # Convert to list of integers if needed
-                    y_list = [int(val) for val in y_data]
-                    y_binary = struct.pack('<' + 'i' * data_len, *y_list)
-                else:
-                    raise ValueError("Y data is not iterable")
+            while True:
+                line = self.rfile.readline()
+                if not line:
+                    break
                 
-                sys.stdout.buffer.write(y_binary)
-            
-            sys.stdout.buffer.flush()
-            
-        except Exception as e:
-            # If binary sending fails, we need to send an error response
-            error_response = {
-                'success': False,
-                'error': f'Binary transfer failed: {str(e)}',
-                'traceback': traceback.format_exc()
-            }
-            response_json = json.dumps(error_response) + '\n'
-            sys.stdout.buffer.write(response_json.encode('utf-8'))
-            sys.stdout.buffer.flush()
+                line = line.decode('utf-8').strip()
+                if not line:
+                    continue
 
-    def handle_request(self, request: Dict[str, Any]):
-        """Handle a single request and return response"""
+                try:
+                    request = json.loads(line)
+                    response = self.handle_request(request)
 
+                    if response.get("binary"):
+                        self.send_binary_response(response)
+                    else:
+                        response_json = json.dumps(response) + '\n'
+                        self.wfile.write(response_json.encode('utf-8'))
+                        self.wfile.flush()
+
+                except json.JSONDecodeError as e:
+                    error = {
+                        'success': False, 
+                        'error': f"JSON decode error: {str(e)}"
+                    }
+                    self.wfile.write(json.dumps(error).encode('utf-8') + b'\n')
+                    self.wfile.flush()
+
+        finally:
+            if self.ff2 and self.ff2.is_connected():
+                self.ff2.close()
+            del self.ff2
+            self.ff2 = None
+
+    def handle_request(self, request: dict) -> dict:
         try:
             method = request['method']
             args = request.get('args', [])
             kwargs = request.get('kwargs', {})
 
-            # Initialize FastFlight instance if needed
-            if self.ff2 is None and method != 'init':
-                self.ff2 = FastFlight32()
-
-            # Handle method calls
             if method == 'init':
                 self.ff2 = FastFlight32()
                 return {'success': True, 'result': None}
-                
-            elif method == 'del':
-                if self.ff2:
-                    del self.ff2
-                    self.ff2 = None
-                return {'success': True, 'result': None}
             
+            elif method == 'del':
+                if self.ff2 and self.ff2.is_connected():
+                    self.ff2.close()
+                del self.ff2
+                self.ff2 = None
+
             elif method in ['get_data', 'get_trace', 'get_trace_dither']:
-                # Special handling for get_data to use binary transfer
-                if method == 'get_data':
-                    result = self.ff2.get_data()
-                elif method == 'get_trace':
-                    result = self.ff2.get_trace()
-                elif method == 'get_trace_dither':
-                    result = self.ff2.get_trace_dither()
-                    
-                if result is None:
-                    return {'success': True, 'result': None}
+                func = getattr(self.ff2, method, None)
+                if not func:
+                    return {
+                        'success': False, 
+                        'error': f"Unknown method: {method}"
+                    }
                 
-                x_data, y_data, tof_parms = result
-
-                # Get current sampling interval from active protocol
-                try:
-                    # First get general settings to find active protocol
-                    self.ff2.FF2Ctrl.GetGeneralSettings(self.ff2.GSObj)
-                    active_proto = self.ff2.GSObj.ActiveProtoNumber
-                    
-                    # Get the protocol to find sampling interval
-                    self.ff2.FF2Ctrl.GetProtocol(active_proto, self.ff2.Protocols[active_proto])
-                    sampling_interval = self.ff2.Protocols[active_proto].SamplingInterval
-                except:
-                    # Fallback to a default sampling interval if we can't get it
-                    sampling_interval = 0
-
-                # First send a marker line to indicate binary data follows
-                marker_line = "BINARY_DATA_FOLLOWS\n"
-                sys.stdout.buffer.write(marker_line.encode('utf-8'))
-                sys.stdout.buffer.flush()
-
-                # Send binary response
-                self._send_binary_response(y_data, sampling_interval, tof_parms)
-
-                # Return a special marker to indicate binary data was sent
-                return {'success': True, 'result': 'BINARY_SENT'}
+                result = func()
+                if result is None:
+                    return {'success': False, 'result': None}
+                
+                _, y, d = result
+                return {
+                    'success': True,
+                    'binary': True,
+                    'y_data': y,
+                    'meta': {
+                        'sampling_interval': self.ff2.Protocols[
+                            self.ff2.GSObj.ActiveProtoNumber
+                        ].SamplingInterval, **d
+                    }
+                }
             
             elif hasattr(self.ff2, method):
                 result = getattr(self.ff2, method)(*args, **kwargs)
                 return {'success': True, 'result': result}
             
             else:
-                return {'success': False, 
-                        'error'  : f'Unknown method: {method}'
-                    }
+                return {'success': False, 'error': f"Unknown method: {method}"}
             
         except Exception as e:
             return {
-                'success'   : False,
-                'error'     : str(e),
-                'traceback' : traceback.format_exc()
+                'success': False,
+                'error': str(e),
+                'traceback': traceback.format_exc()
             }
         
-    def run(self):
-        """
-        Main message loop. Read JSON requests from stdin, write to stdout.
-        """
-
+    def send_binary_response(self, response: dict):
         try:
-            while True:
-                # Read binary data from stdin and decode
-                line_bytes = sys.stdin.buffer.readline()
-                if not line_bytes:
-                    break
+            meta = response['meta']
+            y = response['y_data']
+            n = len(y)
 
-                line = line_bytes.decode('utf-8').strip()
-                
-                if not line or line == 'QUIT':
-                    break
+            header = struct.pack(
+                '<IIIId',
+                int(meta.get('sampling_interval', 0)),
+                int(meta.get('ErrFlags', 0)),
+                int(meta.get('ProtoNum', 0)),
+                int(meta.get('SpecNum', 0)),
+                float(meta.get('TimeStamp', 0.0))
+            )
 
-                try:
-                    request = json.loads(line)
-                    response = self.handle_request(request)
+            self.wfile.write(b"BINARY_DATA_FOLLOWS\n")
+            self.wfile.write(header)
+            self.wfile.write(struct.pack('<I', n))
+            y_array = np.array(y, dtype='<i4')  # Ensure little-endian int32
+            self.wfile.write(y_array.tobytes())
+            self.wfile.flush()
 
-                    # Only send JSON response if it's not a binary data response
-                    if response.get('result') != 'BINARY_SENT':
-                        response_json = json.dumps(response) + '\n'
-                        sys.stdout.buffer.write(response_json.encode('utf-8'))
-                        sys.stdout.buffer.flush()
+        except Exception as e:
+            err = {
+                'success': False,
+                'error': f"Binary send failed: {str(e)}",
+                'traceback': traceback.format_exc()
+            }
+            self.wfile.write(json.dumps(err).encode('utf-8') + b'\n')
+            self.wfile.flush()
 
-                except json.JSONDecodeError as e:
-                    error_response = {
-                        'success': False, 
-                        'error'  : f'JSON decode error: {str(e)}'
-                    }
-                    response_json = json.dumps(error_response) + '\n'
-                    sys.stdout.buffer.write(response_json.encode('utf-8'))
-                    sys.stdout.buffer.flush()
+class ThreadedTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
 
-        except KeyboardInterrupt:
-            pass
-        
-        finally:
-            if self.ff2:
-                try:
-                    if self.ff2.is_connected():
-                        self.ff2.close()
-                except:
-                    pass
+def run_tcp_bridge(host: str, port: int):
+    with ThreadedTCPServer((host, port), FastFlightTCPHandler) as server:
+        print(f"FastFlight TCP bridge running on {host}:{port}")
+        server.serve_forever()
 
 if __name__ == '__main__':
-    bridge = FastFlightBridge()
-    bridge.run()
+    host, port = sys.argv[1:]
+    run_tcp_bridge(host, int(port))

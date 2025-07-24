@@ -90,7 +90,7 @@ class FastFlightPackageManager:
         """Install required packages (comtypes)"""
         
         subprocess.run([
-            str(self.python32_exe), "-m", "pip", "install", "comtypes"
+            str(self.python32_exe), "-m", "pip", "install", "comtypes", "numpy"
         ], check=True)
     
     def _copy_scripts(self):
