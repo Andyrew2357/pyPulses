@@ -298,33 +298,33 @@ class FastFlight32():
         self.set_general_settings(ActiveProtoNumber = 0)
         self.dither_len = dither_len
         self.dither_ready = True
-        
-def get_trace_dither(self) -> Tuple[list, list, dict] | None:
-    if not self.dither_ready:
-        raise RuntimeError("Protocols are not prepped for dithering.")
+            
+    def get_trace_dither(self) -> Tuple[list, list, dict] | None:
+        if not self.dither_ready:
+            raise RuntimeError("Protocols are not prepped for dithering.")
 
-    self.start_acq()
-    try:
-        for i in range(self._num_spectra_per_trace):
-            self.set_general_settings(ActiveProtoNumber=i % 16)
+        self.start_acq()
+        try:
+            for i in range(self._num_spectra_per_trace):
+                self.set_general_settings(ActiveProtoNumber=i % 16)
 
-            if i == 0:
-                T, V, D = self.get_spectrum()
-                V = list(V)
-            else:
-                t, v, d = self.get_spectrum()
-                voff = self.Protocols[0].VerticalOffset
-                num_avg = self.Protocols[0].RecordsPerSpectrum
-                for j in range(len(t)):
-                    offset = self.Protocols[i % 16].VerticalOffset - voff
-                    offset_int = int(offset * num_avg * 256 / 0.5)
-                    V[j] += v[j] - offset_int
-                D['ErrFlags'] |= d['ErrFlags']
+                if i == 0:
+                    T, V, D = self.get_spectrum()
+                    V = list(V)
+                else:
+                    t, v, d = self.get_spectrum()
+                    voff = self.Protocols[0].VerticalOffset
+                    num_avg = self.Protocols[0].RecordsPerSpectrum
+                    for j in range(len(t)):
+                        offset = self.Protocols[i % 16].VerticalOffset - voff
+                        offset_int = int(offset * num_avg * 256 / 0.5)
+                        V[j] += v[j] - offset_int
+                    D['ErrFlags'] |= d['ErrFlags']
 
-        D['SpecNum'] = self._num_spectra_per_trace * num_avg
-        return T, V, D
-    finally:
-        self.stop_acq()
+            D['SpecNum'] = self._num_spectra_per_trace * num_avg
+            return T, V, D
+        finally:
+            self.stop_acq()
 
 ################################################################################
 
