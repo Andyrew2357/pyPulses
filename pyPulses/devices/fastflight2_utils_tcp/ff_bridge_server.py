@@ -3,6 +3,7 @@ import sys
 import json
 import struct
 import traceback
+import numpy as np
 from typing import Tuple
 
 ################################################################################
@@ -440,7 +441,8 @@ class FastFlightTCPHandler(socketserver.StreamRequestHandler):
             self.wfile.write(b"BINARY_DATA_FOLLOWS\n")
             self.wfile.write(header)
             self.wfile.write(struct.pack('<I', n))
-            self.wfile.write(struct.pack('<' + 'i' * n, *y))
+            y_array = np.array(y, dtype='<i4')  # Ensure little-endian int32
+            self.wfile.write(y_array.tobytes())
             self.wfile.flush()
 
         except Exception as e:
