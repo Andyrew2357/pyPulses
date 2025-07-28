@@ -1,3 +1,10 @@
+"""
+Provides a way to run jobs from a Jupyter notebook in separate threads that can
+be paused and stopped on checkpoints (These are either added manually or
+injected into function definitions on each loop iteration using an AST 
+transformer).
+"""
+
 import ast
 import inspect
 import textwrap
@@ -6,7 +13,7 @@ import time
 import traceback
 from contextvars import ContextVar
 from types import ModuleType
-from typing import List
+from typing import Callable, List
 
 
 """Thread-local / current-control plumbing"""
@@ -68,18 +75,19 @@ def _make_checkpoint_call():
         )
     )
 
-def auto_checkpoint(func):
+def auto_checkpoint(func: Callable, src: str = None) -> Callable:
     """
     Decorate a function to inject `_checkpoint()` at the start of each for/while
     loop. If source can't be obtained, it silently falls back to the original
     function.
     """
 
-    try:
-        src = inspect.getsource(func)
-    except (OSError, IOError, TypeError):
-        # couldn't get source (built-in, C extensions, etc.)
-        return func
+    if src is None:
+        try:
+            src = inspect.getsource(func)
+        except (OSError, IOError, TypeError):
+            # couldn't get source (built-in, C extensions, etc.)
+            return func
     
     src = textwrap.dedent(src)
     tree = ast.parse(src)
@@ -161,6 +169,8 @@ class ThreadJob:
 
         # Internal event listeners
         self._events = {'start': [], 'stop': [], 'finish': [], 'error': []}
+        
+        self._joined = False
 
     def on(self, event, callback):
         """Register internal listener for 'start', 'stop', 'finish', 'error'."""
@@ -214,12 +224,19 @@ class ThreadJob:
 
         finally:
             _current_control.reset(token)
+            self._joined = True
 
-    def start(self):
+    def start(self, force_restart: bool = True):
         if self.thread and self.thread.is_alive():
-            print("Thread already running.")
-            return
+            if not force_restart:
+                print("Thread already running.")
+                return
+            print("Force stopping previous thread...")
+            self.stop()
+            self.join(timeout = 5)
+
         self.thread = threading.Thread(target=self._runner, daemon=True)
+        self._joined = False
         self.thread.start()
 
     def pause(self):
@@ -233,6 +250,12 @@ class ThreadJob:
 
     def is_alive(self):
         return self.thread and self.thread.is_alive()
+    
+    def join(self, timeout=None):
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout)
+        self._joined = True
+
 
     def show_controls(self):
         """Display pause/resume/stop buttons inline (only in Jupyter)."""
@@ -277,9 +300,9 @@ class ThreadJob:
         self.on('stop', stopped_cleanup)
         self.on('error', show_error)
 
-    def start_with_controls(self):
+    def start_with_controls(self, force_restart: bool = True):
         self.show_controls()
-        self.start()
+        self.start(force_restart = force_restart)
 
 
 """Check to see if we're in a notebook"""
