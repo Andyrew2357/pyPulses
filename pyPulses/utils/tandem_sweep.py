@@ -8,6 +8,7 @@ dissimilar parameters simultaneously; it's mostly there for param_sweep_measure.
 """
 
 from .getsetter import getSetter
+from ..thread_job import _checkpoint
 
 from typing import Any, Callable, List
 import numpy as np
@@ -20,7 +21,8 @@ def tandemSweep(setters: List[Callable[[float], Any]],
                 max_step: List[float | None],  
                 min_step: List[float | None] = None,
                 tolerance: List[float | None] = None,
-                handle_exceptions: bool = True) -> bool:
+                handle_exceptions: bool = True,
+                ignore_checkpoints: bool = True) -> bool:
     """
     Sweeps multiple parameters smoothly while respecting their maximum step
     sizes.
@@ -99,6 +101,9 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     # meaningless changes.
     prev_settings = start.copy()
     for i in range(M):
+        if not ignore_checkpoints:
+            _checkpoint()
+
         new_settings = start + i * (end - start) / M
 
         # determine which parameters are close enough not to set
@@ -148,7 +153,8 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     return True
 
 def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float, 
-                  handle_exceptions: bool = True) -> bool:
+                  handle_exceptions: bool = True, 
+                  ignore_checkpoints: bool = True) -> bool:
     """
     Wrapper of `tandemSweep` for more human syntax. 
     
@@ -202,4 +208,4 @@ def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float,
 
     return tandemSweep(setters, start, target, 
                        wait, max_step, min_step, tolerance, 
-                       handle_exceptions)
+                       handle_exceptions, ignore_checkpoints)

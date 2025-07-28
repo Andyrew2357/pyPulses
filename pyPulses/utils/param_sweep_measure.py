@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from .tandem_sweep import tandemSweep
 from .getsetter import getSetter
+from ..thread_job import _checkpoint
 
 def _get_data_str(coords: np.ndarray, data: np.ndarray, 
                  now: datetime.datetime | None) -> str:
@@ -107,14 +108,16 @@ class ParamSweepMeasure:
         Whether to hold on to measured values and return as a numpy array. This 
         can be memory intensive for large scans, so make sure to set it False in 
         those cases.
-    ramp_wait : float, optional 
-        Wait time if using tandem sweep (important for safely sweeping in some 
-        circumstances).
-    ramp_kwargs : dict, optional
-        Keyword arguments for tandem sweep.
     timestamp : bool, default=True
         Whether to include a timestamp for each point (Note this is not returned, 
         only written to files and passed to callbacks).
+    ramp_wait : float, optional 
+        Wait time if using tandem sweep (important for safely sweeping in some 
+        circumstances).
+    ramp_checkpoints : bool, default=False
+        Whether to include thread_job checkpoints when ramping.
+    ramp_kwargs : dict, optional
+        Keyword arguments for tandem sweep.
     """
     measurements    : Dict[str, Any] | List[Dict[str, Any]]                     # measured variables
     coordinates     : Dict[str, Any] | List[Dict[str, Any]]                     # swept variables
@@ -139,6 +142,7 @@ class ParamSweepMeasure:
     
     # If tandem sweeping is desired, need to provide these
     ramp_wait       : float = None                                              # wait time between steps when ramping
+    ramp_checkpoints: bool = False                                              # whether to include thread_job checkpoints when ramping
     ramp_kwargs     : dict = None                                               # keyword arguments for tandem sweep
 
     def __post_init__(self):
@@ -187,6 +191,7 @@ class ParamSweepMeasure:
                              fill_value = np.nan, dtype = float)
 
         for idx, target in self._iterator():
+            _checkpoint()
             measured_vars = self.measure_at_point(idx, target)
             if self.retain_return:
                 result[*idx,:] = measured_vars
@@ -284,7 +289,9 @@ class ParamSweepMeasure:
         else:
             tandemSweep(self.coord_vars, previous_coords, target_coords,
                         self.ramp_wait, self.ramp_max_step, self.ramp_min_step,
-                        self.ramp_tolerance, **self.ramp_kwargs)
+                        self.ramp_tolerance, 
+                        ignore_checkpoints = not self.ramp_checkpoints, 
+                        **self.ramp_kwargs)
 
     def measure_at_point(self, idx: np.ndarray, target_coords: np.ndarray
                          ) -> np.ndarray:
