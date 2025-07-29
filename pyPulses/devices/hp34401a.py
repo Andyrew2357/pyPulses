@@ -19,6 +19,10 @@ class hp34401a(pyvisaDevice):
             "gpib_eos_mode"     : False,
             "gpib_eos_char"     : ord('\n'),
             "gpib_eoi_mode"     : True,
+
+            'max_retries': 3,
+            'retry_delay': 0.1,
+            'min_interval': 0.05
         }
 
         super().__init__(self.pyvisa_config, logger, instrument_id)

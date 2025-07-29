@@ -22,6 +22,10 @@ class mso44(pyvisaDevice):
             "resource_name" : "TCPIP0::169.254.9.11::inst0::INSTR",
             "timeout"           : 10000,
             "input_buffer_size" : 16384,
+
+            'max_retries': 3,
+            'retry_delay': 0.1,
+            'min_interval': 0.05
         }
 
         super().__init__(self.pyvisa_config, logger, instrument_id)

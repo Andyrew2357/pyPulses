@@ -23,7 +23,11 @@ class sr865a(pyvisaDevice):
         """        
         self.pyvisa_config = {
             "resource_name"     : "USB0::0xB506::0x2000::003931::INSTR",
-            "output_buffer_size": 512
+            "output_buffer_size": 512,
+
+            'max_retries': 3,
+            'retry_delay': 0.1,
+            'min_interval': 0.05
         }
 
         super().__init__(self.pyvisa_config, logger, instrument_id)

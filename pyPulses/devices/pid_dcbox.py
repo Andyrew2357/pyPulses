@@ -33,7 +33,11 @@ class PIDbox(pyvisaDevice):
             "parity"        : pyvisa.constants.Parity.none,
             "stop_bits"     : pyvisa.constants.StopBits.one,
             "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE,
-            "write_buffer_size" : 512
+            "write_buffer_size" : 512,
+            
+            'max_retries': 3,
+            'retry_delay': 0.1,
+            'min_interval': 0.05
         }
 
         super().__init__(self.pyvisa_config, logger, instrument_id)
