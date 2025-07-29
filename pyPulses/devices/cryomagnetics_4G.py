@@ -44,7 +44,7 @@ class cryomagnetics4G(pyvisaDevice):
         H : float
             field strength in T.
         """
-        imag_ = self.device.query("IMAG?").strip()
+        imag_ = self.query("IMAG?").strip()
         units = imag_[-2:]
         if not units == 'kG':
             self.error("IMAG? returned incorrect units; expected kilogauss.")
@@ -70,12 +70,12 @@ class cryomagnetics4G(pyvisaDevice):
 
         self.info(f"CM4G: Requested sweep to {H_T} T.")
 
-        pshtr = self.device.query("PSHTR?").strip() == '1'
+        pshtr = self.query("PSHTR?").strip() == '1'
         if pshtr:
             self.error("Switch heater is on; expected switch heater to be off.")
             return
         
-        imag_ = self.device.query("IMAG?").strip()
+        imag_ = self.query("IMAG?").strip()
         units = imag_[-2:]
         if not units == 'kG':
             self.error("IMAG? returned incorrect units; expected kilogauss.")
@@ -90,23 +90,23 @@ class cryomagnetics4G(pyvisaDevice):
             if not self._set_sweep_lim(0.0, H_strength_kG):
                 self.error("sweep_H failed.")
                 return False
-            self.device.write("SWEEP UP FAST")
+            self.write("SWEEP UP FAST")
         
         elif H_strength_kG < 0: # DOWN
             if not self._set_sweep_lim(H_strength_kG, 0.0):
                 self.error("sweep_H failed.")
                 return False
-            self.device.write("SWEEP DOWN FAST")
+            self.write("SWEEP DOWN FAST")
 
         self._wait_for_field(H_strength_kG, self.H_sweep_tol)
 
         # pause to stabilize
         self._pause_msg("Pausing to stabilize", 10)
-        self.device.write("PSHTR ON")
+        self.write("PSHTR ON")
 
         self._pause_msg("Waiting for switch to go normal", 15)
         
-        pshtr = self.device.query("PSHTR?").strip() == '1'
+        pshtr = self.query("PSHTR?").strip() == '1'
         if not pshtr:
             self.error("Failed to enable switch heater.")
             return False
@@ -115,27 +115,27 @@ class cryomagnetics4G(pyvisaDevice):
             if not self._set_verify("LLIM", H_kG, self.H_tol_kG):
                 self.error("Error when setting and verifying.")
                 return False
-            self.device.write("SWEEP DOWN")
+            self.write("SWEEP DOWN")
         
         elif H_kG > H_strength_kG:
             if not self._set_verify("ULIM", H_kG, self.H_tol_kG):
                 self.error("Error when setting and verifying.")
                 return False
-            self.device.write("SWEEP UP")
+            self.write("SWEEP UP")
         
         else:
             self.error("Target and field setpoints identical.")
             return False
         
         self._wait_for_field(H_kG, self.H_tol_kG)
-        self.device.write("PSHTR OFF")
-        pshtr = self.device.query("PSHTR?").strip() == '1'
+        self.write("PSHTR OFF")
+        pshtr = self.query("PSHTR?").strip() == '1'
         if pshtr:
             self.error("Failed to disable switch heater")
             return False
         
         self._pause_msg("Turning heater switch off", 15)
-        self.device.write("SWEEP ZERO FAST")
+        self.write("SWEEP ZERO FAST")
 
         self._wait_for_field(0.0, self.H_sweep_tol)
 
@@ -143,8 +143,8 @@ class cryomagnetics4G(pyvisaDevice):
         return True
 
     def _set_verify(self, setting: str, H_kG: float, H_tol_kG: float) -> bool:
-        self.device.write(f"{setting} {H_kG}")
-        set_H = float(self.device.query(f"{setting}?").strip()[:-2])
+        self.write(f"{setting} {H_kG}")
+        set_H = float(self.query(f"{setting}?").strip()[:-2])
 
         if abs(set_H - H_kG) > H_tol_kG:
             self.error(f"Error setting {setting}.")
@@ -167,14 +167,14 @@ class cryomagnetics4G(pyvisaDevice):
             return False
         
     def _set_sweep_lim_inner(self, H_lo: float, H_hi: float) -> bool:
-        self.device.write(f"ULIM {H_hi}")
+        self.write(f"ULIM {H_hi}")
         time.sleep(0.5)
-        set_H_hi = float(self.device.query("ULIM?").strip()[:-2])
+        set_H_hi = float(self.query("ULIM?").strip()[:-2])
         time.sleep(0.5)
 
-        self.device.write(f"LLIM {H_lo}")
+        self.write(f"LLIM {H_lo}")
         time.sleep(0.5)
-        set_H_lo = float(self.device.query("LLIM?").strip()[:-2])
+        set_H_lo = float(self.query("LLIM?").strip()[:-2])
         time.sleep(0.5)
 
         if abs(H_hi - set_H_hi) > self.H_sweep_tol:
@@ -189,7 +189,7 @@ class cryomagnetics4G(pyvisaDevice):
 
     def _wait_for_field(self, H_target_kG: float, H_tol_kG: float):
         while True:
-            iout_kG = float(self.device.query("IOUT?").strip()[:-2])
+            iout_kG = float(self.query("IOUT?").strip()[:-2])
             self.info(
                 f"H_supply = {iout_kG:.5f} kG, H_target = {H_target_kG:.5f} kG"
             )

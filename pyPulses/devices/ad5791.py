@@ -119,29 +119,29 @@ class ad5791(pyvisaDevice):
         
         # Clear command
         clear_cmd = bytes([255, 254, 251, ch, 0, 0])
-        self.device.write_raw(clear_cmd)
+        self.write_raw(clear_cmd)
         time.sleep(0.02)
         
         # Clear the read buffer
         try:
-            self.device.read_raw()
+            self.read_raw()
         except pyvisa.errors.VisaIOError:
             pass  # No data available to read
 
         # Read command
         read_cmd = bytes([255, 254, ch, 144, 0, 0])
-        self.device.write_raw(read_cmd)
+        self.write_raw(read_cmd)
         time.sleep(0.02)
 
         # Read response
-        self.device.write_raw(read_cmd)
+        self.write_raw(read_cmd)
         time.sleep(0.02)
-        response = self.device.read_bytes(6)
+        response = self.device.read_bytes(6) # does this exist? I don't think so --> This class has never properly been tested because the box I was trying to use was broken...
         time.sleep(0.02)
         
         # Clear the read buffer
         try:
-            self.device.read_raw()
+            self.read_raw()
         except pyvisa.errors.VisaIOError:
             pass  # No data available to read
 
@@ -215,11 +215,11 @@ class ad5791(pyvisaDevice):
             command = bytes([255, 254, 253, ch, d1, d2, d3])
             
             # Write to instrument using PyVISA
-            self.device.write_raw(command)
+            self.write_raw(command)
             
             # Clear the read buffer
             try:
-                self.device.read_raw()
+                self.read_raw()
             except pyvisa.errors.VisaIOError:
                 print("error handling used")
                 pass  # No data available to read

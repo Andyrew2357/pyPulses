@@ -74,7 +74,10 @@ class ips120(pyvisaDevice):
 
     def _send_cmd(self, cmd: str, retries: int = None) -> str | None:
         """Send command with retry logic"""
-        
+        # This class has its own bespoke retry logic because I am reticent to
+        # change things that appear to have worked in other implementations for
+        # an instrument of this nature
+
         retries = retries or self.retries
         for i in range(retries):
             try:

@@ -75,7 +75,7 @@ class keithley2450(pyvisaDevice):
         chatty : bool, default=True
             whether to log the change in channel settings.
         """
-        self.device.write(f"SOUR:VOLT {V}")
+        self.write(f"SOUR:VOLT {V}")
         if chatty:
             self.info(f"Keithley2450: Set voltage source to {V} V.")
 
@@ -87,11 +87,11 @@ class keithley2450(pyvisaDevice):
         -------
         V : float
         """
-        source_mode = self.device.query("SOUR:FUNC?").strip()
+        source_mode = self.query("SOUR:FUNC?").strip()
         if source_mode == 'VOLT':
-            return float(self.device.query("READ? \"defbuffer1\", SOUR"))
+            return float(self.query("READ? \"defbuffer1\", SOUR"))
         else:
-            return float(self.device.query("MEAS:VOLT?"))
+            return float(self.query("MEAS:VOLT?"))
 
     def set_I(self, I: float):
         """
@@ -101,7 +101,7 @@ class keithley2450(pyvisaDevice):
         ----------
         I : float
         """
-        self.device.write(f"SOUR:CURR {I}")
+        self.write(f"SOUR:CURR {I}")
         self.info(f"Keithley2450: Set current source to {I} A.")
 
     def get_I(self) -> float:
@@ -112,11 +112,11 @@ class keithley2450(pyvisaDevice):
         -------
         I : float
         """
-        source_mode = self.device.query("SOUR:FUNC?").strip()
+        source_mode = self.query("SOUR:FUNC?").strip()
         if source_mode == 'CURR':
-            return float(self.device.query("READ? \"defbuffer1\", SOUR"))
+            return float(self.query("READ? \"defbuffer1\", SOUR"))
         else:
-            return float(self.device.query("MEAS:CURR?"))
+            return float(self.query("MEAS:CURR?"))
 
     def set_compliance(self, val: float):
         """
@@ -128,9 +128,9 @@ class keithley2450(pyvisaDevice):
         ----------
         val : float
         """
-        source = self.device.query("SOUR:FUNC?").strip()
+        source = self.query("SOUR:FUNC?").strip()
         sense = 'ILIM' if source == 'VOLT' else 'VLIM'
-        self.device.write(f"SOUR:{source}:{sense}:LEV {val}")
+        self.write(f"SOUR:{source}:{sense}:LEV {val}")
         self.info(f"Keithley2450: Set {sense} compliance to {val}.")
 
     def get_compliance(self) -> float:
@@ -142,9 +142,9 @@ class keithley2450(pyvisaDevice):
         -------
         compliance_val : float
         """
-        source = self.device.query("SOUR:FUNC?").strip()
+        source = self.query("SOUR:FUNC?").strip()
         sense = 'ILIM' if source == 'VOLT' else 'VLIM'
-        return float(self.device.query(f"SOUR:{source}:{sense}:LEV?"))
+        return float(self.query(f"SOUR:{source}:{sense}:LEV?"))
     
     def set_source_volt(self, volt: bool):
         """
@@ -155,12 +155,12 @@ class keithley2450(pyvisaDevice):
         volt : bool
             true = voltage source, false = current source.
         """
-        self.device.write(f"SOUR:FUNC {'VOLT' if volt else 'CURR'}")
+        self.write(f"SOUR:FUNC {'VOLT' if volt else 'CURR'}")
         self.info(f"Keithley2450: Set source to {'volt' if volt else 'curr'}.")
 
     def is_source_volt(self) -> bool:
         """Return True if the source setting is voltage."""
-        return self.device.query("SOUR:FUNC?").strip() == 'VOLT'
+        return self.query("SOUR:FUNC?").strip() == 'VOLT'
 
     def set_output_on(self, on: bool):
         """
@@ -171,12 +171,12 @@ class keithley2450(pyvisaDevice):
         on : bool
             true = enabled, false = disabled.
         """
-        self.device.write(f"OUTP:STAT {'ON' if on else 'OFF'}")
+        self.write(f"OUTP:STAT {'ON' if on else 'OFF'}")
         self.info(f"Keithley2450: Set output {'on' if on else 'off'}.")
 
     def is_output_on(self) -> bool:
         """Return True if the output is on."""
-        return int(self.device.query("OUTP:STAT?")) == 1
+        return int(self.query("OUTP:STAT?")) == 1
     
     def set_source_V_range(self, V: float):
         """
@@ -186,7 +186,7 @@ class keithley2450(pyvisaDevice):
         ----------
         V : float
         """
-        self.device.write(f"SOUR:VOLT:RANG {V}")
+        self.write(f"SOUR:VOLT:RANG {V}")
         self.info(f"Keithley2450: Set source voltage range to {V} V.")
 
     def get_source_V_range(self) -> float:
@@ -197,4 +197,4 @@ class keithley2450(pyvisaDevice):
         -------
         Vrange : float
         """
-        return float(self.device.query("SOUR:VOLT:RANG?"))
+        return float(self.query("SOUR:VOLT:RANG?"))

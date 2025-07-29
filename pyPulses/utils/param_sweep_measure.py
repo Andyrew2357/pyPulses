@@ -63,17 +63,17 @@ class ParamSweepMeasure:
     ----------
     measurements : dict or list of dicts
         Measured parameters in the form: 
-            {'f': <getter>, 'name': <parameter name>}
+            {'f': getter, 'name': parameter name}
         The 'f' attribute is required and must be a callable that returns a 
         float. The name attribute is optional and should be a string.
     coordinates : dict or list of dicts
         Swept parameters in the form:
             {
-            'f': <getter>, 'name': <parameter name>, 
-            'min_step': <minimum step to take when sweeping>,
-            'max_step': <maximum step to take when sweeping>,
-            'tolerance': <error tolerance when deciding if 
-                          parameter needs to be set at all>
+            'f': getter, 'name': parameter name, 
+            'min_step': minimum step to take when sweeping,
+            'max_step': maximum step to take when sweeping,
+            'tolerance': error tolerance when deciding if 
+                         parameter needs to be set at all
             }
         The 'f' attribute is required and must be a callable that returns a 
         float when called without an argument and sets the parameter when called 
@@ -115,7 +115,7 @@ class ParamSweepMeasure:
         Wait time if using tandem sweep (important for safely sweeping in some 
         circumstances).
     ramp_checkpoints : bool, default=False
-        Whether to include thread_job checkpoints when ramping.
+        Whether to include `thread_job` checkpoints when ramping.
     ramp_kwargs : dict, optional
         Keyword arguments for tandem sweep.
     """

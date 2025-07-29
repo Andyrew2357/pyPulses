@@ -9,9 +9,12 @@ from .abstract_device import abstractDevice
 import pyvisa.constants
 import pyvisa
 import re
+import functools
+import time
+from threading import Lock
 
 class pyvisaDevice(abstractDevice):
-    def __init__(self, pyvisa_config, logger = None, instrument_id = None):
+    def __init__(self, pyvisa_config: dict, logger = None, instrument_id = None):
         """Standard initialization, calling ResourceManager.open_resource."""
         
         super().__init__(logger)
@@ -20,6 +23,17 @@ class pyvisaDevice(abstractDevice):
             self.pyvisa_config['resource_name'] = instrument_id
         DeviceRegistry.register_device(self.pyvisa_config['resource_name'], self)
         
+        # Retry and rate limit settings (can be updated later)
+        self.retry_settings = {
+            'max_retries': pyvisa_config.get('max_retries', 3),
+            'retry_delay': pyvisa_config.get('retry_delay', 0.1),
+            'retry_exceptions': pyvisa_config.get('retry_exceptions', 
+                                                  (pyvisa.VisaIOError,)),
+            'min_interval': pyvisa_config.get('min_interval', 0.01)
+        }
+        self._rate_limit_locks = {}
+        self._last_called = {}
+
         # for debugging purposes, we can connect to an object that mimics a
         # pyvisa resource but just logs the messages it recieves. The user may
         # also pre-program responses from the dummy resource for testing. 
@@ -140,6 +154,92 @@ class pyvisaDevice(abstractDevice):
             self.warn(f"Exception during pyvisaDevice cleanup: {e}")
             
         super().__del__()
+
+    @staticmethod
+    def retry_and_rate_limit(method):
+        """
+        Decorator that retries and rate-limits instance methods, reading 
+        settings from self.retry_settings.
+        """
+        @functools.wraps(method)
+        def wrapper(self, *args, **kwargs):
+            # Extract instance settings
+            settings = getattr(self, "retry_settings", {})
+            max_retries = settings.get("max_retries", 3)
+            retry_exceptions = settings.get("retry_exceptions", 
+                                            (pyvisa.VisaIOError,))
+            retry_delay = settings.get("retry_delay", 0.1)
+            min_interval = settings.get("min_interval", 0.0)
+
+            # Rate limiting: lock to ensure global timing across threads
+            lock = self._rate_limit_locks.setdefault(method.__name__, Lock())
+            with lock:
+                last_called = self._last_called.setdefault(method.__name__, 0.0)
+                elapsed = time.time() - last_called
+                if elapsed < min_interval:
+                    time.sleep(min_interval - elapsed)
+                self._last_called[method.__name__] = time.time()
+
+            # Retry logic
+            for attempt in range(max_retries):
+                try:
+                    return method(self, *args, **kwargs)
+                except retry_exceptions as e:
+                    self.warn(
+                        f"{method.__name__} failed (attempt {attempt+1}): {e}"
+                    )
+                    if attempt == max_retries - 1:
+                        raise
+                    time.sleep(retry_delay)
+
+        return wrapper
+    
+    def set_retry_params(self, 
+                         max_retries: int = None, 
+                         retry_delay: float = None, 
+                         min_interval: float = None):
+        if max_retries is not None:
+            self.retry_settings["max_retries"] = max_retries
+        if retry_delay is not None:
+            self.retry_settings["retry_delay"] = retry_delay
+        if min_interval is not None:
+            self.retry_settings["min_interval"] = min_interval
+
+    @retry_and_rate_limit
+    def write(self, *args, **kwargs):
+        self.debug(f"Writing: {args[0]}")
+        return self.device.write(*args, **kwargs)
+
+    @retry_and_rate_limit
+    def write_raw(self, *args, **kwargs):
+        self.debug(f"Writing raw: {args[0]}")
+        return self.device.write_raw(*args, **kwargs)
+
+    @retry_and_rate_limit
+    def read(self, *args, **kwargs):
+        response = self.device.read(*args, **kwargs)
+        self.debug(f"Read: {response}")
+        return response
+
+    @retry_and_rate_limit
+    def read_raw(self, *args, **kwargs):
+        response = self.device.read_raw(*args, **kwargs)
+        self.debug(f"Read raw: {response}")
+        return response
+
+    @retry_and_rate_limit
+    def query(self, *args, **kwargs):
+        self.debug(f"Querying: {args[0]}")
+        start = time.time()
+        result = self.device.query(*args, **kwargs)
+        elapsed = time.time() - start
+        self.debug(f"Response: {result.strip()} (in {elapsed:.3f}s)")
+        return result
+    
+    @retry_and_rate_limit
+    def flush(self, *args, **kwargs):
+        self.debug(f"Flushing: {args}")
+        return self.device.flush(*args, **kwargs)
 
 """
 This is a dummy class for debugging instruments without actually sending 

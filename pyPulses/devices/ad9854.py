@@ -198,20 +198,20 @@ class ad9854(pyvisaDevice):
     def _write_command(self, command: bytes, speedy: bool = True):
         """Internal method to handle command writing with error recovery."""
         try:
-            self.device.write_raw(command)
+            self.write_raw(command)
             if not speedy: 
                 self._flush_buffers()
         except Exception as e:
             self.error(f"Write error: {e}, attempting reconnect...")
             self.refresh()
-            self.device.write_raw(command)
+            self.write_raw(command)
             if not speedy:
                 self._flush_buffers()
 
     def _flush_buffers(self):
         """Clear communication buffers."""
         try:
-            self.device.read_raw()
+            self.read_raw()
         except pyvisa.errors.VisaIOError:
             pass
-        self.device.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
+        self.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)

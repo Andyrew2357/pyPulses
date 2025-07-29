@@ -417,7 +417,8 @@ def mu(vt: List[float], vb: List[float],
        var_chi_r: float = 0.0, var_chi_i: float = 0.0,
        var_chi_g: float = 0.0, var_chi_b: float = 0.0,
        cb: float = 1.0, gamma: float = 1.0, var_gamma: float = 0.0,
-       omega: float = 0.0, mask_nans: bool = False, 
+       omega: float = 0.0, 
+       mask_nans: bool = False, neg_to_nan: bool = False,
        **kwargs) -> Tuple[np.ndarray, np.ndarray]:
     """
     Calculate jump in chemical potential and estimated uncertainty for all
@@ -439,6 +440,8 @@ def mu(vt: List[float], vb: List[float],
         variance of `gamma`.
     mask_nans : bool, default=False
         whether to ignore NaNs when integrating.
+    neg_to_nan: bool, default=False
+        whether to convert negative compressibility to NaN before integrating.
     **kwargs : dict
 
     Returns
@@ -458,6 +461,14 @@ def mu(vt: List[float], vb: List[float],
             raise ValueError(f"Unrecognized mode: {mode}")
     
     cq, Ar, dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b  = res
+    if neg_to_nan:
+        msk = cq < 0
+        cq[msk] = np.nan
+        dcq_dchi_r[msk] = np.nan
+        dcq_dchi_i[msk] = np.nan
+        dcq_dchi_g[msk] = np.nan
+        dcq_dchi_b[msk] = np.nan
+
     mu = gap(vt, vb, cq, cb, gamma, mask_nans, **kwargs)
     mu_unc = gap_unc(vt, vb, cq, 
                      dcq_dchi_r, dcq_dchi_i, dcq_dchi_g, dcq_dchi_b, 

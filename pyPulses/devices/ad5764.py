@@ -185,14 +185,14 @@ class ad5764(pyvisaDevice):
 
         try:
             # Write to instrument using PyVISA
-            self.device.write_raw(command)
+            self.write_raw(command)
             
             # Clear the read buffer
             try:
-                self.device.read_raw()
+                self.read_raw()
             except pyvisa.errors.VisaIOError:
                 pass  # No data available to read
-            self.device.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
+            self.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
                 
             self.V[ch] = float(V)
             if chatty:
@@ -206,14 +206,14 @@ class ad5764(pyvisaDevice):
             self.refresh()
 
             # Write to instrument using PyVISA
-            self.device.write_raw(command)
+            self.write_raw(command)
             
             # Clear the read buffer
             try:
-                self.device.read_raw()
+                self.read_raw()
             except pyvisa.errors.VisaIOError:
                 pass  # No data available to read
-            self.device.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
+            self.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
                 
             self.V[ch] = float(V)
             if chatty:
@@ -262,16 +262,16 @@ class ad5764(pyvisaDevice):
 
         nc1, nc2 = getter_map[ch]
         ask_cmd = bytes([255, 254, 253, nc1, 0, 0, nc2, 0, 0])
-        self.device.write_raw(ask_cmd)
+        self.write_raw(ask_cmd)
         # Clear the read buffer
         try:
-            self.device.read_raw()
+            self.read_raw()
         except pyvisa.errors.VisaIOError:
             pass  # No data available to read
 
         read_cmd = bytes([255, 254, 253, 0, 0, 0, 0, 0, 0])
-        self.device.write_raw(read_cmd)
-        out = self.device.read_raw(6)
+        self.write_raw(read_cmd)
+        out = self.read_raw(6)
         print(out)
 
         if ch >= 4:

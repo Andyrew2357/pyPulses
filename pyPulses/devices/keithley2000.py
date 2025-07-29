@@ -35,8 +35,8 @@ class keithley2000(pyvisaDevice):
         V : float
         """
         """Query the measured voltage."""
-        self.device.write(":CONF:VOLT:DC")
-        return float(self.device.query(":READ?"))
+        self.write(":CONF:VOLT:DC")
+        return float(self.query(":READ?"))
 
 
     def get_I(self) -> float:
@@ -47,5 +47,5 @@ class keithley2000(pyvisaDevice):
         -------
         I : float
         """
-        self.device.write(":CONF:VOLT:DC")
-        return float(self.device.query(":READ?"))
+        self.write(":CONF:VOLT:DC")
+        return float(self.query(":READ?"))

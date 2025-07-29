@@ -64,7 +64,7 @@ class DTG(pyvisaDevice):
 
         for mf in self.mainframes:
             for slot in self.slots:
-                module_id = int(self.device.query(f"PGEN{slot}{mf}:ID?"))
+                module_id = int(self.query(f"PGEN{slot}{mf}:ID?"))
                 self.modules[(slot, mf)] = module_id
                 if module_id != -1:
                     for ch in range(1, self.MODULES[module_id]['n_ch'] + 1):
@@ -120,11 +120,11 @@ class DTG(pyvisaDevice):
         """
 
         if pg is None:
-            self.mode = self.device.query("TBAS:OMODE?").strip()
+            self.mode = self.query("TBAS:OMODE?").strip()
             return self.mode == 'PULS'
         
         self.mode = 'PULS' if pg else 'DATA'
-        self.device.write(f"TBAS:OMODE {self.mode}")
+        self.write(f"TBAS:OMODE {self.mode}")
         self.info(f"Set operational mode to {'pulse' if pg else 'data'} mode.")
 
     def burst_mode(self, burst: bool = None) -> bool | None:
@@ -143,10 +143,10 @@ class DTG(pyvisaDevice):
         """
 
         if burst is None:
-            return self.device.query("TBAS:MODE?").strip() == 'BURS'
+            return self.query("TBAS:MODE?").strip() == 'BURS'
         
-        self.device.write(f"TBAS:MODE {'BURS' if burst else 'CONT'}")
-        self.device.write(f"Entered {'burst' if burst else 'continuous mode.'}")
+        self.write(f"TBAS:MODE {'BURS' if burst else 'CONT'}")
+        self.write(f"Entered {'burst' if burst else 'continuous mode.'}")
     
     def run(self, on: bool = None) -> bool | None:
         """
@@ -164,9 +164,9 @@ class DTG(pyvisaDevice):
         """
 
         if on is None:
-            return int(self.device.query("TBAS:RUN?"))
+            return int(self.query("TBAS:RUN?"))
         
-        self.device.write(f"TBAS:RUN {'ON' if on else 'OFF'}")
+        self.write(f"TBAS:RUN {'ON' if on else 'OFF'}")
         self.info(f"{'En' if on else 'Dis'}abled sequencer.")
 
     def output_enable(self, on: bool):
@@ -179,7 +179,7 @@ class DTG(pyvisaDevice):
             true = enable, false = disable.
         """
 
-        self.device.write(f"OUTPut:STATe:ALL {'ON' if on else 'OFF'}")
+        self.write(f"OUTPut:STATe:ALL {'ON' if on else 'OFF'}")
         self.info(f"{'En' if on else 'Dis'}abled outputs.")
         
     def frequency(self, f: float = None) -> float:
@@ -198,12 +198,12 @@ class DTG(pyvisaDevice):
         """
 
         if f is None:
-            f = float(self.device.query("TBAS:FREQ?"))
+            f = float(self.query("TBAS:FREQ?"))
             self._frequency = f
             return f
         
         f = max(5.0e4, min(1.675e9, f))
-        self.device.write(f"TBAS:FREQ {f}")
+        self.write(f"TBAS:FREQ {f}")
         self._frequency = f
         self.info(f"Set frequency to {f} Hz.")
         return f
@@ -224,12 +224,12 @@ class DTG(pyvisaDevice):
         """
 
         if T is None:
-            T = float(self.device.query("TBAS:PERiod?"))
+            T = float(self.query("TBAS:PERiod?"))
             self._frequency = 1 / T
             return T
         
         T = max(1 / 1.675e9, min(1 / 5.0e4, T))
-        self.device.write(f"TBAS:PERiod {T}")
+        self.write(f"TBAS:PERiod {T}")
         self._frequency = 1 / T
         self.info(f"Set period to {T} s.")
         return T
@@ -250,7 +250,7 @@ class DTG(pyvisaDevice):
         """
 
         if d is None:
-            self._time_offset = float(self.device.query("TBAS:DOFFset?"))
+            self._time_offset = float(self.query("TBAS:DOFFset?"))
             return self._time_offset
         
         f = self._frequency
@@ -259,7 +259,7 @@ class DTG(pyvisaDevice):
 
         d = min(1.0 / f, max(0.0, d))
         self._time_offset = d
-        self.device.write(f"TBAS:OFFset {d}")
+        self.write(f"TBAS:OFFset {d}")
         self.info(f"Set global time offset to {d} s.")
         return d
     
@@ -279,15 +279,15 @@ class DTG(pyvisaDevice):
         """
 
         if Z is None:
-            return float(self.device.query("TBAS:TIN:IMPedance?"))
+            return float(self.query("TBAS:TIN:IMPedance?"))
         
         if Z >= 1e3:
             Z = 1e3
         else:
             Z = 50
 
-        self.device.write(f"TBAS:TIN:IMPedance {Z}")
-        self.device.info(f"Set trigger input impedence to {Z} Ohm.")
+        self.write(f"TBAS:TIN:IMPedance {Z}")
+        self.info(f"Set trigger input impedence to {Z} Ohm.")
 
     def trigger_input_level(self, V: float = None) -> float:
         """
@@ -305,11 +305,11 @@ class DTG(pyvisaDevice):
         """
 
         if V is None:
-            return float(self.device.query("TBAS:TIN:LEVel?"))
+            return float(self.query("TBAS:TIN:LEVel?"))
         
         V = max(-5.0, min(5.0, V))
-        self.device.write(f"TBAS:TIN:LEVel {V}")
-        self.device.info(f"Set trigger input level to {V} V.")
+        self.write(f"TBAS:TIN:LEVel {V}")
+        self.info(f"Set trigger input level to {V} V.")
         return V
 
     def trigger_input_slope(self, pos: bool = None) -> bool | None:
@@ -328,15 +328,15 @@ class DTG(pyvisaDevice):
         """
         
         if pos is None:
-            return self.device.query(f"TBAS:TIN:SLOPe?").strip() == 'POS'
+            return self.query(f"TBAS:TIN:SLOPe?").strip() == 'POS'
         
-        self.device.write(f"TBAS:TIN:POLarity {'POS' if pos else 'NEG'}")
+        self.write(f"TBAS:TIN:POLarity {'POS' if pos else 'NEG'}")
         self.info(f"Set trigger input polarity {'posi' if pos else 'nega'}tive.")
 
     def manual_event(self):
         """Manually trigger the DTG."""
         
-        self.device.write(" TBAS:EIN:IMMediate")
+        self.write(" TBAS:EIN:IMMediate")
         self.info("Manually flagged event on device.")
     
     def event_input_Z(self, Z: float = None) -> float:
@@ -355,15 +355,15 @@ class DTG(pyvisaDevice):
         """
 
         if Z is None:
-            return float(self.device.query("TBAS:EIN:IMPedance?"))
+            return float(self.query("TBAS:EIN:IMPedance?"))
         
         if Z >= 1e3:
             Z = 1e3
         else:
             Z = 50
 
-        self.device.write(f"TBAS:EIN:IMPedance {Z}")
-        self.device.info(f"Set event input impedence to {Z} Ohm.")
+        self.write(f"TBAS:EIN:IMPedance {Z}")
+        self.info(f"Set event input impedence to {Z} Ohm.")
 
     def event_input_level(self, V: float = None) -> float:
         """
@@ -381,11 +381,11 @@ class DTG(pyvisaDevice):
         """
 
         if V is None:
-            return float(self.device.query("TBAS:EIN:LEVel?"))
+            return float(self.query("TBAS:EIN:LEVel?"))
         
         V = max(-5.0, min(5.0, V))
-        self.device.write(f"TBAS:EIN:LEVel {V}")
-        self.device.info(f"Set event input level to {V} V.")
+        self.write(f"TBAS:EIN:LEVel {V}")
+        self.info(f"Set event input level to {V} V.")
         return V
 
     def event_input_polarity(self, pos: bool = None) -> bool | None:
@@ -404,9 +404,9 @@ class DTG(pyvisaDevice):
         """
         
         if pos is None:
-            return self.device.query(f"TBAS:EIN:POLarity?").strip() == 'NORM'
+            return self.query(f"TBAS:EIN:POLarity?").strip() == 'NORM'
         
-        self.device.write(f"TBAS:EIN:POLarity {'NORM' if pos else 'INV'}")
+        self.write(f"TBAS:EIN:POLarity {'NORM' if pos else 'INV'}")
         self.info(f"Set event input polarity {'posi' if pos else 'nega'}tive.")
 
     def burst_count(self, N: int = None) -> int:
@@ -424,12 +424,12 @@ class DTG(pyvisaDevice):
         """
         
         if N is None:
-            self._burst_count = int(self.device.query("TBAS:COUNt?"))
+            self._burst_count = int(self.query("TBAS:COUNt?"))
             return self._burst_count
         
         N = max(1, min(65536, N))
         self._burst_count = N
-        self.device.write(f"TBAS:COUNt {N}")
+        self.write(f"TBAS:COUNt {N}")
         self.info(f"Set burst count to {N}.")
 
     # ======================= PHYSICAL CHANNEL SETTINGS =======================
@@ -468,7 +468,7 @@ class DTG(pyvisaDevice):
         }
 
         if prate is None:
-            ch.prate = relrates[self.device.query(f"{ch}:PRATE?").strip()]
+            ch.prate = relrates[self.query(f"{ch}:PRATE?").strip()]
             return ch.prate
         
         if prate >= 1.0:
@@ -485,7 +485,7 @@ class DTG(pyvisaDevice):
             val = 'OFF'
 
         ch.prate = relrates[val]
-        self.device.write(f"{ch}:PRATE {val}")
+        self.write(f"{ch}:PRATE {val}")
         self.info(f"Set relative rate of channel {ch._id()} to {ch.prate}.")
         return ch.prate
 
@@ -512,11 +512,11 @@ class DTG(pyvisaDevice):
             return
         
         if pos is None:
-            ch.polarity = self.device.query(f"{ch}:POLarity?") == 'NORM\n'
+            ch.polarity = self.query(f"{ch}:POLarity?") == 'NORM\n'
             return ch.polarity
         
         ch.polarity = pos
-        self.device.write(f"{ch}:POLarity {'NORM' if pos else 'INV'}")
+        self.write(f"{ch}:POLarity {'NORM' if pos else 'INV'}")
         self.info(
             f"Set polarity of channel {ch._id()} to "
             f"{'posi' if pos else 'nega'}tive."
@@ -544,7 +544,7 @@ class DTG(pyvisaDevice):
             return
         
         if W is None:
-            ch.width = float(self.device.query(f"{ch}:WIDTh?"))
+            ch.width = float(self.query(f"{ch}:WIDTh?"))
             return ch.width
 
         f = self._frequency
@@ -556,7 +556,7 @@ class DTG(pyvisaDevice):
 
         W = min(1.0 / (f * prate), max(ch.min_width, W))
         ch.width = W
-        self.device.write(f"{ch}:WIDTh {W}")
+        self.write(f"{ch}:WIDTh {W}")
         self.info(f"Set pulse width of channel {ch._id()} to {W} s.")
         return W
 
@@ -582,7 +582,7 @@ class DTG(pyvisaDevice):
             return
         
         if l is None:
-            ch.ldelay = float(self.device.query(f"{ch}:LDELay?"))
+            ch.ldelay = float(self.query(f"{ch}:LDELay?"))
             return ch.ldelay
         
         f = self._frequency
@@ -591,7 +591,7 @@ class DTG(pyvisaDevice):
 
         l = min(1.0 / f, max(0.0, l))
         ch.ldelay = l
-        self.device.write(f"{ch}:LDELay {l}")
+        self.write(f"{ch}:LDELay {l}")
         self.info(f"Set lead delay on channel {ch._id()} to {l} s.")
         return l
     
@@ -617,7 +617,7 @@ class DTG(pyvisaDevice):
             return
         
         if t is None:
-            ch.tdelay = float(self.device.query(f"{ch}:TDELay?"))
+            ch.tdelay = float(self.query(f"{ch}:TDELay?"))
             return ch.tdelay
         
         f = self._frequency
@@ -632,7 +632,7 @@ class DTG(pyvisaDevice):
 
         t = min(ldelay + 1.0 / (f * prate), max(ldelay + ch.min_width, t))
         ch.ldelay = t
-        self.device.write(f"{ch}:TDELay {t}")
+        self.write(f"{ch}:TDELay {t}")
         self.info(f"Set tral delay on channel {ch._id()} to {t} s.")
         return t
 
@@ -662,7 +662,7 @@ class DTG(pyvisaDevice):
             return
         
         if V is None:
-            ch.low = float(self.device.query(f"{ch}:LOW?"))
+            ch.low = float(self.query(f"{ch}:LOW?"))
             return ch.low
         
         if force:
@@ -675,7 +675,7 @@ class DTG(pyvisaDevice):
 
         V = min(h, max(ch.min_V, V))
         ch.low = V
-        self.device.write(f"{ch}:LOW {V}")
+        self.write(f"{ch}:LOW {V}")
         self.info(f"Set logical low level of channel {ch._id()} to {V} V.")
         return V
 
@@ -703,7 +703,7 @@ class DTG(pyvisaDevice):
             return
         
         if V is None:
-            ch.high = float(self.device.query(f"{ch}:HIGH?"))
+            ch.high = float(self.query(f"{ch}:HIGH?"))
             return ch.high
         
         if force:
@@ -716,7 +716,7 @@ class DTG(pyvisaDevice):
 
         V = min(ch.max_V, max(l, V))
         ch.high = V
-        self.device.write(f"{ch}:HIGH {V}")
+        self.write(f"{ch}:HIGH {V}")
         self.info(f"Set logical low level of channel {ch._id()} to {V} V.")
         return V
     
@@ -742,11 +742,11 @@ class DTG(pyvisaDevice):
             return
 
         if on is None:
-            ch.enabled = int(self.device.query(f"{ch}:OUTPut?"))
+            ch.enabled = int(self.query(f"{ch}:OUTPut?"))
             return ch.enabled
         
         ch.enabled = on
-        self.device.write(f"{ch}:OUTPut {'ON' if on else 'OFF'}")
+        self.write(f"{ch}:OUTPut {'ON' if on else 'OFF'}")
         self.info(f"{'En' if on else 'Dis'}abled channel {ch._id()}.")
 
     def termination_Z(self, ch, Z: float = None) -> float:
@@ -770,7 +770,7 @@ class DTG(pyvisaDevice):
             return
         
         if Z is None:
-            ch.termination_Z = float(self.device.query(f"{ch}:TIMPedance?"))
+            ch.termination_Z = float(self.query(f"{ch}:TIMPedance?"))
             return ch.termination_Z
         
         if Z >= 1e3:
@@ -779,7 +779,7 @@ class DTG(pyvisaDevice):
             Z = 50
 
         ch.termination_Z = Z
-        self.device.write(f"{ch}:TIMPedance {Z}")
+        self.write(f"{ch}:TIMPedance {Z}")
         self.info(f"Set termination impedance on channel {ch._id()} to {Z} Ohm.")
         return Z
 
@@ -804,12 +804,12 @@ class DTG(pyvisaDevice):
             return
         
         if V is None:
-            ch.termination_V = float(self.device.query(f"{ch}:TVOLtage?"))
+            ch.termination_V = float(self.query(f"{ch}:TVOLtage?"))
             return ch.termination_V
         
         V = max(-2.0, min(5.0, V))
         ch.termination_V = V
-        self.device.write(f"{ch}:TVOLtage {V}")
+        self.write(f"{ch}:TVOLtage {V}")
         self.info(f"Set termination voltage on channel {ch._id()} to {V} V.")
         return V
 
@@ -837,7 +837,7 @@ class DTG(pyvisaDevice):
             N = len(channels)
 
         self.groups[name] = Group(name, N)
-        self.device.write(f'GROup:NEW "{name}", {N}')
+        self.write(f'GROup:NEW "{name}", {N}')
         self.info(f"Created new group {name} of width {N}")
 
         if type(channels) != int:
@@ -893,7 +893,7 @@ class DTG(pyvisaDevice):
             return
         
         self.groups[group_name].channels[idx] = ch
-        self.device.write(f'SIGNal:ASSign "{group_name}[{idx}]", "{ch._id()}"')
+        self.write(f'SIGNal:ASSign "{group_name}[{idx}]", "{ch._id()}"')
         self.info(
             f"Added channel {ch._id()} to group element {group_name}[{idx}]"
         )
@@ -910,7 +910,7 @@ class DTG(pyvisaDevice):
         """
 
         del self.groups[name]
-        self.device.write(f'GROup:DELete "{name}"')
+        self.write(f'GROup:DELete "{name}"')
         self.info(f"Deleted group: {name}")
 
     @_mode_required('DATA')
@@ -918,7 +918,7 @@ class DTG(pyvisaDevice):
         """Delete all groups."""
 
         self.groups.clear()
-        self.device.write("GROup:DELete:ALL")
+        self.write("GROup:DELete:ALL")
         self.info("Deleted all groups")
 
     # ---------------------------- Handling Blocks ----------------------------    
@@ -936,7 +936,7 @@ class DTG(pyvisaDevice):
         """
 
         self.blocks[name] = Block(name, N)
-        self.device.write(f'BLOCk:NEW "{name}", {N}')
+        self.write(f'BLOCk:NEW "{name}", {N}')
         self.info(f"Created new block {name} of length {N}")
 
     @_mode_required('DATA')
@@ -968,13 +968,13 @@ class DTG(pyvisaDevice):
             num_bits = len(data)
         
         B.add_data(G, ch_idx, data, offset = start_idx, length = num_bits)
-        self.device.write(f'BLOCk:SELect "{block_name}"')
+        self.write(f'BLOCk:SELect "{block_name}"')
         payload = data.tobytes()
         header = f'#{len(str(len(payload)))}{len(payload)}'.encode('ascii')
         cmd = f'SIGNal:BDATa "{group_name}[{ch_idx}]", {start_idx}, {num_bits}, '
         cmd = cmd.encode('ascii')
         cmd += header + payload
-        self.device.write_raw(cmd)
+        self.write_raw(cmd)
 
         self.info(
             f"Loaded block {block_name} with {header}{payload} from index "
@@ -994,7 +994,7 @@ class DTG(pyvisaDevice):
         """
 
         del self.blocks[name]
-        self.device.write(f'BLOCk:DELete "{name}"')
+        self.write(f'BLOCk:DELete "{name}"')
         self.info(f"Deleted block {name}")
 
     @_mode_required('DATA')
@@ -1002,7 +1002,7 @@ class DTG(pyvisaDevice):
         """Delete all blocks."""
 
         self.blocks.clear()
-        self.device.write("BLOCk:DELete:ALL")
+        self.write("BLOCk:DELete:ALL")
         self.info("Deleted all blocks")
 
     # --------------------------- Handling Sequences ---------------------------
@@ -1024,13 +1024,13 @@ class DTG(pyvisaDevice):
         """
 
         if N is None:
-            self.seq_length = int(self.device.query("SEQuence:LENGth?"))
+            self.seq_length = int(self.query("SEQuence:LENGth?"))
             return  self.seq_length
 
         N = max(0, min(8000, N))
         self.sequence = [""]*N         
         self.seq_length = N
-        self.device.write("SEQuence:LENGth?")
+        self.write("SEQuence:LENGth?")
         self.info(f"Set sequence length to {N}")
         return N
     
@@ -1050,7 +1050,7 @@ class DTG(pyvisaDevice):
             string representation of the sequence line.
         """
 
-        self.sequence[idx] = self.device.query(f"SEQuence:DATA? {idx}").strip()
+        self.sequence[idx] = self.query(f"SEQuence:DATA? {idx}").strip()
         return self.sequence[idx]
     
     @_mode_required('DATA')
@@ -1084,7 +1084,7 @@ class DTG(pyvisaDevice):
         line  = f'"{label}", {int(wait_trigger)}, "{block_name}", '
         line += f'{repetitions}, "{jump_to}", "{go_to}"'
         self.sequence[idx] = line
-        self.device.write(f"SEQ:DATA {idx}, {line}")
+        self.write(f"SEQ:DATA {idx}, {line}")
         self.info(f"Assigned line {idx} in sequence: {line}")
 
     # =========================== Simulating Outputs ===========================
@@ -1214,7 +1214,7 @@ class DTG(pyvisaDevice):
         path : str
             directory at which to save.
         """
-        self.device.write(f'MMEMory:STORe "{path}"')
+        self.write(f'MMEMory:STORe "{path}"')
         self.info(f"Saved DTG state to device at {path}")
 
     def load_state_dev(self, path: str):
@@ -1226,7 +1226,7 @@ class DTG(pyvisaDevice):
         path : str
             directory from which to load.
         """
-        self.device.write(f'MMEMory:LOAD "{path}"')
+        self.write(f'MMEMory:LOAD "{path}"')
         self.info(f"Loaded DTG state from device at {path}")
 
     def save_state_json(self, path: str):

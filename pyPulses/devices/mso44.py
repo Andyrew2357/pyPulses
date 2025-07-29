@@ -27,8 +27,8 @@ class mso44(pyvisaDevice):
         super().__init__(self.pyvisa_config, logger, instrument_id)
 
         # Right now, I've only implemented this for pulling data using ASCII
-        self.device.write("DATA:WIDTh 4")
-        self.device.write("DATA:ENCdg ASCII")
+        self.write("DATA:WIDTh 4")
+        self.write("DATA:ENCdg ASCII")
 
         self.set_channel(1)
         self._get_status()
@@ -41,7 +41,7 @@ class mso44(pyvisaDevice):
         ----------
         on : bool
         """
-        self.device.write(f"ACQuire:STATE {1 if on else 0}")
+        self.write(f"ACQuire:STATE {1 if on else 0}")
         self.info(f"MSO44: {'Started' if on else 'Stopped'} acquisition.")
 
     def is_running(self) -> bool:
@@ -52,7 +52,7 @@ class mso44(pyvisaDevice):
         -------
         bool
         """
-        return int(self.device.query("ACQuire:STATE?")) == 1
+        return int(self.query("ACQuire:STATE?")) == 1
 
     def set_channel(self, ch: int):
         """
@@ -62,7 +62,7 @@ class mso44(pyvisaDevice):
         ----------
         ch : int
         """
-        self.device.write(f"DATa:SOUrce CH{ch}")
+        self.write(f"DATa:SOUrce CH{ch}")
         self._get_status()
         self.info(f"MSO44: Set target channel to {ch}.")
 
@@ -74,7 +74,7 @@ class mso44(pyvisaDevice):
         -------
         int
         """
-        return int(self.device.query("DATa:SOUrce?")[2:])
+        return int(self.query("DATa:SOUrce?")[2:])
     
     def get_waveform(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -84,7 +84,7 @@ class mso44(pyvisaDevice):
         -------
         t, v : np.ndarray
         """
-        data = np.fromstring(self.device.query("CURVe?"), 
+        data = np.fromstring(self.query("CURVe?"), 
                              dtype = float, sep = ',')
         v = (data - self.YOF) * self.YMU + self.YZE
         t = np.arange(v.size) * self.XIN + self.XZE
@@ -94,11 +94,11 @@ class mso44(pyvisaDevice):
         """
         Update the parameters used to convert from raw waveform data to voltage.
         """
-        self.XZE = float(self.device.query("WFMP:XZE?"))
-        self.XIN = float(self.device.query("WFMP:XIN?"))
-        self.YZE = float(self.device.query("WFMP:YZE?"))
-        self.YMU = float(self.device.query("WFMP:YMU?"))
-        self.YOF = float(self.device.query("WFMP:YOF?"))
+        self.XZE = float(self.query("WFMP:XZE?"))
+        self.XIN = float(self.query("WFMP:XIN?"))
+        self.YZE = float(self.query("WFMP:YZE?"))
+        self.YMU = float(self.query("WFMP:YMU?"))
+        self.YOF = float(self.query("WFMP:YOF?"))
 
         self.info("MSO44: Updating waveform parameters...")
         self.info(f"    XZE = {self.XZE}")
@@ -109,7 +109,7 @@ class mso44(pyvisaDevice):
 
     def clear_trace(self):
         """Clear the captured waveforms and all averages."""
-        self.device.write("CLEAR")
+        self.write("CLEAR")
         self.info("MSO44: Trace cleared.")
 
     def fast_acquisition(self, on: bool = None) -> bool | None:
@@ -121,9 +121,9 @@ class mso44(pyvisaDevice):
         bool
         """
         if on is None:
-            return int(self.device.query("FASTAcq:STATE?")) == 1
+            return int(self.query("FASTAcq:STATE?")) == 1
         
-        self.device.write(f"FASTAcq:STATE {'ON' if on else 'OFF'}")
+        self.write(f"FASTAcq:STATE {'ON' if on else 'OFF'}")
         self.info(f"MSO44: Turned fast acquisition {'on' if on else 'off'}.")
 
     def set_acquisition_mode(self, mode):
@@ -142,7 +142,7 @@ class mso44(pyvisaDevice):
                 "(sample, peak detection, high resolution, average, or envelope)"
             )
         
-        self.device.write(f"ACQuire:MODE {mode}")
+        self.write(f"ACQuire:MODE {mode}")
         self.info(f"MSO44: Set acquisition mode to {mode}.")
 
     def get_acquisition_mode(self) -> str:
@@ -154,7 +154,7 @@ class mso44(pyvisaDevice):
         mode : str
             {'SAM', 'PEAK', 'HIR', 'AVE', 'ENV'}
         """
-        return self.device.query("ACQuire:MODE?")[:-1]
+        return self.query("ACQuire:MODE?")[:-1]
     
     def set_num_averages(self, N: int):
         """
@@ -164,7 +164,7 @@ class mso44(pyvisaDevice):
         ----------
         N : int
         """
-        self.device.write(f"ACQuire:NUMAVg {N}")
+        self.write(f"ACQuire:NUMAVg {N}")
         self.info(f"MSO44: Set number of averages to {N}.")
 
     def get_num_averages(self) -> int:
@@ -175,7 +175,7 @@ class mso44(pyvisaDevice):
         -------
         int
         """
-        return int(self.device.query("ACQuire:NUMAVg?"))
+        return int(self.query("ACQuire:NUMAVg?"))
 
     def _get_status(self):
         """

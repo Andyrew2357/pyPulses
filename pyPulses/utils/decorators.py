@@ -1,6 +1,30 @@
 from typing import Any, Callable
 from logging import Logger
 import time
+import functools
+
+def compose_decorators(*decorators: Callable) -> Callable:
+    """
+    Compose multiple decorators into a single decorator, preserving metadata.
+
+    Parameters
+    ----------
+    *decorators : Callable
+        Any number of decorators to apply. The first one listed is applied last.
+
+    Returns
+    -------
+    Callable
+        A new decorator that applies all of the given decorators in order.
+    """
+
+    def composed(f: Callable) -> Callable:
+        original = f
+        for decorator in reversed(decorators):
+            f = decorator(f)
+        return functools.wraps(original)(f)
+
+    return composed
 
 def sample(N: int, wait: float = 0) -> Callable:
     """
@@ -16,7 +40,7 @@ def sample(N: int, wait: float = 0) -> Callable:
     """
     
     def wrap(f: Callable) -> Callable:
-
+        @functools.wrap(f)
         def f_sampled(*args, **kwargs):    
             s = 0
             for _ in range(N):
@@ -38,7 +62,7 @@ def log_return(logger: Logger) -> Callable:
     """
     
     def wrap(f: Callable) -> Callable:
-
+        @functools.wrap(f)
         def f_logging_return(*args, **kwargs):
             res = f(*args, **kwargs)
             logger.debug(f"Function {f.__name__} returned: {res}")
@@ -58,7 +82,7 @@ def log_args(logger: Logger) -> Callable:
     """
     
     def wrap(f: Callable) -> Callable:
-
+        @functools.wrap(f)
         def f_logging_args(*args, **kwargs):
             logger.debug(
                 f"Function {f.__name__} received: args = {args}, kwargs = {kwargs}"
@@ -81,7 +105,7 @@ def limit_setter(min: float, max:float) -> Callable:
     """
 
     def wrap(f: Callable[[float], Any]) -> Callable:
-
+        @functools.wrap(f)
         def f_limited(x: float):
             if x < min or x > max:
                 raise ValueError(

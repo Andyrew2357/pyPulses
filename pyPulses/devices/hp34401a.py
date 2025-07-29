@@ -31,4 +31,4 @@ class hp34401a(pyvisaDevice):
         -------
         V : float
         """
-        return float(self.device.query(":MEAS:VOLT:DC?").strip())
+        return float(self.query(":MEAS:VOLT:DC?").strip())

@@ -47,7 +47,10 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     handle_exceptions : bool, default=True
         If we encounter an exception during the sweep, we sweep back to the 
         beginning. This is done with a recursive call that sets this argument to
-        False. 
+        False.
+    ignore_checkpoints : bool, default=True
+        whether to comply with checkpoints on each loop iteration for threaded
+        execution
 
     Returns
     -------
@@ -154,7 +157,7 @@ def tandemSweep(setters: List[Callable[[float], Any]],
 
 def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float, 
                   handle_exceptions: bool = True, 
-                  ignore_checkpoints: bool = True) -> bool:
+                  ignore_checkpoints: bool = False) -> bool:
     """
     Wrapper of `tandemSweep` for more human syntax. 
     
@@ -169,13 +172,13 @@ def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float,
     parms : dict
         Dictionary describing the behavior of each swept parameter.
         Recognized fields for parms elements:
-            'f'         : <getsetter (function)> 
+            'f'         : getsetter (function) 
                             (must provide either 'f' or 'get' and 'set')
-            'get'       : <getter (function)> (Ignored if 'f' is provided)
-            'set'       : <setter (function)> (Ignored if 'f' is provided)
-            'min_step'  : <minimum step size (float)> (optional)
-            'max_step'  : <maximum step size (float)> (optional)
-            'tolerance' : <tolerance (float)> (optional)
+            'get'       : getter (function, Ignored if 'f' is provided)
+            'set'       : setter (function, Ignored if 'f' is provided)
+            'min_step'  : minimum step size (float, optional)
+            'max_step'  : maximum step size (float, optional)
+            'tolerance' : tolerance (float, optional)
         eg. `{'V': {'get': get_V, 'set': set_V, 'min_step': 0.0005, 
             'max_step': 0.002, 'tolerance': 0.0005}}`
     target : dict or list of float
@@ -188,6 +191,9 @@ def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float,
     wait : float
         wait time between steps
     handle_exceptions : bool, default=True
+    ignore_checkpoints : bool, default=False
+        whether to comply with checkpoints on each loop iteration for threaded
+        execution
 
     Returns
     -------
