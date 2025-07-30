@@ -12,6 +12,23 @@ import re
 import functools
 import time
 from threading import Lock
+import numpy as np
+
+def parse_IEEE_488_2(data: bytes) -> np.ndarray:
+    if not data.startswith(b'#'):
+        raise ValueError("Invalid binary block format.")
+    
+    n = int(data[1:2]) # number of digits in length
+    len_start = 2
+    len_end = len_start + n
+    length = int(data[len_start:len_end])
+    binary_data = data[len_end:len_end + length]
+
+    if len(binary_data) != length:
+        raise ValueError("Invalid binary block length.")
+    
+    return np.frombuffer(binary_data, dtype = '<f4') # little-endian float32
+
 
 class pyvisaDevice(abstractDevice):
     def __init__(self, pyvisa_config: dict, logger = None, instrument_id = None):

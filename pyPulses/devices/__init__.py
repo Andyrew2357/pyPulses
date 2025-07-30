@@ -21,7 +21,7 @@ from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
 from .mso44 import mso44
 from .pid_dcbox import PIDbox
-from .sr865a import sr865a
+from .srs_lockin import (sr830, sr844, sr850, sr860, sr865a)
 from .watd_scope import watdScope
 
 __all__ = [
@@ -45,6 +45,10 @@ __all__ = [
     "keithley2450",
     "mso44",
     "PIDbox",
+    "sr830",
+    "sr844",
+    "sr850",
+    "sr860",
     "sr865a",
     "watdScope"
 ]

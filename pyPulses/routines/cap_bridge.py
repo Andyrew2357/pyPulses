@@ -131,7 +131,7 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
                      set_Vstd   : Callable[[float], Any] | None,
                      get_Vstd   : Callable[[], float],
                      set_Vstd_ph: Callable[[float], Any],
-                     get_XY      : Callable[[], Tuple[float, float]],
+                     get_XY     : Callable[[], Tuple[float, float]],
                     ) -> CapBridgeBalance:
     """
     Balances the capacitance bridge. Run once before capacitance measurements.

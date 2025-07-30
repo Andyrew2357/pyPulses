@@ -1,3 +1,5 @@
+# planning to switch this over so that it's not stuck to only working with sr860/865A (seems very silly given how general I like to make everything else)
+
 """
 Balance a capacitance bridge using a Kalman filter. The game is basically to
 represent the balance matrix by a complex gain describing the lock-in response
@@ -12,7 +14,7 @@ the effective complex gain and update our estimate of the gain accordingly (this
 is where the Kalman filter comes in).
 """
 
-from ..devices import sr865a, ad9854
+from ..devices import sr860, ad9854
 from ..utils import kalman
 from .cap_bridge import balanceCapBridge, BalanceCapBridgeConfig
 
@@ -202,7 +204,7 @@ class KapBridge():
         time constant to use for a raw balance.
     logger : Logger, optional
     """
-    lockin          : sr865a                    # lock-in amplifier
+    lockin          : sr860                     # lock-in amplifier
     acbox           : ad9854                    # ac box
     Vstd_range      : float                     # range of Vstd in volts
     Vex             : float                     # Vex in volts
@@ -262,13 +264,12 @@ class KapBridge():
             self.logger.debug(f"Upping time constant to {self.raw_time_const} s")
             self.logger.info("Performing a raw balance of the bridge")
 
-        self.lockin.set_time_const(self.raw_time_const)
-        self.lockin.upd_internal_state()
+        self.lockin.time_constant(self.raw_time_const)
         self.set_Vstd(self.Vstd_range)
         self.set_Vex(self.Vex)
         self.set_phase(0.0)
         time.sleep(0.5)
-        self.lockin.auto_rescale()
+        self.lockin.auto_gain()
 
         # perform a raw balance measurement
         balance_config = BalanceCapBridgeConfig(
@@ -315,9 +316,9 @@ class KapBridge():
         
         self.kfilter[filter_key].append(x_b, y_b)
         self.kfilter[filter_key].lockin_input_range = \
-                                                self.lockin.get_input_range()
+                                                self.lockin.input_range()
         self.kfilter[filter_key].lockin_sensitivity = \
-                                                self.lockin.get_sensitivity()
+                                                self.lockin.input_sensitivity()
         self.kfilter[filter_key].Vex = self.get_Vex()
 
         if self.logger:
@@ -326,7 +327,7 @@ class KapBridge():
             self.logger.info(f"Effective gain: {A[0]:.5e} + {A[1]:.5e}i")
             self.logger.info(f"Balance point: {x_b:.5e} V, {y_b:.5e} V")
             self.logger.debug(f"lowering time constant to {self.time_const} s")
-        self.lockin.set_time_const(self.time_const)
+        self.lockin.time_constant(self.time_const)
         time.sleep(0.1)
 
     def balance(self, filter_key) -> KapBridgeBalance:
@@ -347,9 +348,9 @@ class KapBridge():
             if self.filter_key is not None:
                 # save the gain and sensitivity settings for the current filter
                 self.kfilter[self.filter_key].lockin_input_range = \
-                                                self.lockin.get_input_range()
+                                                self.lockin.input_range()
                 self.kfilter[self.filter_key].lockin_sensitivity = \
-                                                self.lockin.get_sensitivity()
+                                                self.lockin.input_sensitivity()
 
             # make a new filter
             if not filter_key in self.kfilter:                
@@ -360,9 +361,9 @@ class KapBridge():
                 if self.logger:
                     self.logger.info(f"Restoring filter {filter_key}")
                 
-                self.lockin.set_input_range(
+                self.lockin.input_range(
                     self.kfilter[filter_key].lockin_input_range)
-                self.lockin.set_sensitivity(
+                self.lockin.input_sensitivity(
                     self.kfilter[filter_key].lockin_sensitivity)
 
         # calculate a projected balance point
@@ -386,12 +387,12 @@ class KapBridge():
                 self.logger.info(
                     f"Truncated to x = {x_b:.5e} V, y = {y_b:.5e} V")
 
-        # periodically increment the sensitivity and input range
-        self.kfilter[filter_key].use_count +=1
-        if self.kfilter[filter_key].use_count % \
-            self.kfilter[filter_key].sens_increment == 0:
-            self.lockin.increment_sensitivity()
-            self.lockin.increment_input_range()
+        # # periodically increment the sensitivity and input range
+        # self.kfilter[filter_key].use_count +=1
+        # if self.kfilter[filter_key].use_count % \
+        #     self.kfilter[filter_key].sens_increment == 0:
+        #     self.lockin.increment_sensitivity()
+        #     self.lockin.increment_input_range()
         
         # iteratively move towards the expected balance point until error is met
         first_guess = True

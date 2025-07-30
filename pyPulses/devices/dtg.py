@@ -16,18 +16,12 @@ from typing import Callable, Dict, List
 
 class DTG(pyvisaDevice):
     """Base DTG control class for the 5000 series data timing generators"""
-    def __init__(self, logger = None, instrument_id: str = None,
-                 pyvisa_config = None, MODULES = None, 
-                 mainframes = None, slots = None):
+    def __init__(self, logger = None, instrument_id: str = None):
         
-        if self.pyvisa_config is None:
-            self.pyvisa_config = pyvisa_config
-        if self.MODULES is None:
-            self.MODULES = MODULES
-        if self.mainframes is None:
-            self.mainframes = mainframes
-        if self.slots is None:
-            self.slots = slots
+        assert hasattr(self, 'pyvisa_config')
+        assert hasattr(self, 'MODULES')
+        assert hasattr(self, 'mainframes')
+        assert hasattr(self, 'slots')
 
         super().__init__(self.pyvisa_config, logger, instrument_id)
 
