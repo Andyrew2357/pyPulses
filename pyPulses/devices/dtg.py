@@ -1232,9 +1232,7 @@ class DTG(pyvisaDevice):
         path : str
             directory at which to save.
         """
-        state = self._serialize_state()
-        with open(path, 'w') as f:
-            json.dump(state, f, indent=2)
+        super().save_state_json(path)
 
     def load_state_json(self, path: str):
         """
@@ -1245,9 +1243,7 @@ class DTG(pyvisaDevice):
         path : str
             directory from which to load.
         """
-        with open(path, 'r') as f:
-            state = json.load(f)
-        self._deserialize_state(state)
+        super().load_state_json(path)
 
     def _serialize_state(self) -> dict:
         state = {

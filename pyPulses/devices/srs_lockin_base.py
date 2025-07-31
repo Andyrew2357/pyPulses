@@ -15,6 +15,7 @@ class SRSLockin(pyvisaDevice):
     def __init__(self, logger = None, instrument_id: str = None):
         
         assert hasattr(self, 'pyvisa_config')
+        assert hasattr(self, 'out_aux_channels')
         assert hasattr(self, 'output_map')
         assert hasattr(self, 'sens_vals')
         assert hasattr(self, 'tau_vals')
@@ -182,7 +183,7 @@ class SRSLockin(pyvisaDevice):
         self.write(f"{self.cmd_map['rslp']} {opt[condition]}")
         self.info(f"Set external reference trigger condition to {condition}.")
 
-    def reference_input_impedance(self, imp: str = None) -> float | None:
+    def reference_input_impedance(self, imp: str = None) -> str | None:
         """
         Set or query the reference signal input impedance.
 
@@ -197,7 +198,7 @@ class SRSLockin(pyvisaDevice):
         """
 
         if imp is None:
-            return float(self.query(f"{self.cmd_map['refz']}?"))
+            return ['low', 'high'][int(self.query(f"{self.cmd_map['refz']}?"))]
         opt = {'low': 0, 'high': 1}
         self.write(f"{self.cmd_map['refz']} {opt[imp]}")
         self.info(f"Set external reference input impedance {imp}.")
@@ -510,7 +511,7 @@ class SRSLockin(pyvisaDevice):
         -------
         float
         """
-
+        
         return float(self.query(f"{self.cmd_map['oaux']}? {idx}"))
     
     def aux_output(self, idx: int, V: float = None) -> float | None:
@@ -526,7 +527,8 @@ class SRSLockin(pyvisaDevice):
         -------
         float or None
         """
-
+        if not idx in self.out_aux_channels:
+            raise IndexError
         if V is None:
             return float(self.query(f"{self.cmd_map['auxv']}? {idx}"))
         self.write(f"{self.cmd_map['auxv']} {idx}, {V}")
@@ -545,3 +547,115 @@ class SRSLockin(pyvisaDevice):
     def auto_range(self):
         """Automatically set the input range."""
         self.write(self.cmd_map['arng'])
+
+    # SERIALIZATION AND DESERIALIZATION
+
+    # Plan to add this here (generally good for instruments with a ton of settings)
+    # may avoid applying it to auxiliary outputs since indices differ across models 
+    # (maybe add an attribute that reflects this, wouldn't be too hard)
+    # Will also need to override it to add acquisition configurations for sr860/sr865a
+
+    def save_state_json(self, path: str):
+        """
+        Save the Lock-in state to JSON locally.
+
+        Parameters
+        ----------
+        path : str
+            directory at which to save.
+        """
+        super().save_state_json(path)
+
+    def load_state_json(self, path: str):
+        """
+        Load the Lock-in state from JSON locally.
+        
+        Parameters
+        ----------
+        path : str
+            directory from which to load.
+        """
+        super().load_state_json(path)
+
+    def _serialize_state(self) -> dict:
+
+        simple_settings = [
+            # timebase settings
+            'reference_phase',
+            'internal_reference',
+            'reference_frequency',
+            'detection_harmonic',
+            'reference_trigger',
+            'reference_input_impedance',
+            'sine_output_amplitude',
+            'sine_output_offset',
+            # input settings
+            'input_configuration',
+            'input_shield_grounded',
+            'input_coupling_DC',
+            'input_mode_current',
+            'input_range',
+            'current_gain',
+            'line_notch_filter',
+            # gain and time constant settings
+            'input_sensitivity',
+            'time_constant',
+            'low_pass_filter_slope',
+            'sync_filter_state',
+        ]
+
+        state = {}
+        for setting in simple_settings:
+            try:
+                state[setting] = getattr(self, setting, lambda: None)()
+            except:
+                continue
+
+        # Handle auxiliary outputs
+        state['aux_output'] = []
+        for ch in self.out_aux_channels:
+            try:
+                state['aux_output'].append(ch, self.aux_output(ch))
+            except:
+                continue
+
+        return state
+
+    def _deserialize_state(self, state: dict):
+        
+        simple_settings = [
+            # timebase settings
+            'reference_phase',
+            'internal_reference',
+            'reference_frequency',
+            'detection_harmonic',
+            'reference_trigger',
+            'reference_input_impedance',
+            'sine_output_amplitude',
+            'sine_output_offset',
+            # input settings
+            'input_configuration',
+            'input_shield_grounded',
+            'input_coupling_DC',
+            'input_mode_current',
+            'input_range',
+            'current_gain',
+            'line_notch_filter',
+            # gain and time constant settings
+            'input_sensitivity',
+            'time_constant',
+            'low_pass_filter_slope',
+            'sync_filter_state',
+        ]
+
+        for setting in simple_settings:
+            try:
+                getattr(self, setting)(state[setting])
+            except:
+                continue
+
+        for ch, val in state['aux_output']:
+            try:
+                self.aux_output(ch, val)
+            except:
+                continue

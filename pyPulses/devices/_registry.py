@@ -66,6 +66,8 @@ class DeviceRegistry:
             control class associated with the physical instrument.
         """
 
+        if hasattr(device, '_registry_name_'):
+            device._registry_name_ = instrument_name
         cls._active_devices[instrument_name] = device
 
     @classmethod

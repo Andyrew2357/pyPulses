@@ -30,6 +30,8 @@ class sr830(SRSLockin):
             'min_interval': 0.05
         }
 
+        self.out_aux_channels = [1, 2, 3, 4]
+
         self.output_map = {
             'X': 1,
             'Y': 2,
@@ -100,6 +102,8 @@ class sr844(SRSLockin):
             'retry_delay': 0.1,
             'min_interval': 0.05
         }
+
+        self.out_aux_channels = [1, 2]
 
         self.cmd_map = {
             'icpl': "INPZ",
@@ -225,6 +229,8 @@ class sr850(SRSLockin):
             'min_interval': 0.05
         }
 
+        self.out_aux_channels = [1, 2, 3, 4]
+
         self.cmd_map = {
             'fmod': "RSRC"
         }
@@ -307,6 +313,8 @@ class sr860(SRSLockin):
             'retry_delay': 0.1,
             'min_interval': 0.05
         }
+
+        self.out_aux_channels = [0, 1, 2, 3]
 
         self.cmd_map = {
             'fmod': "RSRC",
@@ -567,6 +575,32 @@ class sr860(SRSLockin):
 
         # TODO FIGURE OUT IF THIS DIVISION SHOULD ACTUALLY HAPPEN...
         return samps.mean(axis = 1), np.cov(samps) # / samps.shape[0]
+    
+    def _serialize_state(self) -> dict:
+        state = super()._serialize_state()
+        if self._acquisition.ready:
+            state['acquisition_args'] = {
+                'buffer_size'   : self._acquisition.buffer_size,
+                'sampint'       : self._acquisition.sampint,
+                'data_config'   : self._acquisition.data_config,
+                'timeout'       : self._acquisition.timeout
+            }
+        return state
+    
+    def _deserialize_state(self, state: dict):
+        super()._deserialize_state(state)
+        acq = state.get('acquisition_args')
+        if acq:
+            try:
+                self.setup_data_acquisition(
+                    buffer_size = acq['buffer_size'],
+                    config      = acq['data_config'],
+                    sample_rate = 1.0 / acq['sampint'],
+                    timeout     = acq['timeout']
+                )
+            except:
+                print("Failed to set up data acquisition while deserializing.")
+
 
 class sr865a(sr860):
     """Class interface for controlling the SR865A DSP Lock-in"""
