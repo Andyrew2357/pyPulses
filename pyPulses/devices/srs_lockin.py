@@ -42,7 +42,7 @@ class sr830(SRSLockin):
             [1e0] + [val 
                 for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
                 for val in [factor*x[0], factor*x[1], factor*x[2]]]
-        )[:-1]
+        )[:-1][::-1]
 
         x = [1e-6, 3e-6]
         tau_vals = []
@@ -56,7 +56,7 @@ class sr830(SRSLockin):
         """Not available for SR830."""
         raise AttributeError("SR830 does not offer this functionality.")
 
-    def sine_output_offset(self, V: float) -> float | None:
+    def sine_output_offset(self, V: float = None) -> float | None:
         """Not available for SR830."""
         raise AttributeError("SR830 does not offer this functionality.")
     
@@ -119,7 +119,7 @@ class sr844(SRSLockin):
             [1e0] + [val 
                 for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2]
                 for val in [factor*x[0], factor*x[1]]]
-        )
+        )[::-1]
 
         x = [1e-6, 3e-6]
         tau_vals = []
@@ -138,11 +138,11 @@ class sr844(SRSLockin):
         """Not available for SR844."""
         raise AttributeError("SR844 does not offer this functionality.")
 
-    def sine_output_amplitude(self, V: float) -> float | None:
+    def sine_output_amplitude(self, V: float = None) -> float | None:
         """Not available for SR844."""
         raise AttributeError("SR844 does not offer this functionality.")
 
-    def sine_output_offset(self, V: float) -> float | None:
+    def sine_output_offset(self, V: float = None) -> float | None:
         """Not available for SR844."""
         raise AttributeError("SR844 does not offer this functionality.")
 
@@ -241,7 +241,7 @@ class sr850(SRSLockin):
             [1e0] + [val 
                 for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
                 for val in [factor*x[0], factor*x[1], factor*x[2]]]
-        )[:-1]
+        )[:-1][::-1]
 
         x = [1e-6, 3e-6]
         tau_vals = []
@@ -255,7 +255,7 @@ class sr850(SRSLockin):
         """Not available for SR850."""
         raise AttributeError("SR850 does not offer this functionality.")
 
-    def sine_output_offset(self, V: float) -> float | None:
+    def sine_output_offset(self, V: float = None) -> float | None:
         """Not available for SR850."""
         raise AttributeError("SR850 does not offer this functionality.")
     

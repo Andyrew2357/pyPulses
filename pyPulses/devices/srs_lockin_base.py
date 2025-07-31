@@ -62,7 +62,7 @@ class SRSLockin(pyvisaDevice):
         return float(self.query(f"OUTP? {self.output_map[parm]}"))
     
     def _get_snap(self, parms: str) -> Tuple[float, ...]:
-        args = str([self.output_map[ch] for ch in parms])[-1,1]
+        args = str([self.output_map[ch] for ch in parms])[1:-1]
         return tuple(map(float, self.query(f"SNAP? {args}").strip().split(',')))
     
     def get_x(self) -> float:
@@ -202,7 +202,7 @@ class SRSLockin(pyvisaDevice):
         self.write(f"{self.cmd_map['refz']} {opt[imp]}")
         self.info(f"Set external reference input impedance {imp}.")
 
-    def sine_output_amplitude(self, V: float) -> float | None:
+    def sine_output_amplitude(self, V: float = None) -> float | None:
         """
         Set or query the sine output amplitude in Volts.
 
@@ -220,7 +220,7 @@ class SRSLockin(pyvisaDevice):
         self.write(f"{self.cmd_map['slvl']} {V}")
         self.info(f"Set sine output amplitude to {V} V.")
 
-    def sine_output_offset(self, V: float) -> float | None:
+    def sine_output_offset(self, V: float = None) -> float | None:
         """
         Set or query the sine output DC offset in Volts.
 
@@ -437,7 +437,7 @@ class SRSLockin(pyvisaDevice):
             f"Set sensitivity to {self._sens_value(self._sens_index(V))} V."
         )
 
-    def time_constant(self, tau: float) -> float | None:
+    def time_constant(self, tau: float = None) -> float | None:
         """
         Set or query the time constant in seconds.
 
@@ -513,7 +513,7 @@ class SRSLockin(pyvisaDevice):
 
         return float(self.query(f"{self.cmd_map['oaux']}? {idx}"))
     
-    def aux_output(self, idx, int, V: float = None) -> float | None:
+    def aux_output(self, idx: int, V: float = None) -> float | None:
         """
         Set or query the auxiliary output in Volts.
 
