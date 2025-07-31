@@ -1,3 +1,5 @@
+# planning to switch this over so that it's not stuck to only working with sr860/865A (seems very silly given how general I like to make everything else)
+
 """
 Balance a capacitance bridge using a Kalman filter. The game is basically to
 represent the balance matrix by a complex gain describing the lock-in response
@@ -12,14 +14,15 @@ the effective complex gain and update our estimate of the gain accordingly (this
 is where the Kalman filter comes in).
 """
 
-from ..utils import kalman
-from .cap_bridge import balanceCapBridge, BalanceCapBridgeConfig
+from ..pyPulses.devices import sr860, ad9854
+from ..pyPulses.utils import kalman
+from ..pyPulses.routines.cap_bridge import balanceCapBridge, BalanceCapBridgeConfig
 
 import time
 import numpy as np
 from numpy.linalg import inv
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Dict, Tuple
 from collections import deque
 
 def extrap(x: np.ndarray, order: int) -> float:
@@ -28,7 +31,8 @@ def extrap(x: np.ndarray, order: int) -> float:
     return poly(len(x))
 
 class KFilter():
-    def __init__(self, support: int, order: int, A: np.ndarray, P: np.ndarray):
+    def __init__(self, support: int, order: int, sens_increment: int, 
+                 A: np.ndarray, P: np.ndarray):
         
         self.order = order
 
@@ -36,8 +40,16 @@ class KFilter():
         self.x_hist = deque(maxlen = support)
         self.y_hist = deque(maxlen = support)
         
+        # optimal lock-in sensitivity and input range
+        self.lockin_sensitivity = None
+        self.lockin_input_range = None
+        
         # excitation size
         self.Vex = None
+
+        # we periodically increase the sensitivity
+        self.use_count = 0
+        self.sens_increment = sens_increment
 
         """
         the state vector x is (X, Y)
@@ -156,30 +168,18 @@ class KapBridge():
 
     Attributes
     ----------
-    set_Vex : Callable
-        Sets the excitation amplitude.
-    get_Vex : Callable
-        Gets the excitation amplitude.
-    set_Vstd : Callable
-        Sets the standard amplitude.
-    get_Vstd : Callable
-        Gets the standard amplitude.
-    set_phase : Callable
-        Sets the standard phase.
-    get_xy_average : Callable
-        Gets an average off the lock-in.
-    get_xy : Callable
-        Polls x, y off the lock-in.
-    set_time_const : Callable
-        Sets the lock-in time constant.
-    set_gain_auto : Callable
-        Finds an optimal lock-in gain.
-    set_range_auto : Callable
-        Finds an optimal lock-in input range.
+    lockin : sr865a
+    acbox : ad9854
     Vstd_range : float
-        Allowed range of Vstd.
+        allowed range of Vstd.
     Vex : float
+    acbox_channels : default=((1, 'X'), (2, 'X'))
+        (excitation channel, standard channel) on the AC box.
     time_const : float, default=1e-3
+    buffer_size : int, default=1
+        amount of data to take per acquisition in kB.
+    sample_rate : float, default=300
+        rate of sample acquisition in Hz.
     min_tries : int, default=0
         minimum iterations to take when balancing.
     max_tries : int, default=10
@@ -192,6 +192,8 @@ class KapBridge():
         error offset for deciding error threshold.
     errmult : float, default=2.0
         error multiplier for deciding error threshold.
+    sens_increment : int, default=10
+        interval for pushing the sensitivity a little higher (points).
     Cstd : float, default=1.0
         reference capacitance.
     raw_samples : int, default=100
@@ -202,26 +204,24 @@ class KapBridge():
         time constant to use for a raw balance.
     logger : Logger, optional
     """
-
-    set_Vex         : Callable[[float], Any]    # set the excitation amplitude
-    get_Vex         : Callable[[], float]       # get the excitation amplitude
-    set_Vstd        : Callable[[float], Any]    # set the standard amplitude
-    get_Vstd        : Callable[[], float]       # get the standard amplitude
-    set_phase       : Callable[[float], Any]    # set the standard phase
-    get_xy_average  : Callable[[], float]       # get an average off the lock-in
-    get_xy          : Callable[[], float]       # poll x, y off the lock-in
-    set_time_const  : Callable[[float], Any]    # set the lock-in time constant
-    set_gain_auto   : Callable[[], Any]         # finds an optimal lock-in gain
-    set_range_auto  : Callable[[], Any]         # finds an optimal lock-in irng
+    lockin          : sr860                     # lock-in amplifier
+    acbox           : ad9854                    # ac box
     Vstd_range      : float                     # range of Vstd in volts
     Vex             : float                     # Vex in volts
+    acbox_channels  : Tuple[Tuple[int, str],    # (excitation, standard) channel
+                            Tuple[int, str]
+                    ] = ((1, 'X'), (2, 'X'))
     time_const      : float = 1e-3              # time constant for lock-in
+    buffer_size     : int = 1                   # amount of data to take in kB
+    sample_rate     : float = 300               # sample rate in Hz
     min_tries       : int = 0                   # min tries for balancing
     max_tries       : int = 10                  # max tries for balancing
     order           : int = 2                   # order of fit for extrapolation
     support         : int = 3                   # support for extrapolation
     erroff          : float = 0.0               # error offset for balance
     errmult         : float = 2.0               # error multiplier for balance  
+    sens_increment  : int = 10                  # push sensitivity and input 
+                                                # range every few points
     Cstd            : float = 1.0               # capacitance of the reference
     raw_samples     : int = 100                 # samples for a raw balance
     raw_wait        : float = 3                 # wait time for a raw balance
@@ -232,21 +232,22 @@ class KapBridge():
         self.filter_key = None
         self.kfilter: Dict[Any, KFilter] = {}
 
-    def info(self, msg):
-        if self.logger:
-            self.logger.info(msg)
+        self.sample_rate = self.lockin.setup_data_acquisition(
+            buffer_size     = self.buffer_size,
+            config = 'XY', 
+            sample_rate     = self.sample_rate,
+        )
 
-    def debug(self, msg):
         if self.logger:
-            self.logger.debug(msg)
+            self.logger.debug(f"Sample rate set to {self.sample_rate} Hz")
+            self.logger.debug(f"Buffer size set to {self.buffer_size} kB")
 
-    def warn(self, msg):
-        if self.logger:
-            self.logger.warning(msg)
-
-    def error(self, msg):
-        if self.logger:
-            self.logger.error(msg)
+        exc_, std_      = self.acbox_channels
+        self.set_Vex    = lambda x: self.acbox.set_amplitude(*exc_, x)
+        self.set_Vstd   = lambda x: self.acbox.set_amplitude(*std_, x)
+        self.set_phase  = lambda x: self.acbox.set_phase(std_[0], x)
+        self.get_Vex    = lambda: self.acbox.get_amplitude(*exc_)
+        self.get_Vstd   = lambda: self.acbox.get_amplitude(*std_)
 
     def add_filter(self, filter_key):
         """
@@ -258,17 +259,17 @@ class KapBridge():
         filter_key : Any
         """
 
-        self.info(f"Adding new filter {filter_key}...")
-        self.debug(f"Upping time constant to {self.raw_time_const} s")
-        self.info("Performing a raw balance of the bridge")
+        if self.logger:
+            self.logger.info(f"Adding new filter {filter_key}...")
+            self.logger.debug(f"Upping time constant to {self.raw_time_const} s")
+            self.logger.info("Performing a raw balance of the bridge")
 
-        self.time_const(self.raw_time_const)
+        self.lockin.time_constant(self.raw_time_const)
         self.set_Vstd(self.Vstd_range)
         self.set_Vex(self.Vex)
         self.set_phase(0.0)
         time.sleep(0.5)
-        self.set_gain_auto()
-        self.set_range_auto()
+        self.lockin.auto_gain()
 
         # perform a raw balance measurement
         balance_config = BalanceCapBridgeConfig(
@@ -284,7 +285,7 @@ class KapBridge():
             set_Vstd    = self.set_Vstd,
             get_Vstd    = self.get_Vstd,
             set_Vstd_ph = self.set_phase,
-            get_XY      = self.get_xy
+            get_XY      = self.lockin.get_xy
         )
 
         # we establish a gain tensor from the cap_bridge parameters
@@ -308,20 +309,25 @@ class KapBridge():
         self.kfilter[filter_key] = KFilter(
             support         = self.support, 
             order           = self.order, 
+            sens_increment  = self.sens_increment, 
             A               = A,
             P               = P
         )
         
         self.kfilter[filter_key].append(x_b, y_b)
+        self.kfilter[filter_key].lockin_input_range = \
+                                                self.lockin.input_range()
+        self.kfilter[filter_key].lockin_sensitivity = \
+                                                self.lockin.input_sensitivity()
         self.kfilter[filter_key].Vex = self.get_Vex()
 
-        self.info("Raw balance result:")
-        self.info(raw_balance)
-        self.info(f"Effective gain: {A[0]:.5e} + {A[1]:.5e}i")
-        self.info(f"Balance point: {x_b:.5e} V, {y_b:.5e} V")
-        self.debug(f"lowering time constant to {self.time_const} s")
-        
-        self.set_time_const(self.time_const)
+        if self.logger:
+            self.logger.info("Raw balance result:")
+            self.logger.info(raw_balance)
+            self.logger.info(f"Effective gain: {A[0]:.5e} + {A[1]:.5e}i")
+            self.logger.info(f"Balance point: {x_b:.5e} V, {y_b:.5e} V")
+            self.logger.debug(f"lowering time constant to {self.time_const} s")
+        self.lockin.time_constant(self.time_const)
         time.sleep(0.1)
 
     def balance(self, filter_key) -> KapBridgeBalance:
@@ -339,6 +345,12 @@ class KapBridge():
         x_b, y_b = None, None
 
         if self.filter_key != filter_key:
+            if self.filter_key is not None:
+                # save the gain and sensitivity settings for the current filter
+                self.kfilter[self.filter_key].lockin_input_range = \
+                                                self.lockin.input_range()
+                self.kfilter[self.filter_key].lockin_sensitivity = \
+                                                self.lockin.input_sensitivity()
 
             # make a new filter
             if not filter_key in self.kfilter:                
@@ -349,8 +361,10 @@ class KapBridge():
                 if self.logger:
                     self.logger.info(f"Restoring filter {filter_key}")
                 
-                self.set_gain_auto()
-                self.set_range_auto()
+                self.lockin.input_range(
+                    self.kfilter[filter_key].lockin_input_range)
+                self.lockin.input_sensitivity(
+                    self.kfilter[filter_key].lockin_sensitivity)
 
         # calculate a projected balance point
         x_b, y_b = self.kfilter[filter_key].extrapolate()
@@ -369,26 +383,43 @@ class KapBridge():
             r_b = min(self.Vstd_range, r_b)
             x_b = r_b*cb
             y_b = r_b*sb
-            self.info(f"Truncated to x = {x_b:.5e} V, y = {y_b:.5e} V")
+            if self.logger:
+                self.logger.info(
+                    f"Truncated to x = {x_b:.5e} V, y = {y_b:.5e} V")
 
+        # # periodically increment the sensitivity and input range
+        # self.kfilter[filter_key].use_count +=1
+        # if self.kfilter[filter_key].use_count % \
+        #     self.kfilter[filter_key].sens_increment == 0:
+        #     self.lockin.increment_sensitivity()
+        #     self.lockin.increment_input_range()
+        
         # iteratively move towards the expected balance point until error is met
         first_guess = True
         errt = None
         for iter in range(self.max_tries):
-            self.info("="*50)
+            
+            if self.logger:
+                self.logger.info("="*50)
 
             self.set_Vstd(r_b)
             self.set_phase(th_b)
 
-            self.info(f"Set r = {r_b:.5e}, theta = {th_b:.5e}")
+            if self.logger:
+                self.logger.info(
+                    f"Set r = {r_b:.5e}, theta = {th_b:.5e}"
+                )
 
             # lock-in reading and covariance
-            L, R = self.get_xy_average(auto_rescale = True)
+            L, R = self.lockin.get_average(auto_rescale = True)
             x_m, y_m = L
 
-            self.info(f"Lock-in reading: x = {L[0]:.5e} V, y = {L[1]:.5e} V\n"
-                      f"     Covariance: [{R[0,0]:.5e}, {R[0,1]:.5e}]\n"
-                      f"                 [{R[1,0]:.5e}, {R[1,1]:.5e}]")
+            if self.logger:
+                self.logger.info(
+                  f"Lock-in reading: x = {L[0]:.5e} V, y = {L[1]:.5e} V\n"
+                + f"     Covariance: [{R[0,0]:.5e}, {R[0,1]:.5e}]\n"
+                + f"                 [{R[1,0]:.5e}, {R[1,1]:.5e}]"
+                )
 
             if not first_guess:
                 # We gain more information about the effective gain the bridge
@@ -402,9 +433,12 @@ class KapBridge():
 
                 # calculating the covariance matrix for z
                 R_change = R + prev_R
-                self.debug(f"Covariance matrix for measured z: \n"
-                           f"    [{R_change[0,0]:.5e}, {R_change[0,1]:.5e}]\n"
-                           f"    [{R_change[1,0]:.5e}, {R_change[1,1]:.5e}]")
+                if self.logger:
+                    self.logger.debug(
+                        f"Covariance matrix for measured z: \n"
+                      + f"    [{R_change[0,0]:.5e}, {R_change[0,1]:.5e}]\n"
+                      + f"    [{R_change[1,0]:.5e}, {R_change[1,1]:.5e}]"
+                    )
 
                 dL = np.array([dLx, dLy])
                 dv = np.array([dvx, dvy])
@@ -412,19 +446,25 @@ class KapBridge():
 
             first_guess = False
 
-            self.debug("Prior to Kalman Prediction Step\n"
-                      f"Effective gain: \n"
-                      f"    x = {self.kfilter[filter_key].kalman.x[0]:.5e}\n"
-                      f"    y = {self.kfilter[filter_key].kalman.x[1]:.5e}\n"
-                      f"  Cov = {self.kfilter[filter_key].kalman.P}")
+            if self.logger:
+                self.logger.debug(
+                    "Prior to Kalman Prediction Step\n"
+                    + f"Effective gain: \n"
+                    + f"    x = {self.kfilter[filter_key].kalman.x[0]:.5e}\n"
+                    + f"    y = {self.kfilter[filter_key].kalman.x[1]:.5e}\n"
+                    + f"  Cov = {self.kfilter[filter_key].kalman.P}"
+                )
 
             self.kfilter[filter_key].kalman.predict()
 
-            self.info("Predicted Bridge Gain\n"
-                     f"Effective gain: \n"
-                     f"    x = {self.kfilter[filter_key].kalman.x[0]:.5e}\n"
-                     f"    y = {self.kfilter[filter_key].kalman.x[1]:.5e}\n"
-                     f"  Cov = {self.kfilter[filter_key].kalman.P}")
+            if self.logger:
+                self.logger.info(
+                    "Predicted Bridge Gain\n"
+                    + f"Effective gain: \n"
+                    + f"    x = {self.kfilter[filter_key].kalman.x[0]:.5e}\n"
+                    + f"    y = {self.kfilter[filter_key].kalman.x[1]:.5e}\n"
+                    + f"  Cov = {self.kfilter[filter_key].kalman.P}"
+                )
 
             # based on the gain, determine how far we are off balance
             x_g, y_g = self.kfilter[filter_key].kalman.x
@@ -445,10 +485,11 @@ class KapBridge():
             r_b = np.sqrt(x_b*x_b + y_b*y_b)
             th_b = np.degrees(np.atan2(y_b, x_b))
 
-            self.info(
-                f"Corrected balance at x = {x_b:.5e} V, y = {y_b:.5e} V\n"
-                f"      (relative change of {100*(r_b/prev_r_b - 1):.5e} %)"
-            )
+            if self.logger:
+                self.logger.info(
+                    f"Corrected balance at x = {x_b:.5e} V, y = {y_b:.5e} V\n"
+                  + f"      (relative change of {100*(r_b/prev_r_b - 1):.5e} %)"
+                )
 
             # if the lock-in reading was sufficiently small, terminate.
             # by sufficiently small, we mean that it is indistinguishable from
@@ -470,9 +511,12 @@ class KapBridge():
                 errt = 0.95*errt + 0.05*errmult
 
             if (r_m < errt) and (iter + 1 >= self.min_tries):
-                self.info(f"Balanced on iteration {iter}\n"
-                          f"  Error Tolerance: {errt:.5e} V\n"
-                          f"  Lock-in Reading: {r_m:.5e} V")
+                if self.logger:
+                    self.logger.info(
+                        f"Balanced on iteration {iter}\n"
+                      + f"  Error Tolerance: {errt:.5e} V\n"
+                      + f"  Lock-in Reading: {r_m:.5e} V"
+                    )
 
                 # append the new balance point to the historical data
                 self.kfilter[filter_key].append(x_b, y_b)
@@ -492,14 +536,20 @@ class KapBridge():
                 )
             
             else:
-                self.info(f"Not balanced on iteration {iter}\n"
-                          f"  Error Tolerance: {errt:.5e} V\n"
-                          f"  Lock-in Reading: {r_m:.5e} V\n"
-                          f"Continuing to iteration {iter + 1}...")
+                if self.logger:
+                    self.logger.info(
+                        f"Not balanced on iteration {iter}\n"
+                      + f"  Error Tolerance: {errt:.5e} V\n"
+                      + f"  Lock-in Reading: {r_m:.5e} V\n"
+                      + f"Continuing to iteration {iter + 1}..."
+                    )
         
         # if we reach this point, we have not balanced after max_tries
         else:
-            self.info(f"Failed to balance after {self.max_tries} tries")
+            if self.logger:
+                self.logger.info(
+                    f"Failed to balance after {self.max_tries} tries"
+                )
             return KapBridgeBalance(
                 success = False,
                 x_b     = x_b,
@@ -514,7 +564,7 @@ class KapBridge():
                 prev_x_b= prev_x_b,
                 prev_y_b= prev_y_b
             )
-
+    
     def measure_capacitance(self, filter_key) -> bool:
         """
         Measure capacitance by balancing the bridge with `filter_key`. Save the
@@ -530,7 +580,7 @@ class KapBridge():
         """
         self.balance_state = self.balance(filter_key)
         return self.balance_state.success
-    
+
     def get_param(self, field: str) -> bool | float | int | np.ndarray:
         """
         Get a parameter from `self.balance_state`.
@@ -544,7 +594,7 @@ class KapBridge():
         value : bool or float or int or np.ndarray
         """
         return getattr(self.balance_state, field)
-    
+
     def get_Cex(self) -> float:
         """
         Get the capacitance from `self.balance_state`.
@@ -555,7 +605,7 @@ class KapBridge():
         """
         return -self.Cstd * self.balance_state.x_b / \
                             self.kfilter[self.filter_key].Vex
-    
+
     def get_Closs(self) -> float:
         """
         Get the loss from `self.balance_state`.
