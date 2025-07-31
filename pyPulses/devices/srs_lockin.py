@@ -345,7 +345,7 @@ class sr860(SRSLockin):
     def input_configuration(self, src: str = None) -> str | None:
         if src == 'I':
             raise ValueError(f"{self._name} does not support setting 'I'.")
-        super().input_configuration(self, src)
+        return super().input_configuration(src)
 
     def line_notch_filter(self, setting: str = None) -> str | None:
         """Not available for SR860."""
@@ -439,7 +439,7 @@ class sr860(SRSLockin):
         self.info(f"    sample_rate = {sample_rate} Hz")
         return sample_rate
     
-    def start_acquisition(self):
+    def _start_acquisition(self):
         """Start data acquisition."""
         if not self._acquisition.ready:
             raise RuntimeError(
@@ -562,7 +562,7 @@ class sr860(SRSLockin):
             self.auto_gain()
 
         # take the acquisition
-        self.start_acquisition()
+        self._start_acquisition()
         samps = self._get_buffered_data()
 
         # TODO FIGURE OUT IF THIS DIVISION SHOULD ACTUALLY HAPPEN...

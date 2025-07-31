@@ -362,9 +362,9 @@ class SRSLockin(pyvisaDevice):
 
         if gan is None:
             return ['1MEG', '100MEG'][
-                int(self.query(f"{self.cmd_map['IGAN']}?"))]
+                int(self.query(f"{self.cmd_map['igan']}?"))]
         opt = {'1MEG': 0, '100MEG': 1}
-        self.write(f"{self.cmd_map['IGAN']} {opt[gan]}")
+        self.write(f"{self.cmd_map['igan']} {opt[gan]}")
         self.info(f"Set input current gain to {opt}.")
 
     def line_notch_filter(self, setting: str = None) -> str | None:
