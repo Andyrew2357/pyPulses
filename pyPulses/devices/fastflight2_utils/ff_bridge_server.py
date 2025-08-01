@@ -300,6 +300,9 @@ class FastFlight32():
         self.set_general_settings(ActiveProtoNumber = 0)
         self.dither_len = dither_len
         self.dither_ready = True
+
+    def is_dither_ready(self) -> bool:
+        return self.dither_ready
             
     def get_trace_dither(self) -> Tuple[list, list, dict] | None:
         if not self.dither_ready:

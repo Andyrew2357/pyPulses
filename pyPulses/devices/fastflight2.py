@@ -611,6 +611,9 @@ class FastFlight2(abstractDevice):
         self._ensure_settings_synced()
         self._log_settings()
 
+    def is_dither_ready(self) -> bool:
+        return self.ff2.is_dither_ready()
+
     def get_dither_length(self) -> float:
         return self.ff2.get_dither_len()
 
@@ -686,3 +689,46 @@ class FastFlight2(abstractDevice):
         FFScopeView(self.ff2)
         self.info("CLOSED SCOPE VIEW APPLICATION WINDOW\nReconnecting...")
         self.connect()
+
+    # SERIALIZATION / DESERIALIZATION OF STATE
+
+    def save_state_json(self, path: str):
+        """
+        Save the Lock-in state to JSON locally.
+
+        Parameters
+        ----------
+        path : str
+            directory at which to save.
+        """
+        super().save_state_json(path)
+
+    def load_state_json(self, path: str):
+        """
+        Load the Lock-in state from JSON locally.
+        
+        Parameters
+        ----------
+        path : str
+            directory from which to load.
+        """
+        super().load_state_json(path)
+
+    def _serialize_state(self) -> dict:
+        self._sync_machine_settings()
+        return {
+            'protocols': self.protocols,
+            'general_settings': self.gen_settings,
+            'spectra_per_trace': self.spectra_per_trace(),
+            'dither_length': self.get_dither_length(),
+            'dither_ready': self.is_dither_ready()
+        }
+
+    def _deserialize_state(self, state: dict):
+        for i, prot in state['protocols']:
+            self.ff2.set_protocol(i, **prot)
+        self.ff2.set_general_settings(**state['general_settings'])
+        self.spectra_per_trace(state['spectra_per_trace'])
+        if state['dither_ready']:
+            self.prep_dither(state['dither_length'])
+        self._sync_machine_settings()

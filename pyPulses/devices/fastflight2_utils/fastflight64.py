@@ -231,6 +231,9 @@ class FastFlight64():
         """Set the dither length and prep protocols for a dithered trace"""
         return self._call_method('prep_dither', dither_len)
     
+    def is_dither_ready(self) -> bool:
+        return self._call_method('is_dither_ready')
+    
     def get_trace_dither(self) -> Tuple[np.ndarray, np.ndarray, dict] | None:
         """
         Get a dithered trace from the FastFlight.
