@@ -58,7 +58,7 @@ class abstractDevice:
             state = {}
 
         if state == {}:
-            print("State serialization failed for "
+            print("State serialization failed for ",
                   (self._registry_name_ or "UNREGISTERED_DEVICE"))
 
         with open(path, 'w') as f:
@@ -79,7 +79,7 @@ class abstractDevice:
         try:
             self._deserialize_state(state)
         except:
-            print("State deserialization failed for "
+            print("State deserialization failed for ",
                   (self._registry_name_ or "UNREGISTERED_DEVICE"))
 
     def _serialize_state(self) -> dict:
