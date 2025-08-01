@@ -5,7 +5,7 @@ This class is an interface to the Zurich Instruments HF2LI lock-in amplifier.
 from .zhinst_device import zhinstDevice
 
 import numpy as np
-from typing import Tuple
+from typing import List, Tuple
 
 class hf2li(zhinstDevice):
     """Class interface for communicating with the HF2LI lock-in amplifier."""
@@ -126,6 +126,79 @@ class hf2li(zhinstDevice):
                 line += f" ({routing['ref_modes'][demod]})"
             lines.append(line)
         return "\n".join(lines)
+
+    def save_state_json(self, path: str):
+        """
+        Save the Lock-in state to JSON locally.
+
+        Parameters
+        ----------
+        path : str
+            directory at which to save.
+        """
+        super().save_state_json(path)
+
+    def load_state_json(self, path: str):
+        """
+        Load the Lock-in state from JSON locally.
+        
+        Parameters
+        ----------
+        path : str
+            directory from which to load.
+        """
+        super().load_state_json(path)
+
+    def _serialize_state(self) -> dict:
+        state = {}
+        # serialize the states of the demodulators
+        state['demod'] = [
+            {
+                'reference_mode': demod.get_reference_mode(),
+                'oscillator'    : demod.get_oscillator(),
+                'time_constant' : demod.get_time_const()
+            }
+            for demod in self.demod
+        ]
+        # serialize the state of the oscillators
+        state['oscillator'] = [
+            {'frequency': osc.get_frequency()}
+            for osc in self.oscillator
+        ]
+        # serialize the state of the outputs
+        state['output'] = [
+            {
+                'range'     : out.get_range(),
+                'amplitude' : out.get_amplitude(),
+                'offset'    : out.get_offset(),
+                'phase'     : out.get_phase(),
+                'connected_demods': out.get_connected_demods(),
+                'enabled'   : out.is_enabled()
+            }
+            for out in self.output
+        ]
+        return state
+
+    def _deserialize_state(self, state: dict):
+        # deserialize the demodulator settings
+        for i, s in enumerate(state['demod']):
+            self.demod[i].set_reference_mode(s['reference_mode'])
+            self.demod[i].set_oscillator(s['oscillator'])
+            self.demod[i].set_time_const(s['time_constant'])
+
+        # deserialize the oscillator settings
+        for i, s in enumerate(state['oscillator']):
+            self.oscillator[i].set_frequency(s['frequency'])
+
+        # deserialize the output settings
+        for i, s in enumerate(state['output']):
+            self.output[i].set_range(s['range'])
+            self.output[i].set_amplitude(s['amplitude'])
+            self.output[i].set_offset(s['offset'])
+            self.output[i].set_phase(s['phase'])
+            for d in s['connected_demods']:
+                self.output[i].connect_to_demod(d)
+            self.output[i].enable(s['enabled'])
 
 class hf2liDemodChannel:
     def __init__(self, parent: hf2li, index: int):
@@ -450,6 +523,10 @@ class hf2liOutputChannel:
         demod_index : int
         """
         self.parent.set_int(self._p(f"enables/{demod_index}"), 0)
+
+    def get_connected_demods(self) -> List[int]:
+        return [d for d in range(self.parent.num_demods) \
+                if self.parent.get_int(self._p(f"enables/{d}"))]
 
 class hf2liOscillator:
     def __init__(self, parent: hf2li, index: int):
