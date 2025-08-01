@@ -615,7 +615,7 @@ class SRSLockin(pyvisaDevice):
         state['aux_output'] = []
         for ch in self.out_aux_channels:
             try:
-                state['aux_output'].append(ch, self.aux_output(ch))
+                state['aux_output'].append((ch, self.aux_output(ch)))
             except:
                 continue
 
