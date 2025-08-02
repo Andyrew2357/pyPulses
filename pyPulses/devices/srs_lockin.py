@@ -226,18 +226,15 @@ class sr850(SRSLockin):
 
         self.pyvisa_config = {
             "resource_name"     : "",
+            "write_termination" : '\n',
             "output_buffer_size": 512,
 
             'max_retries': 3,
             'retry_delay': 0.1,
-            'min_interval': 0.05
+            'min_interval': 0.1
         }
 
         self.out_aux_channels = [1, 2, 3, 4]
-
-        self.cmd_map = {
-            'fmod': "RSRC"
-        }
 
         self.output_map = {
             'X': 1,
@@ -275,7 +272,7 @@ class sr850(SRSLockin):
 
     def input_range(self, V: float = None) -> float | None:
         """Not available for SR850."""
-        raise AttributeError("SR830 does not offer this functionality.")
+        raise AttributeError("SR850 does not offer this functionality.")
 
     def get_input_level_status(self) -> int:
         """Not available for SR850."""
