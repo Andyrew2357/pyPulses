@@ -62,7 +62,7 @@ class abstractDevice:
                   (self._registry_name_ or "UNREGISTERED_DEVICE"))
 
         with open(path, 'w') as f:
-            json.dump(state, f, indent=2)
+            json.dump(state, f, indent = 2)
 
     def load_state_json(self, path: str):
         """

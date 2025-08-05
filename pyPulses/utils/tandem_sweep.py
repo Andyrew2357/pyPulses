@@ -10,10 +10,16 @@ dissimilar parameters simultaneously; it's mostly there for param_sweep_measure.
 from .getsetter import getSetter
 from ..thread_job import _checkpoint
 
+from enum import Enum, auto
 from typing import Any, Callable, List
 import numpy as np
 from math import ceil
 import time
+
+class SweepResult(Enum):
+    SUCCEEDED   = auto()
+    FAILED      = auto()
+    PANICKED    = auto()
 
 def tandemSweep(setters: List[Callable[[float], Any]], 
                 start: List[float], end: List[float], 
@@ -21,8 +27,10 @@ def tandemSweep(setters: List[Callable[[float], Any]],
                 max_step: List[float | None],  
                 min_step: List[float | None] = None,
                 tolerance: List[float | None] = None,
+                panic_condition: Callable[..., bool] = lambda *args, **kwargs: False,
+                panic_behavior: str | Callable[..., Any] | None = 'zero',
                 handle_exceptions: bool = True,
-                ignore_checkpoints: bool = True) -> bool:
+                ignore_checkpoints: bool = True) -> SweepResult:
     """
     Sweeps multiple parameters smoothly while respecting their maximum step
     sizes.
@@ -44,6 +52,14 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     tolerance : list of float or None
         allowed difference between `end` setting and the actual final point for 
         each parameter; None is interpreted as 0.
+    panic_condition : Callable
+        passed parameter values at each step. Returns true if panic condition 
+        encountered.
+    panic_behavior : str or Callable or None, default='zero'
+        what do we do if we encounter a panic_condition. 'zero' means that we
+        sweep back to the origin, 'stop' means that we terminate the sweep
+        without error. A Callable will be called on the panic condition with the
+        most recently set parameters as arguments.
     handle_exceptions : bool, default=True
         If we encounter an exception during the sweep, we sweep back to the 
         beginning. This is done with a recursive call that sets this argument to
@@ -54,7 +70,7 @@ def tandemSweep(setters: List[Callable[[float], Any]],
 
     Returns
     -------
-    success : bool
+    SweepResult
     """
     
     N = len(setters)
@@ -137,12 +153,32 @@ def tandemSweep(setters: List[Callable[[float], Any]],
                                     wait        = wait,
                                     min_step    = min_step,
                                     handle_exceptions = False)
-                        return False
+                        return SweepResult.FAILED
                     else:
                         raise RuntimeError(
                             "tandemSweep unable to resolve error whilst setting"
                         )
 
+            if panic_condition(new_settings):
+                if panic_behavior == 'zero':
+                    tandemSweep(setters, prev_settings, start,
+                                    max_step    = max_step,
+                                    wait        = wait,
+                                    min_step    = min_step,
+                                    handle_exceptions = False)
+                    return SweepResult.PANICKED
+                
+                elif panic_behavior == 'stop':
+                    return SweepResult.PANICKED
+                
+                elif callable(panic_behavior):
+                    panic_behavior(new_settings)
+
+                else:
+                    raise ValueError(
+                        f"Invalid `panic_behavior` argument: {panic_condition}"
+                    )
+                
             prev_settings[i] = new_settings[i]
         
         time.sleep(wait)
@@ -153,11 +189,13 @@ def tandemSweep(setters: List[Callable[[float], Any]],
         if np.abs(prev_settings[i] - end[i]) > tolerance[i]:
             setters[i](end[i])
     
-    return True
+    return SweepResult.SUCCEEDED
 
-def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float, 
+def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float,
+                  panic_condition: Callable[..., bool] = lambda *args, **kwargs: False,
+                  panic_behavior: str | Callable[..., Any] | None = 'zero',
                   handle_exceptions: bool = True, 
-                  ignore_checkpoints: bool = False) -> bool:
+                  ignore_checkpoints: bool = False) -> SweepResult:
     """
     Wrapper of `tandemSweep` for more human syntax. 
     
@@ -190,6 +228,14 @@ def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float,
         unchanged over the course of the sweep.
     wait : float
         wait time between steps
+    panic_condition : Callable
+        passed parameter values at each step. Returns true if panic condition 
+        encountered.
+    panic_behavior : str or Callable or None, default='zero'
+        what do we do if we encounter a panic_condition. 'zero' means that we
+        sweep back to the origin, 'stop' means that we terminate the sweep
+        without error. A Callable will be called on the panic condition with the
+        most recently set parameters as arguments.
     handle_exceptions : bool, default=True
     ignore_checkpoints : bool, default=False
         whether to comply with checkpoints on each loop iteration for threaded
@@ -197,7 +243,7 @@ def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float,
 
     Returns
     -------
-    success : bool
+    SweepResult
     """
 
     for P in parms:
@@ -214,4 +260,5 @@ def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float,
 
     return tandemSweep(setters, start, target, 
                        wait, max_step, min_step, tolerance, 
+                       panic_condition, panic_behavior,
                        handle_exceptions, ignore_checkpoints)
