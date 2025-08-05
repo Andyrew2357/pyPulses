@@ -100,7 +100,7 @@ class sr844(SRSLockin):
 
             'max_retries': 3,
             'retry_delay': 0.1,
-            'min_interval': 0.05
+            'min_interval': 0.1
         }
 
         self.out_aux_channels = [1, 2]
@@ -135,8 +135,12 @@ class sr844(SRSLockin):
         super().__init__(logger, instrument_id)
 
     def detection_harmonic(self, harm: int = None) -> int | None:
-        """Not available for SR844."""
-        raise AttributeError("SR844 does not offer this functionality.")
+        """
+        Note that the syntax is different for the SR844.
+        The options are 0 or 1, where 0 is the fundamental and 1 is the first
+        harmonic.
+        """
+        return super().detection_harmonic(harm)
 
     def reference_trigger(self, condition: str = None) -> str | None:
         """Not available for SR844."""
@@ -222,18 +226,15 @@ class sr850(SRSLockin):
 
         self.pyvisa_config = {
             "resource_name"     : "",
+            "write_termination" : '\n',
             "output_buffer_size": 512,
 
             'max_retries': 3,
             'retry_delay': 0.1,
-            'min_interval': 0.05
+            'min_interval': 0.1
         }
 
         self.out_aux_channels = [1, 2, 3, 4]
-
-        self.cmd_map = {
-            'fmod': "RSRC"
-        }
 
         self.output_map = {
             'X': 1,
@@ -271,7 +272,7 @@ class sr850(SRSLockin):
 
     def input_range(self, V: float = None) -> float | None:
         """Not available for SR850."""
-        raise AttributeError("SR830 does not offer this functionality.")
+        raise AttributeError("SR850 does not offer this functionality.")
 
     def get_input_level_status(self) -> int:
         """Not available for SR850."""
