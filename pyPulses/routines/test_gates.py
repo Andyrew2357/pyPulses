@@ -87,7 +87,7 @@ class GateTest():
         
         def strict_panic(v, *args, **kwargs) -> bool:
             x, y = v
-            return self.in_boundary_box(x, y) and \
+            return (not self.in_boundary_box(x, y)) or \
                 self.strict_panic(v, *args, **kwargs)
 
         # Sweep to the origin
@@ -119,7 +119,7 @@ class GateTest():
         
         if res == SweepResult.FAILED:
             raise RuntimeError("Sweep to positive e0 failed.")
-        vertex1 = (get[0](), get[1]())
+        vertex1 = (np.clip(get[0](), xmin, xmax), np.clip(get[1](), ymin, ymax))
         self.info(f"Sweep to positve e0 ended at vertex: {vertex1}")
 
         self.info("Returning to the origin...")
@@ -135,16 +135,46 @@ class GateTest():
         
         if res == SweepResult.FAILED:
             raise RuntimeError("Sweep to negative e0 failed.")
-        vertex0 = (get[0](), get[1]())
+        vertex0 = (np.clip(get[0](), xmin, xmax), np.clip(get[1](), ymin, ymax))
         self.info(f"Sweep to negative e0 ended at vertex: {vertex0}")
         
         self.info("Iteratively profiling convex gating region...")
         self.gating_region = ConvexPolygon([vertex0, vertex1])
-        for i in range(self.max_vertices - 2):
-            self.info(f"Iteration {i}:")
+        
+        # iteratively expand the gating region.
+        self.iteratively_expand()
+
+        # sweep around the boundary to check for safety.
+        self.safety_check()
+
+    def iteratively_expand(self):
+
+        def strict_panic(v, *args, **kwargs) -> bool:
+            x, y = v
+            return (not self.in_boundary_box(x, y)) or \
+                self.strict_panic(v, *args, **kwargs)
+        
+        xmin, xmax = self.x_bounds
+        ymin, ymax = self.y_bounds
+        long_step = np.sqrt((xmin - xmax)**2 + (ymin - ymax)**2)
+        get = [P['f'] for P in self.parms]
+
+        # we want to expand from the longest edge not on the boundary box
+        def grade_edge(e: Edge):
+            if e[0][0] == e[1][0] and e[1][0] in self.x_bounds:
+                return 0.0
+            if e[0][1] == e[1][1] and e[1][1] in self.y_bounds:
+                return 0.0
+            return np.linalg.norm(np.subtract(e[1], e[0]))
+
+        def get_edge():
+            return max(self.gating_region.edges(), key = grade_edge)
+
+        for i in range(len(self.gating_region.vertices), self.max_vertices):
+            self.info(f"Current Number of Edges: {i + 1}:")
 
             # find the longest edge
-            (ax, ay), (bx, by) = self.gating_region.longest_edge()
+            (ax, ay), (bx, by) = get_edge()
             self.info(
                 f"Expanding normal to ({ax}, {ay}) --> ({bx}, {by}) edge..."
             )
@@ -179,11 +209,11 @@ class GateTest():
                 raise RuntimeError("Expansion sweep failed.")
 
             # insert the new vertex
-            vertex = (get[0](), get[1]())
+            vertex = (np.clip(get[0](), xmin, xmax), 
+                      np.clip(get[1](), ymin, ymax))
             insertion_index = self.gating_region.vertices.index((ax, ay)) + 1
             self.gating_region.vertices.insert(insertion_index, vertex)
             self.info(f"Inserting new vertex at {vertex}")
-            self.info(self.gating_region.vertices)
 
             # callback function
             if self.callback:
@@ -197,9 +227,12 @@ class GateTest():
 
     def safety_check(self):
 
+        self.info("Returning to the origin...")
+        self.go_to_origin()
+
         def lenient_panic(v, *args, **kwargs) -> bool:
             x, y = v
-            return self.in_boundary_box(x, y) and \
+            return (not self.in_boundary_box(x, y)) or \
                 self.lenient_panic(v, *args, **kwargs)
 
         self.info("Performing boundary safety check...")
@@ -210,7 +243,8 @@ class GateTest():
                                 target = np.array(vertex),
                                 wait = self.ramp_wait,
                                 panic_condition = lenient_panic,
-                                panic_behavior = self.go_to_origin)
+                                panic_behavior = \
+                                    lambda *args, **kwargs: self.go_to_origin)
             
             if res != SweepResult.SUCCEEDED:
                 self.info(f"Safety check failed.")
