@@ -153,11 +153,6 @@ class GateTest():
             t = np.array([-(by - ay), (bx - ax)])
             edgelen = np.linalg.norm(t)
             t /= edgelen # normal direction
-            if i == 0:
-                # There is a subtlety here. To ensure we are always sweeping
-                # away from the polygon, we need to flip the direction of the
-                # initial sweep.
-                t *= -1
 
             # check if this is a small edge so we can terminate
             if self.small_edge_size is not None and \
@@ -185,11 +180,8 @@ class GateTest():
 
             # insert the new vertex
             vertex = (get[0](), get[1]())
-            if i == 0:
-                self.gating_region.vertices.append(vertex)
-            else:
-                insertion_index = self.gating_region.vertices.index((ax, ay)) + 1
-                self.gating_region.vertices.insert(insertion_index, vertex)
+            insertion_index = self.gating_region.vertices.index((ax, ay)) + 1
+            self.gating_region.vertices.insert(insertion_index, vertex)
             self.info(f"Inserting new vertex at {vertex}")
             self.info(self.gating_region.vertices)
 
