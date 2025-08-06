@@ -22,7 +22,8 @@ class SweepResult(Enum):
     PANICKED    = auto()
 
 def tandemSweep(setters: List[Callable[[float], Any]], 
-                start: List[float], end: List[float], 
+                start: List[float], 
+                end: List[float] | float, 
                 wait: float,
                 max_step: List[float | None],  
                 min_step: List[float | None] = None,
@@ -191,7 +192,9 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     
     return SweepResult.SUCCEEDED
 
-def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float,
+def ezTandemSweep(parms: List[dict], 
+                  target: List[float] | float | dict, 
+                  wait: float,
                   panic_condition: Callable[..., bool] = lambda *args, **kwargs: False,
                   panic_behavior: str | Callable[..., Any] | None = 'zero',
                   handle_exceptions: bool = True, 
@@ -255,8 +258,12 @@ def ezTandemSweep(parms: List[dict], target: List[float] | dict, wait: float,
     min_step = [P.get('min_step') for P in parms]
     tolerance = [P.get('tolerance') for P in parms]
     start = [G() for G in setters]
+
+    names = [P.get('name') for P in parms]
     if isinstance(target, dict):
-        target = [target.get(p, start[i]) for i, p in enumerate(parms)]
+        if any(p not in names for p in target):
+            raise ValueError("Invalid parameter name in target.")
+        target = [target.get(p, start[i]) for i, p in enumerate(names)]
 
     return tandemSweep(setters, start, target, 
                        wait, max_step, min_step, tolerance, 

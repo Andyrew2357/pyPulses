@@ -69,6 +69,11 @@ class GateTest():
         self.gating_region = None
         self.safe = False
 
+        if isinstance(self.origin, dict):
+            self.zero = [self.origin['x'], self.origin['y']]
+        else:
+            self.zero = np.array(self.origin)
+
     def info(self, msg):
         if self.logger:
             self.logger.info(msg)
@@ -80,7 +85,7 @@ class GateTest():
     
     def go_to_origin(self) -> SweepResult:
         return ezTandemSweep(parms = self.parms, 
-                             target = self.origin, 
+                             target = self.zero, 
                              wait = self.ramp_wait)
 
     def run(self):
@@ -99,10 +104,6 @@ class GateTest():
         self.info("Successfully reached the origin")
          
         get = [P['f'] for P in self.parms]
-        if isinstance(self.origin, dict):
-            zero = [v for k, v in self.origin.items()]
-        else:
-            zero = np.array(self.origin)
         e0 = np.array(self.e0)
         e0 /= np.linalg.norm(e0)
 
@@ -112,7 +113,7 @@ class GateTest():
         ymin, ymax = self.y_bounds
         long_step = np.sqrt((xmin - xmax)**2 + (ymin - ymax)**2)
         res = ezTandemSweep(parms = self.parms,
-                            target = zero + long_step * e0,
+                            target = self.zero + long_step * e0,
                             wait = self.ramp_wait,
                             panic_condition = strict_panic,
                             panic_behavior = 'stop')
@@ -128,7 +129,7 @@ class GateTest():
         # sweep as far as we can in the -e0 direction
         self.info("Sweeping to the negative e0 direction...")
         res = ezTandemSweep(parms = self.parms,
-                            target = zero - long_step * e0,
+                            target = self.zero - long_step * e0,
                             wait = self.ramp_wait,
                             panic_condition = strict_panic,
                             panic_behavior = 'stop')
@@ -221,9 +222,6 @@ class GateTest():
 
         else:
             self.info("Terminated by reaching max iterations.")
-
-        # sweep around the boundary to check for safety.
-        self.safety_check()
 
     def safety_check(self):
 
