@@ -558,7 +558,10 @@ class HEMTCommonSource(abstractDevice):
             raise ValueError("Cannot set VG outside allowable range.")
         
         self.info(f"Set VG to {V} V.")
-        self._VG(V)
+        ezTandemSweep({'name': 'VG', 'f': self._VG, 
+                       'max_step': self.max_step, 
+                       'tolerance': self.tolerance},
+                       V, self.wait)
         self.optimized = False
 
     def VM(self, V: float = None) -> float | None:
@@ -568,7 +571,10 @@ class HEMTCommonSource(abstractDevice):
             raise ValueError("Cannot set VM outside allowable range.")
         
         self.info(f"Set VM to {V} V.")
-        self._VM(V)
+        ezTandemSweep({'name': 'VM', 'f': self._VM, 
+                       'max_step': self.max_step, 
+                       'tolerance': self.tolerance},
+                       V, self.wait)
         self.optimized = False
 
     def VDD(self, V: float = None) -> float | None:
@@ -578,7 +584,10 @@ class HEMTCommonSource(abstractDevice):
             raise ValueError("Cannot set VDD outside allowable range.")
         
         self.info(f"Set VDD to {V} V.")
-        self._VDD(V)
+        ezTandemSweep({'name': 'VDD', 'f': self._VDD, 
+                       'max_step': self.max_step, 
+                       'tolerance': self.tolerance},
+                       V, self.wait)
         self.optimized = False
 
     def VSS(self, V: float = None) -> float | None:
@@ -588,8 +597,26 @@ class HEMTCommonSource(abstractDevice):
             raise ValueError("Cannot set VSS outside allowable range.")
         
         self.info(f"Set VSS to {V} V.")
-        self._VSS(V)
+        ezTandemSweep({'name': 'VSS', 'f': self._VSS, 
+                       'max_step': self.max_step, 
+                       'tolerance': self.tolerance},
+                       V, self.wait)
         self.optimized = False
+
+    def sweep_parms(self, VG: float = None, VM: float = None, 
+                  VDD: float = None, VSS: float = None):
+        if VG is None: VG = self._VG()
+        if VM is None: VM = self._VM()
+        if VDD is None: VDD = self._VDD()
+        if VSS is None: VSS = self._VSS()
+        self.info(f"Sweeping parameters: VG = {VG:.4f}, VM = {VM:.4f}, "
+                  f"VDD = {VDD:.4f}, VSS = {VSS:.4f}...")
+        res = ezTandemSweep(
+            parms  = self._parm_list(),
+            target = [VG, VDD, VSS, VM],
+            wait   = self.wait
+        )
+        self.info("Sweep complete")
 
     def zero(self) -> SweepResult:
         """Ramp all amp parameters smoothly to 0 V."""
