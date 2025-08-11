@@ -6,6 +6,7 @@ import datetime
 import time
 import logging
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Tuple
 
 from .tandem_sweep import tandemSweep
@@ -63,9 +64,11 @@ class ParamSweepMeasure:
     ----------
     measurements : dict or list of dicts
         Measured parameters in the form: 
-            {'f': getter, 'name': parameter name}
+            {'f': getter, 'name': parameter name or list of column names if
+            the return is a tuple, 'lazy': boolean flag indicating whether
+            this is a lazy measurement.}
         The 'f' attribute is required and must be a callable that returns a 
-        float. The name attribute is optional and should be a string.
+        float. The 'name' and 'lazy' attribute are optional.
     coordinates : dict or list of dicts
         Swept parameters in the form:
             {
@@ -150,18 +153,46 @@ class ParamSweepMeasure:
 
         if type(self.measurements) == dict:
             self.measurements = (self.measurements,)
+
+        measurement_widths = []
+        for v in self.measurements:
+            cols = v.get('name')
+            if cols is None or type(cols) == str:
+                measurement_widths.append(1)
+            else:
+                measurement_widths.append(len(cols))
+        self.num_measurement_cols = sum(measurement_widths)
+
+        i = 0
+        self.normal_measurements = []
+        self.lazy_measurements = []
+        for v, m in zip(self.measurements, measurement_widths):
+            f = v.get('f', v.get('get'))
+            if f is None:
+                raise ValueError(f'Invalid getter for measured variable: {v}.')
+            
+            if v.get('lazy', False):
+                self.lazy_measurements.append((i, m, f))
+            else:
+                self.normal_measurements.append((i, m, f))
+            i += m
         
         if type(self.coordinates) == dict:
             self.coordinates = (self.coordinates,)
-
-        self.data_name = [v.get('name', 'unnamed') for v in self.measurements]
         self.coord_name = [v.get('name', 'unnamed') for v in self.coordinates]
+
+        temp_data_name = [v.get('name', 'unnamed') for v in self.measurements]
+        self.data_name = []
+        for n in temp_data_name:
+            if isinstance(n, str):
+                self.data_name.append(n)
+            else:
+                self.data_name.extend(n)
         
         for v in self.coordinates:
             if 'get' and 'set' in v:
                 v['f'] = getSetter(v['get'], v['set'])
 
-        self.data_vars = [v.get('f', None) for v in self.measurements]
         self.coord_vars = [v.get('f', None) for v in self.coordinates]
 
         self.ramp_max_step = [v.get('max_step', None) for v in self.coordinates]
@@ -187,16 +218,18 @@ class ParamSweepMeasure:
         """
 
         if self.retain_return:
-            result = np.full(shape = (*self.dimensions, len(self.data_vars)),
+            result = np.full(shape = (*self.dimensions, self.num_measurement_cols),
                              fill_value = np.nan, dtype = float)
 
-        for idx, target in self._iterator():
-            _checkpoint()
-            measured_vars = self.measure_at_point(idx, target)
-            if self.retain_return:
-                result[*idx,:] = measured_vars
+        try:
+            for idx, target in self._iterator():
+                _checkpoint()
+                measured_vars = self.measure_at_point(idx, target)
+                if self.retain_return:
+                    result[*idx,:] = measured_vars
 
-        self._close_file_logger()
+        finally:
+            self._close_file_logger()
 
         if self.retain_return:
             return result
@@ -292,6 +325,29 @@ class ParamSweepMeasure:
                         self.ramp_tolerance, 
                         ignore_checkpoints = not self.ramp_checkpoints, 
                         **self.ramp_kwargs)
+            
+    def get_measured_vars(self) -> np.ndarray:
+        M = np.full(self.num_measurement_cols, fill_value = np.nan)
+
+        if self.lazy_measurements:
+            with ThreadPoolExecutor(max_workers = len(self.lazy_measurements)) as ex:
+                
+                # thread the lazy measurements
+                futures = [ex.submit(f) for _, _, f in self.lazy_measurements]
+
+                # take any non-lazy measurements while waiting for the others
+                for i, m, f in self.normal_measurements:
+                    M[i: i + m] = f()
+
+                # collect lazy measurement results
+                for (i, m, _), p in zip(self.lazy_measurements, futures):
+                    M[i: i + m] = p.result()
+
+        else:
+            for i, m, f in self.normal_measurements:
+                M[i: i + m] = f()
+                
+        return M
 
     def measure_at_point(self, idx: np.ndarray, target_coords: np.ndarray
                          ) -> np.ndarray:
@@ -311,7 +367,7 @@ class ParamSweepMeasure:
 
         # If the target coords are outside the mask, terminate.
         if not self.space_mask(idx, target_coords):
-            return np.full(len(self.data_vars), fill_value = np.nan)
+            return np.full(self.num_measurement_cols, fill_value = np.nan)
 
         # Get the time if we want timestamped data
         now = datetime.datetime.now() if self.timestamp else None
@@ -330,7 +386,7 @@ class ParamSweepMeasure:
                 self.pre_callback(idx, target_coords)
 
         # Measure the desired parameters
-        measured_vars = np.array([P() for P in self.data_vars])
+        measured_vars = self.get_measured_vars()
 
         # log to an output file and logger if desired
         self._log_data(target_coords, measured_vars, now)

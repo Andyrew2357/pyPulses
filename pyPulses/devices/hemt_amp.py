@@ -106,7 +106,7 @@ class HEMTCommonSource(abstractDevice):
         # handle static bias resistor
         if VM is None:
             self._VM = lambda *args: 0.0
-            self.VMr = (0.0, 0.0)
+            self.VMr = (-np.inf, np.inf)
             self.VM_VG_pinch = 0.0
 
         # handle grounded source
