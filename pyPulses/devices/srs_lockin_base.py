@@ -418,24 +418,32 @@ class SRSLockin(pyvisaDevice):
         """Convert time constant value to index (rounds to closest value)."""
         return np.argmin(np.abs(self.tau_vals - tau_val))
 
-    def input_sensitivity(self, V: float = None) -> float | None:
+    def input_sensitivity(self, val: float = None, units: str = 'V') -> float | None:
         """
-        Set or query the input sensitivity in Volts.
+        Set or query the input sensitivity.
 
         Parameters
         ----------
-        V : float, optional
+        val : float, optional
+        units : str, default='V'
+            One of {'pV', 'nV', 'uV', 'mV', 'V', 'pA', 'nA', 'uA', 'mA', 'A'}
 
         Returns
         -------
         float or None
         """
 
-        if V is None:
-            return self._sens_value(int(self.query(f"{self.cmd_map['sens']}?")))
-        self.write(f"{self.cmd_map['sens']} {self._sens_index(V)}")
+        coeff = 1 if units[-1] == 'V' else 1e-6
+        if len(units) == 2:
+            coeff *= {'p': 1e12, 'n': 1e9, 'u': 1e6, 'm': 1e3}[units[0]]
+
+        if val is None:
+            return coeff * self._sens_value(
+                int(self.query(f"{self.cmd_map['sens']}?"))
+            )
+        self.write(f"{self.cmd_map['sens']} {self._sens_index(val / coeff)}")
         self.info(
-            f"Set sensitivity to {self._sens_value(self._sens_index(V))} V."
+            f"Set sensitivity to {self._sens_value(self._sens_index(val))} {units}."
         )
 
     def time_constant(self, tau: float = None) -> float | None:
@@ -549,11 +557,6 @@ class SRSLockin(pyvisaDevice):
         self.write(self.cmd_map['arng'])
 
     # SERIALIZATION AND DESERIALIZATION
-
-    # Plan to add this here (generally good for instruments with a ton of settings)
-    # may avoid applying it to auxiliary outputs since indices differ across models 
-    # (maybe add an attribute that reflects this, wouldn't be too hard)
-    # Will also need to override it to add acquisition configurations for sr860/sr865a
 
     def save_state_json(self, path: str):
         """

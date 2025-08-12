@@ -111,6 +111,9 @@ class ParamSweepMeasure:
         Whether to hold on to measured values and return as a numpy array. This 
         can be memory intensive for large scans, so make sure to set it False in 
         those cases.
+    skip_points : int, default=0
+        Number of points at the beginning of the scan to skip (Can be useful
+        when restarting a partially completed scan that was interrupted).
     timestamp : bool, default=True
         Whether to include a timestamp for each point (Note this is not returned, 
         only written to files and passed to callbacks).
@@ -141,6 +144,7 @@ class ParamSweepMeasure:
                       Callable[[np.ndarray, np.ndarray, np.ndarray], Any] = None
     space_mask      : Callable[[int | np.ndarray, np.ndarray], bool] \
                         = lambda *args: True                                    # mask for which points to take
+    skip_points     : int = 0                                                   # points to skip (useful when restarting an interrupted scan)
     timestamp       : bool = True                                               # whether to include a timestamp for each point
     
     # If tandem sweeping is desired, need to provide these
@@ -221,12 +225,21 @@ class ParamSweepMeasure:
             result = np.full(shape = (*self.dimensions, self.num_measurement_cols),
                              fill_value = np.nan, dtype = float)
 
+        start_time = time.time()
+        points_taken = 0
         try:
             for idx, target in self._iterator():
+                
+                points_taken += 1
+                if points_taken < self.skip_points:
+                    continue
                 _checkpoint()
+
                 measured_vars = self.measure_at_point(idx, target)
                 if self.retain_return:
                     result[*idx,:] = measured_vars
+                
+            self._log_time_remaining(points_taken, start_time)
 
         finally:
             self._close_file_logger()
@@ -419,6 +432,21 @@ class ParamSweepMeasure:
         data_str = _get_data_str(coords, data, now)
         self._log('info', data_str)
         self._log_file(data_str)
+
+    def _log_time_remaining(self, points_taken, start_time):
+        taken = points_taken - self.skip_points
+        npoints = self.npoints - self.skip_points
+        pcomplete = taken/npoints
+        time_taken = time.time() - start_time
+        remaining = int(time_taken * (1/pcomplete - 1))
+        hrs = remaining // 3600
+        remaining -= hrs * 3600
+        mns = remaining // 60
+        scs = remaining - mns * 60
+        self._log('info', 
+            f"Taken {taken}/{npoints} ({100*pcomplete:.2f}%); "
+            f"Est. {hrs}:{mns:02d}:{scs:02d} remaining."
+        )
 
     def _prep_file_handler(self, fname):
         if self.file_handler:
