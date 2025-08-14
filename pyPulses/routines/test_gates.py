@@ -3,9 +3,12 @@ Get an estimate of the safe gating range by iterative convex polygon expansion
 """
 
 from ..utils.tandem_sweep import SweepResult, ezTandemSweep
+from ..utils.getsetter import getSetter
+from ..plotting.chart_recorder import Recorder, Line, Polygon
 
 import json
 import numpy as np
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, List, Tuple
 
@@ -50,18 +53,23 @@ class ConvexPolygon():
         with open(path, 'r') as f:
             self.vertices = json.load(f)
 
+    def get_scatter_points(self) -> Tuple[List[float], List[float]]:
+        return [[*x, x[-1]] for x in zip(*self.vertices)]
+
 @dataclass
 class GateTest():
     strict_panic    : Callable[..., bool]
     lenient_panic   : Callable[..., bool]
     x_bounds        : Tuple[float, float]
     y_bounds        : Tuple[float, float]
-    parms           : List[dict]
+    parameters      : List[dict]
     origin          : List[float] | dict
     e0              : Point = (1.0, 0.0)
     ramp_wait       : float = 0.1
     max_vertices    : int = 20
     small_edge_size : float = None
+    plot            : bool = False
+    danger_callback : bool = False
     callback        : Callable[..., Any] = None
     logger          : object = None
 
@@ -73,6 +81,58 @@ class GateTest():
             self.zero = [self.origin['x'], self.origin['y']]
         else:
             self.zero = np.array(self.origin)
+
+        def bounded_strict_panic(v, *args, **kwargs) -> bool:
+            x, y = v
+            return (not self.in_boundary_box(x, y)) or \
+                self.strict_panic(v, *args, **kwargs)
+        self.bounded_strict_panic = bounded_strict_panic
+
+        def bounded_lenient_panic(v, *args, **kwargs) -> bool:
+            x, y = v
+            return (not self.in_boundary_box(x, y)) or \
+                self.lenient_panic(v, *args, **kwargs)
+        self.bounded_lenient_panic = bounded_lenient_panic
+
+        self.parms = deepcopy(self.parameters)
+        for p in self.parms:
+            if not 'f' in p:
+                p['f'] = getSetter(p['get'], p['set'])
+        
+        # set up plotter
+        if self.plot:
+            ncols = 2 if self.danger_callback else 1
+            self.plotter = Recorder(rows = 1, cols = ncols, 
+                                    width = 1000, height = 500)
+            self.plotter.add_element(Line('pos', color='red'), row=1, col=ncols)
+            self.plotter.add_element(Polygon('poly', color='green'), 
+                                     row=1, col=ncols, opacity = 0.5)
+            self.plotter.set_axis_labels(row=1, col=ncols, xlabel='x', ylabel='y')
+            self.plotter.set_axis_range(row=1, col=ncols, xrange=self.x_bounds,
+                                        yrange= self.y_bounds)
+            
+            if self.danger_callback:
+                self.plotter.add_element(Line('danger', color='blue'), row=1, col=1)
+                self.plotter.set_axis_labels(row=1, col=1, xlabel='N', 
+                                            ylabel='Danger Parameter')
+                self.bounded_strict_panic = lambda v, *args, **kwargs: \
+                    bounded_strict_panic(v, *args, callback = \
+                                         self._plot_danger_callback, **kwargs)
+                self.bounded_lenient_panic = lambda v, *args, **kwargs: \
+                    bounded_lenient_panic(v, *args, callback = \
+                                          self.plot_danger_callback, **kwargs)
+                self.ndanger = 0
+            
+    def _plot_position_callback(self, pos: np.ndarray):
+        if not self.plot:
+            return
+        self.plotter.update({'pos': {'xnew': pos[0], 'ynew': pos[1]}})
+
+    def _plot_danger_callback(self, danger_lvl: float):
+        if not self.plot:
+            return
+        self.ndanger += 1
+        self.plotter.update({'pos': {'xnew': self.ndanger, 'ynew': danger_lvl}})
 
     def info(self, msg):
         if self.logger:
@@ -86,14 +146,13 @@ class GateTest():
     def go_to_origin(self) -> SweepResult:
         return ezTandemSweep(parms = self.parms, 
                              target = self.zero, 
-                             wait = self.ramp_wait)
+                             wait = self.ramp_wait,
+                             callback = self._plot_position_callback)
 
     def run(self):
         
-        def strict_panic(v, *args, **kwargs) -> bool:
-            x, y = v
-            return (not self.in_boundary_box(x, y)) or \
-                self.strict_panic(v, *args, **kwargs)
+        if self.plot:
+            self.plotter.show()
 
         # Sweep to the origin
         self.info("Sweeping to the origin...")
@@ -115,7 +174,8 @@ class GateTest():
         res = ezTandemSweep(parms = self.parms,
                             target = self.zero + long_step * e0,
                             wait = self.ramp_wait,
-                            panic_condition = strict_panic,
+                            callback = self._plot_position_callback,
+                            panic_condition = self.bounded_strict_panic,
                             panic_behavior = 'stop')
         
         if res == SweepResult.FAILED:
@@ -131,7 +191,8 @@ class GateTest():
         res = ezTandemSweep(parms = self.parms,
                             target = self.zero - long_step * e0,
                             wait = self.ramp_wait,
-                            panic_condition = strict_panic,
+                            callback = self._plot_position_callback,
+                            panic_condition = self.bounded_strict_panic,
                             panic_behavior = 'stop')
         
         if res == SweepResult.FAILED:
@@ -148,13 +209,11 @@ class GateTest():
         # sweep around the boundary to check for safety.
         self.safety_check()
 
+        if self.plot:
+            self.plotter.draw()
+
     def iteratively_expand(self):
 
-        def strict_panic(v, *args, **kwargs) -> bool:
-            x, y = v
-            return (not self.in_boundary_box(x, y)) or \
-                self.strict_panic(v, *args, **kwargs)
-        
         xmin, xmax = self.x_bounds
         ymin, ymax = self.y_bounds
         long_step = np.sqrt((xmin - xmax)**2 + (ymin - ymax)**2)
@@ -194,7 +253,8 @@ class GateTest():
             # sweep to the midpoint
             res = ezTandemSweep(parms = self.parms, 
                                 target = m, 
-                                wait = self.ramp_wait)
+                                wait = self.ramp_wait,
+                                callback = self._plot_position_callback)
             
             if res != SweepResult.SUCCEEDED:
                 raise RuntimeError("Sweep to midpoint failed.")
@@ -203,7 +263,8 @@ class GateTest():
             res = ezTandemSweep(parms = self.parms,
                                 target = m + long_step * t,
                                 wait = self.ramp_wait,
-                                panic_condition = strict_panic,
+                                callback = self._plot_position_callback,
+                                panic_condition = self.bounded_strict_panic,
                                 panic_behavior = 'stop')
         
             if res == SweepResult.FAILED:
@@ -215,6 +276,11 @@ class GateTest():
             insertion_index = self.gating_region.vertices.index((ax, ay)) + 1
             self.gating_region.vertices.insert(insertion_index, vertex)
             self.info(f"Inserting new vertex at {vertex}")
+
+            if self.plot:
+                self.plotter.elements['poly'].update(
+                    self.plotter.widget, self.gating_region.vertices)
+                self.plotter.draw()
 
             # callback function
             if self.callback:
@@ -228,11 +294,6 @@ class GateTest():
         self.info("Returning to the origin...")
         self.go_to_origin()
 
-        def lenient_panic(v, *args, **kwargs) -> bool:
-            x, y = v
-            return (not self.in_boundary_box(x, y)) or \
-                self.lenient_panic(v, *args, **kwargs)
-
         self.info("Performing boundary safety check...")
 
         for vertex in self.gating_region.vertices:
@@ -240,7 +301,8 @@ class GateTest():
             res = ezTandemSweep(parms = self.parms,
                                 target = np.array(vertex),
                                 wait = self.ramp_wait,
-                                panic_condition = lenient_panic,
+                                callback = self._plot_position_callback,
+                                panic_condition = self.bounded_lenient_panic,
                                 panic_behavior = \
                                     lambda *args, **kwargs: self.go_to_origin)
             

@@ -28,6 +28,7 @@ def tandemSweep(setters: List[Callable[[float], Any]],
                 max_step: List[float | None],  
                 min_step: List[float | None] = None,
                 tolerance: List[float | None] = None,
+                callback: Callable[[np.ndarray], Any] = None,
                 panic_condition: Callable[..., bool] = lambda *args, **kwargs: False,
                 panic_behavior: str | Callable[..., Any] | None = 'zero',
                 handle_exceptions: bool = True,
@@ -53,7 +54,9 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     tolerance : list of float or None
         allowed difference between `end` setting and the actual final point for 
         each parameter; None is interpreted as 0.
-    panic_condition : Callable
+    callback : Callable, optional
+        callback on each iteration that gets passed the last set point.
+    panic_condition : Callable, optional
         passed parameter values at each step. Returns true if panic condition 
         encountered.
     panic_behavior : str or Callable or None, default='zero'
@@ -179,7 +182,10 @@ def tandemSweep(setters: List[Callable[[float], Any]],
                     raise ValueError(
                         f"Invalid `panic_behavior` argument: {panic_condition}"
                     )
-                
+            
+            if callback:
+                callback(new_settings)
+
             prev_settings[i] = new_settings[i]
         
         time.sleep(wait)
@@ -195,6 +201,7 @@ def tandemSweep(setters: List[Callable[[float], Any]],
 def ezTandemSweep(parms: List[dict], 
                   target: List[float] | float | dict, 
                   wait: float,
+                  callback: Callable[[np.ndarray], Any] = None,
                   panic_condition: Callable[..., bool] = lambda *args, **kwargs: False,
                   panic_behavior: str | Callable[..., Any] | None = 'zero',
                   handle_exceptions: bool = True, 
@@ -231,7 +238,9 @@ def ezTandemSweep(parms: List[dict],
         unchanged over the course of the sweep.
     wait : float
         wait time between steps
-    panic_condition : Callable
+    callback : Callable, optional
+        callback on each iteration that gets passed the target point.
+    panic_condition : Callable, optional
         passed parameter values at each step. Returns true if panic condition 
         encountered.
     panic_behavior : str or Callable or None, default='zero'
@@ -267,5 +276,5 @@ def ezTandemSweep(parms: List[dict],
 
     return tandemSweep(setters, start, target, 
                        wait, max_step, min_step, tolerance, 
-                       panic_condition, panic_behavior,
+                       callback, panic_condition, panic_behavior,
                        handle_exceptions, ignore_checkpoints)

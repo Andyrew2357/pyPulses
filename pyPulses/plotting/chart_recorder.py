@@ -99,15 +99,14 @@ class Line(PlotElement):
         widget.data[self.trace_index].x = []
         widget.data[self.trace_index].y = []
 
-class Polygon(PlotElement):
-    def initialize(self, widget: go.FigureWidget):
-        pass
+class Polygon(Line):
+    def initialize(self, widget: go.FigureWidget, row: int, col: int):
+        super().initialize(widget, row, col)
+        widget.data[self.trace_index].fill = 'toself'
 
-    def update(self, widget: go.FigureWidget, **kwargs):
-        pass
-
-    def clear(self, widget: go.FigureWidget):
-        pass
+    def update(self, widget: go.FigureWidget, 
+               vertices: List[Tuple[float, float]]):
+        self.x_data, self.y_data = [[*x, x[-1]] for x in zip(*vertices)]
 
 class Recorder():
     """Manages subplots and coordinates for live plotting"""
@@ -233,6 +232,23 @@ class Recorder():
             self.widget.update_yaxes(row = row, col = col, type = ytype)
         if ytype2:
             self.widget.update_yaxes(row = row, col = col, type = ytype2,
+                                     secondary_y = True)
+            
+    def set_axis_range(self, row: int, col: int,
+                       xrange: Tuple[float | None, float | None] = None,
+                       yrange: Tuple[float | None, float | None] = None,
+                       yrange2: Tuple[float | None, float | None] = None,
+                       elem_key: str = None):
+        """Set subplot axis type (linear, log, etc.)"""
+        if elem_key:
+            row, col = self.elem_locations[elem_key]
+
+        if xrange:
+            self.widget.update_xaxes(row = row, col = col, range = xrange)
+        if yrange:
+            self.widget.update_yaxes(row = row, col = col, range = yrange)
+        if yrange2:
+            self.widget.update_yaxes(row = row, col = col, range = yrange2,
                                      secondary_y = True)
 
 # Integration with param_sweep_measure and other common use cases
