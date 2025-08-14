@@ -3,7 +3,9 @@ from .abstract_device import abstractDevice
 from ..utils import curves
 from ..utils.tandem_sweep import ezTandemSweep, SweepResult
 from ..utils.param_sweep_measure import SweepMeasureCut
-from ..utils.plot_sweep import plotSweep
+
+# REFACTORED PLOTTING...
+from .plot_sweep import plotSweep # type: ignore
 
 import json
 import numpy as np

@@ -1,5 +1,8 @@
-from .sweep_plotter import SweepPlotter
+from .chart_recorder import ChartRecorder, Recorder, SweepRecorder
 
 __all__ = [
-    "SweepPlotter"
+    "ChartRecorder",
+    "Recorder",
+    "SweepRecorder",
 ]
+

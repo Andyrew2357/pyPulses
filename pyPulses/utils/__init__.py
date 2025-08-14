@@ -6,7 +6,6 @@ from . import decorators
 from .get_quick_logger import getQuickLogger, clearLoggers
 from .getsetter import getSetter
 from .kalman import kalman
-from .plot_sweep import plotSweep
 from .param_sweep_measure import ParamSweepMeasure
 from .param_sweep_measure import SweepMeasure, SweepMeasureCut
 from .param_sweep_measure import SweepMeasureParallelepiped
@@ -29,8 +28,7 @@ __all__ = [
     "getQuickLogger",
     "getSetter",
     "kalman",
-    "ParamSweepMeasure"
-    "plotSweep",
+    "ParamSweepMeasure",
     "RootFinderState",
     "RootFinderStatus",
     "SweepMeasure",

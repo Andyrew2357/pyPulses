@@ -4,7 +4,7 @@ Lazy functions for calling a parameter sweep with SweepPlotter as a callback.
 
 import numpy as np
 from typing import Any, List, Tuple
-from .param_sweep_measure import ParamSweepMeasure
+from ..pyPulses.utils.param_sweep_measure import ParamSweepMeasure
 
 def _create_plotter_config(swept_names: List[str], 
                            measured_names: List[str],
@@ -48,7 +48,7 @@ def plotSweep(sweep: ParamSweepMeasure, plotter_class = None,
         # Import default plotter here - keeping this import local prevents 
         # circular imports and allows for alternative plotter classes to be 
         # passed
-        from ..plotting.sweep_plotter import SweepPlotter
+        from ..pyPulses.plotting import SweepPlotter
         plotter_class = SweepPlotter
     
     # Extract names and determine total points
