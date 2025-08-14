@@ -20,6 +20,7 @@ requires-python = ">=3.10"
 dependencies = [
     "bitarray",
     "gpib-ctypes>=0.2",
+    "ipython>=9.0",
     "matplotlib",
     "mkdocs",
     "numpy>=2.0",
@@ -32,9 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 plotting = [
-    "bokeh>=3.7",
-    "ipython>=9.0",
-    "jupyter_bokeh>=4.0"
+    "plotly"
 ]
 
 [project.urls]

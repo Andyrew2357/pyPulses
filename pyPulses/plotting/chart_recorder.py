@@ -1,6 +1,12 @@
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from IPython.display import display
+from IPython.display import display, HTML
+try:
+    display(HTML(
+        '<script type="text/javascript" async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-MML-AM_SVG"></script>'
+    ))
+except:
+    pass
 
 import time
 import numpy as np
@@ -28,7 +34,7 @@ class Line(PlotElement):
     """Self-managing line element"""
     def __init__(self, key: str, name: str = None, color: str = None, 
                  width: int = 2, dash: str = 'solid', opacity: float = 1.0, 
-                 secondary_y: bool = False, max_points: int = 1000, 
+                 secondary_y: bool = False, max_points: int = 500, 
                  legend: bool = False, **kwargs):
         self.key     = key
         self.name    = name or key
@@ -69,20 +75,18 @@ class Line(PlotElement):
         # Store the trace index for future updates
         self.trace_index = len(widget.data) - 1
 
-    def update(self, x_new: List[float], y_new: List[float]):
+    def update(self, x_new: float, y_new: float):
         """Update line data"""
 
         if self.trace_index is None:
             raise RuntimeError(f"Line '{self.name}' not initialized.")
-        
-        self.x_data.extend(x_new)
-        self.y_data.extend(y_new)
+        self.x_data.append(x_new)
+        self.y_data.append(y_new)
 
+    def draw(self, widget: go.FigureWidget):
         if len(self.x_data) > self.max_points:
             self.x_data = self.x_data[-self.max_points:]
             self.y_data = self.y_data[-self.max_points:]
-
-    def draw(self, widget: go.FigureWidget):
         widget.data[self.trace_index].x = self.x_data
         widget.data[self.trace_index].y = self.y_data
 
@@ -109,7 +113,7 @@ class Recorder():
     """Manages subplots and coordinates for live plotting"""
     def __init__(self, rows: int = 1, cols: int = 1, 
                  width: int = 1400, height: int = 800, 
-                 draw_interval: float = 0.1):
+                 draw_interval: float = 0.2):
         
         self.rows = rows
         self.cols = cols
@@ -241,8 +245,8 @@ class SweepRecorder(Recorder):
                  twin_axes: List[Tuple[str, ...]] = None, 
                  master_var: str = None,
                  max_cols: int = 5, 
-                 width: int = 1400, height: int = 800,
-                 draw_interval: float = 0.1):
+                 width: int = None, height: int = None,
+                 draw_interval: float = 0.2):
         
         twinx = twinx or []
         twin_axes = twin_axes or []
@@ -290,16 +294,19 @@ class SweepRecorder(Recorder):
 
         cols = min(ceil(sqrt(nsub)), max_cols)
         rows = ceil(nsub / cols)
+        width = min(1400, 400*rows)
+        if height is None:
+            height = int(0.6 * (width * rows) // cols)
         super().__init__(rows, cols, width, height, draw_interval)
         self.npoints = 0
 
         locations: Dict[str, Tuple[int, int]] = {}
 
-        self.keys = []
+        self.keys = {}
         line_kwargs = line_kwargs or [{}]*len(variables)
         pr = 1
         pc = 0
-        for var, lkwargs in zip(variables, line_kwargs):
+        for ii, (var, lkwargs) in enumerate(zip(variables, line_kwargs)):
             key = var.get('name')
             if key is None or key == 'unnamed':
                 continue
@@ -307,7 +314,7 @@ class SweepRecorder(Recorder):
             if key == master_var:
                 continue
             
-            self.keys.append(key)
+            self.keys[key] = ii
             r, c = None, None
             secondary_y = False
             younger_twin = False
@@ -369,8 +376,8 @@ class SweepRecorder(Recorder):
         D = coords if data is None else np.hstack([coords, data])
         x = self.npoints if self.master_var_ind is None \
             else D[self.master_var_ind]
-        for i, k in enumerate(self.keys):
-            self.elements[k].update([x], [D[i]])
+        for k, i in self.keys.items():
+            self.elements[k].update(x, D[i])
         self._draw_lazy()
 
 class ChartRecorder(Recorder):

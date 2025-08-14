@@ -5,12 +5,14 @@ import itertools
 import datetime
 import time
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Tuple
 
 from .tandem_sweep import tandemSweep
 from .getsetter import getSetter
+from ..plotting.chart_recorder import SweepRecorder
 from ..thread_job import _checkpoint
 
 def _get_data_str(coords: np.ndarray, data: np.ndarray, 
@@ -124,6 +126,12 @@ class ParamSweepMeasure:
         Whether to include `thread_job` checkpoints when ramping.
     ramp_kwargs : dict, optional
         Keyword arguments for tandem sweep.
+    plot_fields : str or List[str | int], optional
+        If 'all', will plot all coordinates and measurements. If a list, it will
+        plot the parameters identified by index or name.
+    plot_kwargs : dict, optional
+        Additional arguments passed when creating the `SweepRecorder` for live
+        plotting.
     """
     measurements    : Dict[str, Any] | List[Dict[str, Any]]                     # measured variables
     coordinates     : Dict[str, Any] | List[Dict[str, Any]]                     # swept variables
@@ -151,20 +159,27 @@ class ParamSweepMeasure:
     ramp_wait       : float = None                                              # wait time between steps when ramping
     ramp_checkpoints: bool = False                                              # whether to include thread_job checkpoints when ramping
     ramp_kwargs     : dict = None                                               # keyword arguments for tandem sweep
+    plot_fields     : str | List[int | str]                                     # fields to plot while taking sweep
+    plot_kwargs     : dict = None                                               # keyword arguments passed to sweep recorder
 
     def __post_init__(self):
         """Input validation"""
 
-        if type(self.measurements) == dict:
+        if isinstance(self.measurements, dict):
             self.measurements = (self.measurements,)
 
         measurement_widths = []
+        self.unwrapped_measurements = []
         for v in self.measurements:
             cols = v.get('name')
-            if cols is None or type(cols) == str:
+            if cols is None or isinstance(cols, str):
                 measurement_widths.append(1)
             else:
                 measurement_widths.append(len(cols))
+                for c in cols:
+                    temp = deepcopy(v)
+                    temp['name'] = c
+                    self.unwrapped_measurements.append(temp)
         self.num_measurement_cols = sum(measurement_widths)
 
         i = 0
@@ -181,7 +196,7 @@ class ParamSweepMeasure:
                 self.normal_measurements.append((i, m, f))
             i += m
         
-        if type(self.coordinates) == dict:
+        if isinstance(self.coordinates, dict):
             self.coordinates = (self.coordinates,)
         self.coord_name = [v.get('name', 'unnamed') for v in self.coordinates]
 
@@ -228,6 +243,10 @@ class ParamSweepMeasure:
         start_time = time.time()
         points_taken = 0
         try:
+            if self.plot_fields is not None:
+                sr = self._get_live_plotter()
+                sr.show()
+
             for idx, target in self._iterator():
                 
                 points_taken += 1
@@ -236,10 +255,17 @@ class ParamSweepMeasure:
                 _checkpoint()
 
                 measured_vars = self.measure_at_point(idx, target)
+
+                if self.plot_fields is not None:
+                    sr.update(target, measured_vars)
+
                 if self.retain_return:
                     result[*idx,:] = measured_vars
                 
             self._log_time_remaining(points_taken, start_time)
+
+            if self.plot_fields is not None:
+                sr.draw()
 
         finally:
             self._close_file_logger()
@@ -247,21 +273,33 @@ class ParamSweepMeasure:
         if self.retain_return:
             return result
         
-    def preview(self, coord_indices: List[int], use_mask = True, **kwargs):
+    def preview(self, coords: List[int | str], use_mask = True, **kwargs):
         """
         Plot a preview of the path swept out by the sweep <= 3 dimensions
 
         Parameters
         ----------
-        coord_indices : list of int
+        coords : list of int or str
             Swept parameters to use as the axes for the plot (we project to 
             these axes from the higher dimensional space).
         use_mask : bool, default=True
             Whether to apply the `space_mask` during the simulation.
         """
 
-        if len(coord_indices) > 3 or len(coord_indices) < 1:
+        if len(coords) > 3 or len(coords) < 1:
             raise ValueError("Invalid 'coord_indices'.")
+        
+        coord_indices = []
+        for c in coords:
+            if isinstance(c, int):
+                coord_indices.append(c)
+            else:
+                for i, v in self.coordinates:
+                    if v.get('name', '') == c:
+                        coord_indices.append(i)
+                        break
+                else:
+                    raise ValueError(f"{c} is not a coordinate.")
 
         if use_mask:
             points = np.full(shape = (self.npoints, len(coord_indices)), 
@@ -412,6 +450,20 @@ class ParamSweepMeasure:
                 self.post_callback(idx, target_coords, measured_vars)
         
         return measured_vars
+    
+    def _get_live_plotter(self):
+        variables = [*self.coordinates, *self.unwrapped_measurements]
+        if self.plot_fields == 'all':
+            plot_fields = variables
+        else:
+            plot_fields = []
+            for i, v in variables:
+                if i in self.plot_fields or \
+                    v.get('name', '') in self.plot_fields:
+                    plot_fields.append(v)
+                
+        plot_kwargs = self.plot_kwargs or {}
+        return SweepRecorder(plot_fields, **plot_kwargs)
 
     def _get_header_str(self):
         coord_cols = "".join(f'\t{col:>12}' for col in self.coord_name)

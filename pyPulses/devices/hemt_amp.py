@@ -283,16 +283,15 @@ class HEMTCommonSource(abstractDevice):
                 ramp_wait = self.wait,
                 ramp_checkpoints = True,
                 logger = self.logger,
+                plot_fields = None if not plot else ['VG', 'VM', 'IDS'],
+                plot_kwargs = {'twin_axes': [('VG', 'VM')]},
                 # Pinch off VM to compensate as we sweep VG
                 numpoints = numpoints,
                 start = [VGmax, VGmax + self.VM_VG_pinch],
-                end = [VGmin, VGmin + self.VM_VG_pinch]
+                end = [VGmin, VGmin + self.VM_VG_pinch],
             )
 
-            if plot:
-                cal_data, _ = plotSweep(calibration_sweep)
-            else:
-                cal_data = calibration_sweep.run()
+            cal_data = calibration_sweep.run()
 
             raw_VG = np.linspace(VGmax, VGmin, numpoints)
             self.raw_cal_data = np.vstack([raw_VG, 
@@ -323,6 +322,8 @@ class HEMTCommonSource(abstractDevice):
                 ramp_wait = self.wait,
                 ramp_checkpoints = True,
                 logger = self.logger,
+                plot_fields = None if not plot else 'all',
+                plot_kwargs = {'twin_axes': [('VSS', 'VDD')]},
                 # Sweep VSS and VDD maintaining VDS
                 numpoints = numpoints,
                 start = [VSSmin, VSSmin + VDS],

@@ -8,6 +8,8 @@ import numpy as np
 import time
 from typing import Any, Callable, Tuple
 
+from ..plotting.chart_recorder import Recorder, Line
+
 """Configuration dataclass for balanceCapBridge function"""
 @dataclass
 class BalanceCapBridgeConfig:
@@ -49,7 +51,8 @@ class BalanceCapBridgeConfig:
     Vstd_gain   : float = 1                             # gain associated with Vstd
     Cstd        : float = 1                             # standard capacitor Cstd
     wait        : float = 3                             # time to wait after changing voltage
-    samples     : int = 100                             # number of averages to use  
+    samples     : int = 100                             # number of averages to use
+    plot        : bool = False                          # whether to plot calibration measurements
     logger      : object = None                         # logger
     callback    : Callable[[int, np.ndarray, np.ndarray], Any] = None
     ignore_warning: bool = False
@@ -68,7 +71,7 @@ class BalanceCapBridgeConfig:
 
 """Output for balanceCapBridge function, also used for CapBridge object"""
 @dataclass
-class CapBridgeBalance:
+class BalanceCapBridgeResult:
     """
     Result of `balanceCapBridge`.
 
@@ -132,7 +135,7 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
                      get_Vstd   : Callable[[], float],
                      set_Vstd_ph: Callable[[float], Any],
                      get_XY     : Callable[[], Tuple[float, float]],
-                    ) -> CapBridgeBalance:
+                    ) -> BalanceCapBridgeResult:
     """
     Balances the capacitance bridge. Run once before capacitance measurements.
 
@@ -186,7 +189,7 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
                 C.logger.warning(msg)
             else:
                 print(msg)
-            return CapBridgeBalance(status = False)
+            return BalanceCapBridgeResult(status = False)
 
     # measure off-balance voltage components at three points 
     # (using fraction of range)
@@ -196,6 +199,14 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
 
     if C.logger:
         C.logger.info("Balancing...")
+
+    if C.plot:
+        plotter = Recorder(rows = 1, cols = 1, width = 400, height = 300, 
+                           draw_interval = C.wait)
+        plotter.add_element(Line('x', 'X', 'blue', legend = True), row=1, col=1)
+        plotter.add_element(Line('y', 'Y', 'blue', legend = True), row=1, col=1)
+        plotter.set_axis_labels(row=1, col=1, xlabel = 'N', ylabel = 'V')
+        plotter.show()
     
     for n in range(3):
         R = np.sqrt(Vcs[n]**2 + Vrs[n]**2)
@@ -211,12 +222,17 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
             L[0, n, m] = x
             L[1, n, m] = y
 
-            if C.callback:
-                C.callback(
-                    n * C.samples + m, np.array([n * C.samples + m]), 
-                    L[:, n, m].flatten()
-                )
+            N = n * C.samples + m
+            if C.plot:
+                plotter.update({'x': {'xnew': N, 'y': x},
+                                'y': {'xnew': N, 'y': y}})
 
+            if C.callback:
+                C.callback(N, np.array([N]), L[:, n, m].flatten())
+
+    if C.plot:
+        plotter.draw()
+        
     L = np.mean(L, axis = 2)
 
     # convert remaining fractional voltages to real voltage units
@@ -246,7 +262,7 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
     phase = 180 - np.degrees(np.arctan2(Vr0, Vc0)) # 4-quadrant tangent function
     R = np.sqrt(Vc0**2 + Vr0**2)
 
-    out = CapBridgeBalance(
+    out = BalanceCapBridgeResult(
         status          = False,
         balance_matrix  = balance_matrix,
         Cex             = Cex,
@@ -300,7 +316,7 @@ class CapBridge():
     Generally, measure_capacitance should be called as a pre-callback for a 
     parameter sweep, with the getters being used as the measured parameters
     """
-    def __init__(self, balance: CapBridgeBalance, 
+    def __init__(self, balance: BalanceCapBridgeResult, 
                  get_XY: Callable[[], Tuple[float, float]], logger = None):
         """
         Parameters
