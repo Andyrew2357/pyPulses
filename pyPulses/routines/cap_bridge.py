@@ -224,8 +224,8 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
 
             N = n * C.samples + m
             if C.plot:
-                plotter.update({'x': {'xnew': N, 'y': x},
-                                'y': {'xnew': N, 'y': y}})
+                plotter.update({'x': {'x_new': N, 'y_new': x},
+                                'y': {'x_new': N, 'y_new': y}})
 
             if C.callback:
                 C.callback(N, np.array([N]), L[:, n, m].flatten())

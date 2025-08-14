@@ -106,7 +106,7 @@ class Polygon(Line):
 
     def update(self, widget: go.FigureWidget, 
                vertices: List[Tuple[float, float]]):
-        self.x_data, self.y_data = [[*x, x[-1]] for x in zip(*vertices)]
+        self.x_data, self.y_data = [[*x, x[0]] for x in zip(*vertices)]
 
 class Recorder():
     """Manages subplots and coordinates for live plotting"""

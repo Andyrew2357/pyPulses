@@ -102,14 +102,12 @@ class GateTest():
         # set up plotter
         if self.plot:
             ncols = 2 if self.danger_callback else 1
-            self.plotter = Recorder(rows = 1, cols = ncols, 
-                                    width = 1000, height = 500)
+            self.plotter = Recorder(rows=1, cols=ncols, width=1000, height=500)
+            self.plotter.add_element(Polygon('poly', color='green'), row=1, col=ncols)
             self.plotter.add_element(Line('pos', color='red'), row=1, col=ncols)
-            self.plotter.add_element(Polygon('poly', color='green'), 
-                                     row=1, col=ncols, opacity = 0.5)
             self.plotter.set_axis_labels(row=1, col=ncols, xlabel='x', ylabel='y')
             self.plotter.set_axis_range(row=1, col=ncols, xrange=self.x_bounds,
-                                        yrange= self.y_bounds)
+                                        yrange=self.y_bounds)
             
             if self.danger_callback:
                 self.plotter.add_element(Line('danger', color='blue'), row=1, col=1)
@@ -120,19 +118,19 @@ class GateTest():
                                          self._plot_danger_callback, **kwargs)
                 self.bounded_lenient_panic = lambda v, *args, **kwargs: \
                     bounded_lenient_panic(v, *args, callback = \
-                                          self.plot_danger_callback, **kwargs)
+                                          self._plot_danger_callback, **kwargs)
                 self.ndanger = 0
             
     def _plot_position_callback(self, pos: np.ndarray):
         if not self.plot:
             return
-        self.plotter.update({'pos': {'xnew': pos[0], 'ynew': pos[1]}})
+        self.plotter.update({'pos': {'x_new': pos[0], 'y_new': pos[1]}})
 
     def _plot_danger_callback(self, danger_lvl: float):
         if not self.plot:
             return
         self.ndanger += 1
-        self.plotter.update({'pos': {'xnew': self.ndanger, 'ynew': danger_lvl}})
+        self.plotter.update({'danger': {'x_new': self.ndanger, 'y_new': danger_lvl}})
 
     def info(self, msg):
         if self.logger:
