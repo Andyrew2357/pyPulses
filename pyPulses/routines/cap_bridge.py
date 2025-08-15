@@ -8,7 +8,7 @@ import numpy as np
 import time
 from typing import Any, Callable, Tuple
 
-from ..plotting.chart_recorder import Recorder, Line
+from ..plotting.recorder import Recorder, Line
 
 """Configuration dataclass for balanceCapBridge function"""
 @dataclass

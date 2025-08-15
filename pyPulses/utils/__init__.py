@@ -2,6 +2,7 @@ from .balance_1d import balance1d, BalanceConfig
 from .balance_predictor import (DummyPred, DummyPredFunc, ExtrapPred1d, 
                                 ExtrapPredNd)
 from .brent_solver import BrentSolver
+from .chart_recorder import ChartRecorder
 from . import decorators
 from .get_quick_logger import getQuickLogger, clearLoggers
 from .getsetter import getSetter
@@ -19,6 +20,7 @@ __all__ = [
     "BalanceConfig",
     "BrentSolver",
     "clearLoggers",
+    "ChartRecorder"
     "decorators",
     "DummyPred",
     "DummyPredFunc",

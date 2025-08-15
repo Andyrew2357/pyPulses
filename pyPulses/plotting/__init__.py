@@ -1,4 +1,4 @@
-from .chart_recorder import ChartRecorder, Recorder, SweepRecorder
+from .recorder import Recorder, SweepRecorder
 
 __all__ = [
     "ChartRecorder",

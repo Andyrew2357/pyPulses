@@ -251,6 +251,15 @@ class Recorder():
             self.widget.update_yaxes(row = row, col = col, range = yrange2,
                                      secondary_y = True)
 
+    def save_html(self, path: str):
+        self.widget.write_html(path)
+
+    def save_json(self, path: str):
+        self.widget.write_json(path)
+
+    def save_image(self, path: str, fmt: str):
+        self.widget.write_image(path, format = fmt)
+
 # Integration with param_sweep_measure and other common use cases
 
 class SweepRecorder(Recorder):
@@ -310,7 +319,7 @@ class SweepRecorder(Recorder):
 
         cols = min(ceil(sqrt(nsub)), max_cols)
         rows = ceil(nsub / cols)
-        width = min(1400, 400*rows)
+        width = min(1400, 600*cols)
         if height is None:
             height = int(0.6 * (width * rows) // cols)
         super().__init__(rows, cols, width, height, draw_interval)
@@ -395,7 +404,3 @@ class SweepRecorder(Recorder):
         for k, i in self.keys.items():
             self.elements[k].update(x, D[i])
         self._draw_lazy()
-
-class ChartRecorder(Recorder):
-    def __init__(self,):
-        pass

@@ -12,8 +12,8 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from .tandem_sweep import tandemSweep
 from .getsetter import getSetter
-from ..plotting.chart_recorder import SweepRecorder
-from ..thread_job import _checkpoint
+from ..plotting.recorder import SweepRecorder
+from ..thread_job import _checkpoint, ThreadJob
 
 def _get_data_str(coords: np.ndarray, data: np.ndarray, 
                  now: datetime.datetime | None) -> str:
@@ -159,6 +159,8 @@ class ParamSweepMeasure:
     ramp_wait       : float = None                                              # wait time between steps when ramping
     ramp_checkpoints: bool = False                                              # whether to include thread_job checkpoints when ramping
     ramp_kwargs     : dict = None                                               # keyword arguments for tandem sweep
+
+    # provide these if you want to plot
     plot_fields     : str | List[int | str]                                     # fields to plot while taking sweep
     plot_kwargs     : dict = None                                               # keyword arguments passed to sweep recorder
 
@@ -174,6 +176,7 @@ class ParamSweepMeasure:
             cols = v.get('name')
             if cols is None or isinstance(cols, str):
                 measurement_widths.append(1)
+                self.unwrapped_measurements.append(v)
             else:
                 measurement_widths.append(len(cols))
                 for c in cols:
@@ -226,6 +229,17 @@ class ParamSweepMeasure:
         self.dim = 0
         self.dimensions = ()
 
+    def run_threaded(self) -> np.ndarray | None:
+        self.job = ThreadJob(self.run)
+        def cleanup(*_):
+            del self.job
+            self.job = None
+        self.job.on_finish = cleanup
+        self.job.on_stop = cleanup
+        self.job.on_error = cleanup
+        self.job.start_with_controls()
+        return self.job
+
     def run(self) -> np.ndarray | None:
         """
         Run the parameter sweep.
@@ -261,8 +275,8 @@ class ParamSweepMeasure:
 
                 if self.retain_return:
                     result[*idx,:] = measured_vars
-                
-            self._log_time_remaining(points_taken, start_time)
+
+                self._log_time_remaining(points_taken, start_time)
 
             if self.plot_fields is not None:
                 sr.draw()
@@ -486,6 +500,8 @@ class ParamSweepMeasure:
         self._log_file(data_str)
 
     def _log_time_remaining(self, points_taken, start_time):
+        if not self.logger or hasattr(self, 'npoints'):
+            return
         taken = points_taken - self.skip_points
         npoints = self.npoints - self.skip_points
         pcomplete = taken/npoints
@@ -501,12 +517,10 @@ class ParamSweepMeasure:
         )
 
     def _prep_file_handler(self, fname):
-        if self.file_handler:
+        if hasattr(self, 'file_handler'):
             del self.file_handler
         self.file_handler = logging.FileHandler(fname)
         self.file_handler.setLevel(logging.INFO)
-        self.file_logger.addHandler(self.file_handler)
-
         header_str = self._get_header_str()
         self.file_logger.info(header_str)
 
@@ -519,6 +533,7 @@ class ParamSweepMeasure:
             fname = f"{self.file_prefix} ({self.starting_fnum:05}).dat"
             self.file_logger = logging.getLogger(repr(self))
             self.file_logger.setLevel(logging.INFO)
+            self.file_logger.propagate = False
             self._prep_file_handler(fname)
 
         if self.points_per_file is None:

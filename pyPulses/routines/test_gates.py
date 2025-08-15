@@ -4,7 +4,7 @@ Get an estimate of the safe gating range by iterative convex polygon expansion
 
 from ..utils.tandem_sweep import SweepResult, ezTandemSweep
 from ..utils.getsetter import getSetter
-from ..plotting.chart_recorder import Recorder, Line, Polygon
+from ..plotting.recorder import Recorder, Line, Polygon
 
 import json
 import numpy as np
