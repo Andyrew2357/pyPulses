@@ -35,7 +35,7 @@ class ad5764(pyvisaDevice):
             "baud_rate"     : 115200,
             "data_bits"     : 8,
             "parity"        : pyvisa.constants.Parity.none,
-            "stop_bits"     : pyvisa.constants.StopBits.one,
+            "stop_bits"     : pyvisa.constants.StopBits.two,
             "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE,
             "write_buffer_size" : 512,
 
@@ -182,7 +182,10 @@ class ad5764(pyvisaDevice):
         # Second 8 bits (LSB)
         d2 = int(bin16[8:], 2)
         
-        # Create command sequence
+        # Create command sequence 
+        # # TODO SEE IF I CAN JUST GET RID OF THIS m1, m2 NONSENSE
+        # # I DON'T THINK THE ARDUINO CARES IF THESE ARE NONZERO
+        # # BASED ON MY READING OF THE OLD C++ CONTROLS
         command = bytes([255, 254, 253, n1, d1*m1, d2*m1, n2, d1*m2, d2*m2])
 
         try:
@@ -248,9 +251,14 @@ class ad5764(pyvisaDevice):
         
         self.info(f"Set hard channel {ch} limits to [{vl}, {vh}] V")
 
-    def _broken_true_query(self, ch):
-        return
+    def _true_query(self, ch: int):
+        """Query the actual DAC voltage from the Arduino."""
 
+        if ch not in range(8):
+            self.error("Channel must be between 0 and 7.")
+            return None
+
+        # Map channel -> (chanCode1, chanCode2) exactly as in C++
         getter_map = {
             0: (147, 0),
             1: (146, 0),
@@ -259,37 +267,65 @@ class ad5764(pyvisaDevice):
             4: (0, 147),
             5: (0, 146),
             6: (0, 145),
-            7: (0, 144)
+            7: (0, 144),
         }
-
         nc1, nc2 = getter_map[ch]
-        ask_cmd = bytes([255, 254, 253, nc1, 0, 0, nc2, 0, 0])
-        self.write_raw(ask_cmd)
-        # Clear the read buffer
+
+        # First query: ask
+        bufferAsk = bytes([255, 254, 253, nc1, 0, 0, nc2, 0, 0])
+        self.write_raw(bufferAsk)
+        time.sleep(0.01)
+
+        # Clear any response
+        while True:
+            try:
+                self.read_raw()
+            except pyvisa.errors.VisaIOError:
+                break
+
+        # Second query: read
+        bufferRead = bytes([255, 254, 253, 0, 0, 0, 0, 0, 0])
+        self.write_raw(bufferRead)
+        time.sleep(0.02)
+
+        # Read 6 integers like readIntData() did
         try:
-            self.read_raw()
+            txt = self.read().decode(errors="ignore").strip()
         except pyvisa.errors.VisaIOError:
-            pass  # No data available to read
+            self.error("No response from Arduino on true_query.")
+            return None
 
-        read_cmd = bytes([255, 254, 253, 0, 0, 0, 0, 0, 0])
-        self.write_raw(read_cmd)
-        out = self.read_raw(6)
-        print(out)
+        parts = txt.replace(",", " ").split()
+        try:
+            buff = [int(x) for x in parts[:6]]
+        except ValueError:
+            self.error(f"Malformed response: {txt!r}")
+            return None
 
-        if ch >= 4:
-            high_byte = out[4]
-            low_byte = out[5]
+        if len(buff) < 6:
+            self.error(f"Incomplete response: {buff}")
+            return None
+
+        # Parse according to chanCode1/chanCode2
+        if nc1 == 0 and nc2 != 0:
+            hiByte = buff[4]
+            loByte = buff[5]
+        elif nc1 != 0 and nc2 == 0:
+            hiByte = buff[1]
+            loByte = buff[2]
         else:
-            high_byte = out[1]
-            low_byte = out[2]
-            
-        tmp = low_byte + high_byte * 256
+            self.error("Unexpected channel coding.")
+            return None
+
+        tmp = loByte + hiByte * 256
+
+        # Convert back to voltage
         if 0 <= tmp <= 2**15:
-            v = 10 * tmp / (2**15 - 1)
+            v = 10.0 * tmp / (2**15 - 1)
         elif 2**15 < tmp <= 2**16:
-            v = 10 * (tmp - 2**16) / 2**15
+            v = (tmp - 2**16) * 10.0 / 2**15
         else:
-            self.error("AD5791: Invalid voltage read from Arduino.")
+            self.error("Invalid voltage read from Arduino.")
             return None
 
         return v
