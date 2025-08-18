@@ -1,5 +1,7 @@
 # Note: This does not currently work. I believe there is something wrong with
 # the box itself (output 7 appears to be shorted to the +15 V input).
+# TODO FIGURE OUT IF WE HAVE A WORKING VERSION OF THIS INSTRUMENT AND TEST IF 
+# THIS CONTROLLER WORKS...
 
 """
 This class is an interface for communicating with the AD5791 DC box. The
@@ -54,7 +56,11 @@ class ad5791(pyvisaDevice):
         self.max_step   = max_step
         self.wait       = wait
 
+        # perform true queries during initialization to maintain consistency
+        # with the Arduino. These are slow, so we prefer to do them only when
+        # the class is initialized.
         self.V = [0] * 8
+        self._true_query_state()
 
     def sweep_V(self, ch: int, V: float, 
                 max_step: float = None, wait: float = None):
@@ -118,56 +124,7 @@ class ad5791(pyvisaDevice):
         if ch not in range(0, 8):
             self.error(f"AD5791 does not have a channel {ch}.")
             return None
-        
-        # Clear command
-        clear_cmd = bytes([255, 254, 251, ch, 0, 0])
-        self.write_raw(clear_cmd)
-        time.sleep(0.02)
-        
-        # Clear the read buffer
-        try:
-            self.read_raw()
-        except pyvisa.errors.VisaIOError:
-            pass  # No data available to read
-
-        # Read command
-        read_cmd = bytes([255, 254, ch, 144, 0, 0])
-        self.write_raw(read_cmd)
-        time.sleep(0.02)
-
-        # Read response
-        self.write_raw(read_cmd)
-        time.sleep(0.02)
-        response = self.device.read_bytes(6) # does this exist? I don't think so --> This class has never properly been tested because the box I was trying to use was broken...
-        time.sleep(0.02)
-        
-        # Clear the read buffer
-        try:
-            self.read_raw()
-        except pyvisa.errors.VisaIOError:
-            pass  # No data available to read
-
-        # Parse response bytes
-        mid_byte = response[4]
-        lo_byte = response[5]
-        hi_byte_tmp = response[3]
-
-        hi_byte_tmp_dac = hi_byte_tmp // 16
-        hi_byte = hi_byte_tmp -16 * hi_byte_tmp_dac
-
-        tmp = lo_byte + mid_byte * 256 + hi_byte * 65536
-
-        # Convert to voltage
-        if 0 <= tmp <= 2**19:
-            voltage = 10.7 * tmp / (2**19 - 1)
-        elif 2**19 < tmp <= 2**20:
-            voltage = (tmp - 2**20) * 10.7 / 2**19
-        else:
-            self.error("AD5791: Invalid voltage read from Arduino.")
-            return None
-
-        self.V[ch] = float(voltage)
-        return voltage
+        return self.V[ch]        
 
     def set_V(self, ch: int, V: float, chatty: bool = True):
         """
@@ -196,32 +153,32 @@ class ad5791(pyvisaDevice):
 
         # Calculate 20-bit decimal equivalent
         if V >= 0:
-            dec20 = round((2**19 - 1) * V / 10.7)
+            tmp = round((2**19 - 1) * V / 10.7)
         else:
-            dec20 = round(2**20 - abs(V) / 10.7 * 2**19)
+            tmp = round(2**20 - abs(V) / 10.7 * 2**19)
 
-        try:
-            # Convert to 20-bit binary
-            # Using numpy's binary_repr to ensure 20-bit representation
-            bin20 = np.binary_repr(dec20, width=20)
-            
-            # Split into one 4 bit and two 8-bit parts; convert back to decimal
-            # First 4 bits (MSB)
-            d1 = int(bin20[:4], 2) + 16 # we add 16 here for some reason
-            # Second 8 bits
-            d2 = int(bin20[4:12], 2)
-            # Third 8 bits (LSB)
-            d3 = int(bin20[12:], 2)
-            
-            # Create command sequence
-            command = bytes([255, 254, 253, ch, d1, d2, d3])
-            
+        # Convert to 20-bit binary
+        hiByte_tmp = tmp // 65536
+        loByte_tmp = tmp - 65536 * hiByte_tmp
+        midByte = loByte_tmp // 256
+        loByte = loByte_tmp - 256 * midByte
+        hiByte = hiByte_tmp + 16
+        
+        # Create command sequence
+        command = bytes([255, 254, 253, ch, hiByte, midByte, loByte])
+        
+        try:            
             # Write to instrument using PyVISA
+            # weirdly, the old C++ appears to send this twice, waiting in 
+            # between. I am just replicating that behavior here
             self.write_raw(command)
+            time.sleep(0.015)
+            self.write_raw(command)
+            time.sleep(0.03)
             
             # Clear the read buffer
             try:
-                self.read_raw()
+                self.device.read_raw()
             except pyvisa.errors.VisaIOError:
                 print("error handling used")
                 pass  # No data available to read
@@ -233,3 +190,76 @@ class ad5791(pyvisaDevice):
         except Exception as e:
             self.error(f"Error when writing to AD5791: {e}")
             pass
+
+    def _true_query(self, ch: int):
+        """Query the actual DAC voltage from the Arduino."""
+        
+        if ch not in range(8):
+            self.error("Channel must be between 0 and 7.")
+            return None
+
+        # Clear packet
+        clear_cmd = bytes([255, 254, 251, ch, 0, 0])
+        self.write_raw(clear_cmd)
+        time.sleep(0.02)
+        # Drain buffer
+        while True:
+            try:
+                self.device.read_raw()
+            except pyvisa.errors.VisaIOError:
+                break
+
+        # Read packet
+        read_cmd = bytes([255, 254, ch, 144, 0, 0])
+        self.write_raw(read_cmd)
+        time.sleep(0.02)
+        self.write_raw(read_cmd)
+        time.sleep(0.02)
+
+        # Read six ASCII integers
+        buff = []
+        for _ in range(6):
+            try:
+                line = self.read().decode(errors="ignore").strip()
+            except pyvisa.errors.VisaIOError:
+                self.error("Timeout while reading from Arduino.")
+                return None
+            if not line:
+                continue
+            try:
+                buff.append(int(line))
+            except ValueError:
+                self.error(f"Malformed integer from Arduino: {line!r}")
+                return None
+        if len(buff) < 6:
+            self.error(f"Incomplete response: {buff}")
+            return None
+
+        # Parse into 20-bit value
+        midByte = buff[4]
+        loByte = buff[5]
+        hiByte_tmp = buff[3]
+        hiByte_tmp_dac = hiByte_tmp // 16
+        hiByte = hiByte_tmp - 16 * hiByte_tmp_dac
+        tmp = loByte + midByte * 256 + hiByte * 65536
+
+        if 0 <= tmp <= 2**19:
+            v = 10.7 * tmp / (2**19 - 1)
+        elif 2**19 < tmp <= 2**20:
+            v = (tmp - 2**20) * 10.7 / 2**19
+        else:
+            self.error("Invalid voltage read from Arduino.")
+            return None
+
+        self.V[ch] = v
+        return v
+
+    def _true_query_state(self):
+        """Query the actual DAC voltages from the Arduino."""
+
+        for ch in range(8):
+            v = self._true_query(ch)
+            if v is not None:
+                self.V[ch] = v
+            else:
+                self.error(f"Failed to query channel {ch} voltage.")

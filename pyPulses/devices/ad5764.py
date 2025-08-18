@@ -63,14 +63,14 @@ class ad5764(pyvisaDevice):
         
         # mapping for controlling the instrument channels via serial bus
         self.channel_map = {
-            0: (19, 0, 1, 0),
-            1: (18, 0, 1, 0),
-            2: (17, 0, 1, 0),
-            3: (16, 0, 1, 0),
-            4: (0, 19, 0, 1),
-            5: (0, 18, 0, 1),
-            6: (0, 17, 0, 1),
-            7: (0, 16, 0, 1)
+            0: (19, 0),
+            1: (18, 0),
+            2: (17, 0),
+            3: (16, 0),
+            4: (0, 19),
+            5: (0, 18),
+            6: (0, 17),
+            7: (0, 16),
         }
 
     def sweep_V(self, ch: int, V: float, 
@@ -165,7 +165,7 @@ class ad5764(pyvisaDevice):
             )
             V = Vt
 
-        n1, n2, m1, m2 = self.channel_map[ch]
+        n1, n2 = self.channel_map[ch]
         # Calculate 16-bit decimal equivalent
         if V >= 0:
             dec16 = round((2**15 - 1) * V / 10)
@@ -186,11 +186,8 @@ class ad5764(pyvisaDevice):
         # Second 8 bits (LSB)
         d2 = int(bin16[8:], 2)
         
-        # Create command sequence 
-        # # TODO SEE IF I CAN JUST GET RID OF THIS m1, m2 NONSENSE
-        # # I DON'T THINK THE ARDUINO CARES IF THESE ARE NONZERO
-        # # BASED ON MY READING OF THE OLD C++ CONTROLS
-        command = bytes([255, 254, 253, n1, d1*m1, d2*m1, n2, d1*m2, d2*m2])
+        # Create command sequence
+        command = bytes([255, 254, 253, n1, d1, d2, n2, d1, d2])
 
         try:
             # Write to instrument using PyVISA
