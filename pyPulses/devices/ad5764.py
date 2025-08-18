@@ -55,8 +55,12 @@ class ad5764(pyvisaDevice):
         self.max_step   = max_step
         self.wait       = wait
 
+        # perform true queries during initialization to maintain consistency
+        # with the Arduino. These are slow, so we prefer to do them only when
+        # the class is initialized.
         self.V = [0] * 8
-
+        self._true_query_state()
+        
         # mapping for controlling the instrument channels via serial bus
         self.channel_map = {
             0: (19, 0, 1, 0),
@@ -279,7 +283,7 @@ class ad5764(pyvisaDevice):
         # Clear any response
         while True:
             try:
-                self.read_raw()
+                self.device.read_raw()
             except pyvisa.errors.VisaIOError:
                 break
 
@@ -289,22 +293,25 @@ class ad5764(pyvisaDevice):
         time.sleep(0.02)
 
         # Read 6 integers like readIntData() did
-        try:
-            txt = self.read().decode(errors="ignore").strip()
-        except pyvisa.errors.VisaIOError:
-            self.error("No response from Arduino on true_query.")
-            return None
-
-        parts = txt.replace(",", " ").split()
-        try:
-            buff = [int(x) for x in parts[:6]]
-        except ValueError:
-            self.error(f"Malformed response: {txt!r}")
-            return None
-
-        if len(buff) < 6:
-            self.error(f"Incomplete response: {buff}")
-            return None
+        buff = []
+        for _ in range(6):
+            try:
+                line = self.read().strip()
+            except pyvisa.errors.VisaIOError:
+                self.error("Timeout while reading from Arduino.")
+                return None
+            
+            if not line:
+                self.error("Got empty line from Arduino.")
+                return None
+            
+            try: 
+                val = int(line)
+            except ValueError:
+                self.error(f"Malformed integer from Arduino: {line!r}")
+                return None
+            
+            buff.append(val)
 
         # Parse according to chanCode1/chanCode2
         if nc1 == 0 and nc2 != 0:
@@ -329,3 +336,13 @@ class ad5764(pyvisaDevice):
             return None
 
         return v
+
+    def _true_query_state(self):
+        """Query the actual DAC voltages from the Arduino."""
+
+        for ch in range(8):
+            v = self._true_query(ch)
+            if v is not None:
+                self.V[ch] = v
+            else:
+                self.error(f"Failed to query channel {ch} voltage.")
