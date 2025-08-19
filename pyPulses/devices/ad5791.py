@@ -35,15 +35,18 @@ class ad5791(pyvisaDevice):
         # configurations for pyvisa resource manager
         self.pyvisa_config = {
             "resource_name" : "ASRL4::INSTR",
-            "baud_rate"     : 115200,
+            "baud_rate"     : 9600,
             "data_bits"     : 8,
             "parity"        : pyvisa.constants.Parity.none,
             "stop_bits"     : pyvisa.constants.StopBits.two,
             "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE,
             "write_buffer_size" : 512,
+            "write_termination" : None,
+            "read_termination"  : '\n',
 
             'max_retries': 1,
-            'min_interval': 0.05
+            'min_interval': 0.05,
+            "timeout": 3000
         }
 
         super().__init__(self.pyvisa_config, logger, instrument_id)
@@ -63,7 +66,30 @@ class ad5791(pyvisaDevice):
         # with the Arduino. These are slow, so we prefer to do them only when
         # the class is initialized.
         self.V = [0] * 8
-        self._true_query_state()
+        # self._true_query_state()
+
+    def _drain_serial(self):
+        """read until VISA times out, discarding data."""
+        while True:
+            try:
+                self.device.read_raw()
+            except Exception:
+                break
+
+    def _read_int_lines(self, n: int):
+        """Read n ASCII integers lines."""
+        out = []
+        while len(out) < n:
+            # read honors read_termination == '\n'
+            line = self.read().strip()
+            if not line:
+                continue
+            try:
+                out.append(int(line))
+            except ValueError:
+                self.error(f"Malformed integer from Arduino: {line!r}")
+                return None
+        return out
 
     def sweep_V(self, ch: int, V: float, 
                 max_step: float = None, wait: float = None):
@@ -165,10 +191,10 @@ class ad5791(pyvisaDevice):
         loByte_tmp = tmp - 65536 * hiByte_tmp
         midByte = loByte_tmp // 256
         loByte = loByte_tmp - 256 * midByte
-        hiByte = hiByte_tmp + 16
+        hiByte = hiByte_tmp + 16 # adds 0b0001xxxx
         
         # Create command sequence
-        command = bytes([255, 254, 253, ch, hiByte, midByte, loByte])
+        command = bytes([255, 254, ch, hiByte, midByte, loByte])
         
         try:            
             # Write to instrument using PyVISA
@@ -180,11 +206,7 @@ class ad5791(pyvisaDevice):
             time.sleep(0.03)
             
             # Clear the read buffer
-            while True:
-                try:
-                    self.device.read_raw()
-                except pyvisa.errors.VisaIOError:
-                    break  # No data available to read
+            self._drain_serial()
                 
             self.V[ch] = float(V)
             if chatty:
@@ -201,18 +223,13 @@ class ad5791(pyvisaDevice):
             self.error("Channel must be between 0 and 7.")
             return None
 
-        # Clear packet
+        # Clear command
         clear_cmd = bytes([255, 254, 251, ch, 0, 0])
         self.write_raw(clear_cmd)
-        time.sleep(0.02)
-        # Drain buffer
-        while True:
-            try:
-                self.device.read_raw()
-            except pyvisa.errors.VisaIOError:
-                break
+        time.sleep(0.01)
+        self._drain_serial()
 
-        # Read packet
+        # Read command
         read_cmd = bytes([255, 254, ch, 144, 0, 0])
         self.write_raw(read_cmd)
         time.sleep(0.02)
@@ -220,21 +237,8 @@ class ad5791(pyvisaDevice):
         time.sleep(0.02)
 
         # Read six ASCII integers
-        buff = []
-        for _ in range(6):
-            try:
-                line = self.read().decode(errors="ignore").strip()
-            except pyvisa.errors.VisaIOError:
-                self.error("Timeout while reading from Arduino.")
-                return None
-            if not line:
-                continue
-            try:
-                buff.append(int(line))
-            except ValueError:
-                self.error(f"Malformed integer from Arduino: {line!r}")
-                return None
-        if len(buff) < 6:
+        buff = self._read_int_lines(6)
+        if not buff or len(buff) < 6:
             self.error(f"Incomplete response: {buff}")
             return None
 
@@ -242,8 +246,7 @@ class ad5791(pyvisaDevice):
         midByte = buff[4]
         loByte = buff[5]
         hiByte_tmp = buff[3]
-        hiByte_tmp_dac = hiByte_tmp // 16
-        hiByte = hiByte_tmp - 16 * hiByte_tmp_dac
+        hiByte = hiByte_tmp - 16 * (hiByte_tmp // 16)
         tmp = loByte + midByte * 256 + hiByte * 65536
 
         if 0 <= tmp <= 2**19:
