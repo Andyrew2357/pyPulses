@@ -38,7 +38,7 @@ class ad5791(pyvisaDevice):
             "baud_rate"     : 115200,
             "data_bits"     : 8,
             "parity"        : pyvisa.constants.Parity.none,
-            "stop_bits"     : pyvisa.constants.StopBits.one,
+            "stop_bits"     : pyvisa.constants.StopBits.two,
             "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE,
             "write_buffer_size" : 512,
 
@@ -55,6 +55,9 @@ class ad5791(pyvisaDevice):
         # sweep parameters
         self.max_step   = max_step
         self.wait       = wait
+
+        # arduino reset delay after connect
+        time.sleep(2.5) # attempt to mirror the original C++ implementation
 
         # perform true queries during initialization to maintain consistency
         # with the Arduino. These are slow, so we prefer to do them only when
@@ -177,11 +180,11 @@ class ad5791(pyvisaDevice):
             time.sleep(0.03)
             
             # Clear the read buffer
-            try:
-                self.device.read_raw()
-            except pyvisa.errors.VisaIOError:
-                print("error handling used")
-                pass  # No data available to read
+            while True:
+                try:
+                    self.device.read_raw()
+                except pyvisa.errors.VisaIOError:
+                    break  # No data available to read
                 
             self.V[ch] = float(V)
             if chatty:
