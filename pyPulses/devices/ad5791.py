@@ -1,8 +1,3 @@
-# Note: This does not currently work. I believe there is something wrong with
-# the box itself (output 7 appears to be shorted to the +15 V input).
-# TODO FIGURE OUT IF WE HAVE A WORKING VERSION OF THIS INSTRUMENT AND TEST IF 
-# THIS CONTROLLER WORKS...
-
 """
 This class is an interface for communicating with the AD5791 DC box. The
 instrument in question has an Arduino Uno connected to the Analog Devices DAC
@@ -34,13 +29,8 @@ class ad5791(pyvisaDevice):
 
         # configurations for pyvisa resource manager
         self.pyvisa_config = {
-            "resource_name" : "ASRL4::INSTR",
+            "resource_name" : "ASRL5::INSTR",
             "baud_rate"     : 115200,
-            "data_bits"     : 8,
-            "parity"        : pyvisa.constants.Parity.none,
-            "stop_bits"     : pyvisa.constants.StopBits.two,
-            "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE,
-            "write_buffer_size" : 512,
 
             'max_retries': 1,
             'min_interval': 0.05
@@ -57,15 +47,45 @@ class ad5791(pyvisaDevice):
         self.wait       = wait
 
         # arduino reset delay after connect
-        time.sleep(2.5) # attempt to mirror the original C++ implementation
+        time.sleep(2.5)
 
-        # perform true queries during initialization to maintain consistency
-        # with the Arduino. These are slow, so we prefer to do them only when
-        # the class is initialized.
-        self.V = [0] * 8
-        self._true_query_state()
+    # Output enable
+    def output(self, ch: int, on: bool = None) -> bool | None:
+        """
+        Set or query the output state on the desired channel.
 
-    def sweep_V(self, ch: int, V: float, 
+        Parameters
+        ----------
+        ch : int
+            target channel (0 through 7).
+        on : bool, Optional
+
+        Returns
+        -------
+        bool or None
+        """
+
+        if ch not in range(0, 8):
+            self.error(f"AD5791 does not have a channel {ch}.")
+            return
+        
+        if on is None:
+            return int(self.query(f"OUTP{ch}?"))
+        
+        self.write(f"OUTP{ch} {int(on)}")
+        self.info(f"{'En' if on else 'Dis'}abled channel {ch} output.")
+
+    def output_all(self, on: bool):
+        """
+        Enable or disable all outputs.
+        """
+
+        for ch in range(8):
+            self.output(ch, on)
+
+    # Raw uncalibrated voltages
+
+    def sweep__raw_V(self, ch: int, V: float, 
                 max_step: float = None, wait: float = None):
         """
         Sweep DC value of a given channel smoothly to the target.
@@ -98,18 +118,19 @@ class ad5791(pyvisaDevice):
         if not wait:
             wait = self.wait
 
-        start = self.get_V(ch)
+        start = self.get_raw_V(ch)
         dist = abs(V - start)
         num_step = ceil(dist / max_step)
         for v in np.linspace(start, V, num_step + 1)[1:]:
             time.sleep(wait)
-            self.set_V(ch, v, chatty = False)
+            self.set_raw_V(ch, v, chatty = False)
         
-        self.info(f"Channel Settings: {self.V}")
+        self.info(f"Swept channel {ch} to {V} V (raw).")
 
-    def get_V(self, ch: int):
+    def get_raw_V(self, ch: int):
         """
-        Get the DC value on a given channel.
+        Get the raw DC value on a given channel. This is the uncalibrated value
+        inferred from +-10V rails.
 
         Parameters
         ----------
@@ -127,11 +148,13 @@ class ad5791(pyvisaDevice):
         if ch not in range(0, 8):
             self.error(f"AD5791 does not have a channel {ch}.")
             return None
-        return self.V[ch]        
 
-    def set_V(self, ch: int, V: float, chatty: bool = True):
+        return float(self.query(f"VOLT{ch}?"))       
+
+    def set_raw_V(self, ch: int, V: float, chatty: bool = True):
         """
-        Set the DC value of a given channel.
+        Set the raw DC value of a given channel. This is the uncalibrated value
+        inferred from +-10V rails.
         
         Parameters
         ----------
@@ -154,115 +177,23 @@ class ad5791(pyvisaDevice):
             )
             V = Vt
 
-        # Calculate 20-bit decimal equivalent
-        if V >= 0:
-            tmp = round((2**19 - 1) * V / 10.7)
-        else:
-            tmp = round(2**20 - abs(V) / 10.7 * 2**19)
+        self.write(f"VOLT{ch} {V}")
+        self.info(f"Set channel {ch} to {V} V (raw).")
 
-        # Convert to 20-bit binary
-        hiByte_tmp = tmp // 65536
-        loByte_tmp = tmp - 65536 * hiByte_tmp
-        midByte = loByte_tmp // 256
-        loByte = loByte_tmp - 256 * midByte
-        hiByte = hiByte_tmp + 16
-        
-        # Create command sequence
-        command = bytes([255, 254, 253, ch, hiByte, midByte, loByte])
-        
-        try:            
-            # Write to instrument using PyVISA
-            # weirdly, the old C++ appears to send this twice, waiting in 
-            # between. I am just replicating that behavior here
-            self.write_raw(command)
-            time.sleep(0.015)
-            self.write_raw(command)
-            time.sleep(0.03)
-            
-            # Clear the read buffer
-            while True:
-                try:
-                    self.device.read_raw()
-                except pyvisa.errors.VisaIOError:
-                    break  # No data available to read
-                
-            self.V[ch] = float(V)
-            if chatty:
-                self.info(f"Channel Settings: {self.V}")
-                
-        except Exception as e:
-            self.error(f"Error when writing to AD5791: {e}")
-            pass
+    # Calibrated voltages
 
-    def _true_query(self, ch: int):
-        """Query the actual DAC voltage from the Arduino."""
-        
-        if ch not in range(8):
-            self.error("Channel must be between 0 and 7.")
-            return None
+    def _raw_to_cal(ch: int, V: float) -> float:
+        """
+        Return the calibrated voltage corresponding to a raw, uncalibrated 
+        voltage.
+        """
 
-        # Clear packet
-        clear_cmd = bytes([255, 254, 251, ch, 0, 0])
-        self.write_raw(clear_cmd)
-        time.sleep(0.02)
-        # Drain buffer
-        while True:
-            try:
-                self.device.read_raw()
-            except pyvisa.errors.VisaIOError:
-                break
+        return V # fix this once we have the calibration
+    
+    def _cal_to_raw(ch: int, V: float) -> float:
+        """
+        Return the raw, uncalibrated voltage corresponding to a calibrated
+        voltage.
+        """
 
-        # Read packet
-        read_cmd = bytes([255, 254, ch, 144, 0, 0])
-        self.write_raw(read_cmd)
-        time.sleep(0.02)
-        self.write_raw(read_cmd)
-        time.sleep(0.02)
-
-        # Read six ASCII integers
-        buff = []
-        for _ in range(6):
-            try:
-                line = self.read().decode(errors="ignore").strip()
-            except pyvisa.errors.VisaIOError:
-                self.error("Timeout while reading from Arduino.")
-                return None
-            if not line:
-                continue
-            try:
-                buff.append(int(line))
-            except ValueError:
-                self.error(f"Malformed integer from Arduino: {line!r}")
-                return None
-        if len(buff) < 6:
-            self.error(f"Incomplete response: {buff}")
-            return None
-
-        # Parse into 20-bit value
-        midByte = buff[4]
-        loByte = buff[5]
-        hiByte_tmp = buff[3]
-        hiByte_tmp_dac = hiByte_tmp // 16
-        hiByte = hiByte_tmp - 16 * hiByte_tmp_dac
-        tmp = loByte + midByte * 256 + hiByte * 65536
-
-        if 0 <= tmp <= 2**19:
-            v = 10.7 * tmp / (2**19 - 1)
-        elif 2**19 < tmp <= 2**20:
-            v = (tmp - 2**20) * 10.7 / 2**19
-        else:
-            self.error("Invalid voltage read from Arduino.")
-            return None
-
-        self.V[ch] = v
-        return v
-
-    def _true_query_state(self):
-        """Query the actual DAC voltages from the Arduino."""
-
-        for ch in range(8):
-            v = self._true_query(ch)
-            if v is not None:
-                self.V[ch] = v
-            else:
-                self.error(f"Failed to query channel {ch} voltage.")
+        return V # fix this once we have the calibration
