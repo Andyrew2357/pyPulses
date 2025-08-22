@@ -33,7 +33,8 @@ class ad5791(pyvisaDevice):
             "baud_rate"     : 115200,
 
             'max_retries': 1,
-            'min_interval': 0.05
+            'min_interval': 0.05,
+            "timeout": 3000
         }
 
         super().__init__(self.pyvisa_config, logger, instrument_id)
