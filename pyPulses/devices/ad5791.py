@@ -85,10 +85,11 @@ class ad5791(pyvisaDevice):
 
     # Raw uncalibrated voltages
 
-    def sweep__raw_V(self, ch: int, V: float, 
-                max_step: float = None, wait: float = None):
+    def sweep_raw_V(self, ch: int, V: float, 
+                    max_step: float = None, wait: float = None):
         """
-        Sweep DC value of a given channel smoothly to the target.
+        Sweep DC value of a given channel smoothly to the target. This is the 
+        uncalibrated value inferred from +-10V rails.
         
         Parameters
         ----------
@@ -197,3 +198,60 @@ class ad5791(pyvisaDevice):
         """
 
         return V # fix this once we have the calibration
+
+    def sweep_V(self, ch: int, V: float, 
+                max_step: float = None, wait: float = None):
+        """
+        Sweep DC value of a given channel smoothly to the target.
+        
+        Parameters
+        ----------
+        ch : int
+            target channel (0 through 7).
+        V : float
+            target voltage.
+        max_step : float, default=None
+            maximum step between voltages while sweeping.
+        wait : float, default=None
+            wait time between steps while sweeping.
+        """
+
+        self.sweep_raw_V(ch, self._cal_to_raw(ch, V), max_step, wait)
+        self.info(f"Swept channel {ch} to calibrated value {V} V.")
+
+    def get_V(self, ch: int):
+        """
+        Get the DC value on a given channel.
+
+        Parameters
+        ----------
+        ch : int
+            target channel.
+
+        Returns
+        -------
+        V : float
+            voltage on the target channel Note: This is not a true query. It 
+            simply returns what is saved on the computer. There is currently 
+            no way to ask the arduino directly.
+        """
+
+        return self._raw_to_cal(ch, self.get_raw_V(ch))
+    
+    def set_V(self, ch: int, V: float, chatty: bool = True):
+        """
+        Set the DC value of a given channel.
+
+        Parameters
+        ----------
+        ch : int
+            target channel (0 through 7).
+        V : float
+            target voltage.
+        chatty : bool, default=True
+            whether to log the change in channel settings.
+        """
+
+        self.set_raw_V(ch, self._cal_to_raw(V), chatty = False)
+        if chatty:
+            self.info(f"Set channel {ch} to calibrated value {V} V.")
