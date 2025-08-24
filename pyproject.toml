@@ -21,6 +21,7 @@ dependencies = [
     "bitarray",
     "gpib-ctypes>=0.2",
     "ipython>=9.0",
+    "ipywidgets",
     "matplotlib",
     "mkdocs",
     "numpy>=2.0",
@@ -33,6 +34,7 @@ dependencies = [
 
 [project.optional-dependencies]
 plotting = [
+    "anywidget",
     "plotly"
 ]
 

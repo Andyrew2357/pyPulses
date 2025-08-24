@@ -4,6 +4,7 @@ import numpy as np
 import itertools
 import datetime
 import time
+import os
 import logging
 from copy import deepcopy
 from dataclasses import dataclass
@@ -132,6 +133,8 @@ class ParamSweepMeasure:
     plot_kwargs : dict, optional
         Additional arguments passed when creating the `SweepRecorder` for live
         plotting.
+    cleanup : Callable
+        Cleanup called after the measurement has finished.
     """
     measurements    : Dict[str, Any] | List[Dict[str, Any]]                     # measured variables
     coordinates     : Dict[str, Any] | List[Dict[str, Any]]                     # swept variables
@@ -163,6 +166,9 @@ class ParamSweepMeasure:
     # provide these if you want to plot
     plot_fields     : str | List[int | str]                                     # fields to plot while taking sweep
     plot_kwargs     : dict = None                                               # keyword arguments passed to sweep recorder
+
+    # cleanup steps to perform after the sweep
+    cleanup         : Callable[[], Any] = None
 
     def __post_init__(self):
         """Input validation"""
@@ -260,6 +266,8 @@ class ParamSweepMeasure:
             if self.plot_fields is not None:
                 sr = self._get_live_plotter()
                 sr.show()
+            
+            self._log_header()
 
             for idx, target in self._iterator():
                 
@@ -283,6 +291,8 @@ class ParamSweepMeasure:
 
         finally:
             self._close_file_logger()
+            if self.cleanup:
+                self.cleanup()
 
         if self.retain_return:
             return result
@@ -500,7 +510,7 @@ class ParamSweepMeasure:
         self._log_file(data_str)
 
     def _log_time_remaining(self, points_taken, start_time):
-        if not self.logger or hasattr(self, 'npoints'):
+        if not self.logger or not hasattr(self, 'npoints'):
             return
         taken = points_taken - self.skip_points
         npoints = self.npoints - self.skip_points
@@ -521,13 +531,14 @@ class ParamSweepMeasure:
             del self.file_handler
         self.file_handler = logging.FileHandler(fname)
         self.file_handler.setLevel(logging.INFO)
+        self.file_logger.addHandler(self.file_handler)
         header_str = self._get_header_str()
         self.file_logger.info(header_str)
 
     def _log_file(self, msg):
         if not self.file_prefix:
             return
-
+        
         # If we don't already have a logger, get one and add the first handler        
         if not hasattr(self, 'file_logger'):
             fname = f"{self.file_prefix} ({self.starting_fnum:05}).dat"
@@ -756,6 +767,11 @@ class SweepMeasureCut(ParamSweepMeasure):
 
     def __post_init__(self):
         super().__post_init__()
+
+        if isinstance(self.start, float):
+            self.start = (self.start,)
+        if isinstance(self.end, float):
+            self.end = (self.end,)
 
         # check the dimensionality of start, end, and coord vars match
         if (len(self.start) != len(self.coord_vars)) or \

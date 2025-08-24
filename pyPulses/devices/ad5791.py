@@ -29,12 +29,14 @@ class ad5791(pyvisaDevice):
 
         # configurations for pyvisa resource manager
         self.pyvisa_config = {
-            "resource_name" : "ASRL5::INSTR",
-            "baud_rate"     : 115200,
+            "resource_name"     : "ASRL5::INSTR",
+            "baud_rate"         : 115200,
+            'write_termination' : '\n',
+            'read_termination'  : '\n',
 
-            'max_retries': 1,
-            'min_interval': 0.05,
-            "timeout": 3000
+            'max_retries'       : 1,
+            'min_interval'      : 0.05,
+            "timeout"           : 3000
         }
 
         super().__init__(self.pyvisa_config, logger, instrument_id)

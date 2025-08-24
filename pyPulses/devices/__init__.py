@@ -6,7 +6,7 @@ if not find_and_load_gpib():
 
 from ._registry import DeviceRegistry
 from .ad5764 import ad5764
-# from .ad5791 import ad5791
+from .ad5791 import ad5791
 from .ad9854 import ad9854
 from .cryomagnetics_4G import cryomagnetics4G
 from .dtg import dtg5274
@@ -26,7 +26,7 @@ from .watd_scope import watdScope
 
 __all__ = [
     "ad5764",
-    # "ad5791",
+    "ad5791",
     "ad9854",
     "cryomagnetics4G",
     "DeviceRegistry",
