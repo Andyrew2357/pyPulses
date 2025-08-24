@@ -9,11 +9,14 @@ import pyvisa.constants
 import numpy as np
 from math import ceil
 import time
+import json
+import os
 
 class ad5791(pyvisaDevice):
     """Class interface for communicating with the AD5791 DC box."""
     def __init__(self, logger = None, max_step: float = 0.05, 
-                 wait: float = 0.1, instrument_id: str = None):
+                 wait: float = 0.1, calibration_json: str = None,
+                 instrument_id: str = None):
         """
         Parameters
         ----------
@@ -23,6 +26,8 @@ class ad5791(pyvisaDevice):
             maximum voltage step to take when sweeping.
         wait : float, default=0.1
             time to wait between setting voltages while sweeping.
+        calibration_json : str, optional
+            path to a file containing DAC calibration data.
         instrument_id : str, optional
             VISA resource name.
         """
@@ -49,10 +54,13 @@ class ad5791(pyvisaDevice):
         self.max_step   = max_step
         self.wait       = wait
 
+        self.load_calibration(calibration_json)
+
         # arduino reset delay after connect
         time.sleep(2.5)
 
     # Output enable
+
     def output(self, ch: int, on: bool = None) -> bool | None:
         """
         Set or query the output state on the desired channel.
@@ -76,7 +84,9 @@ class ad5791(pyvisaDevice):
             return int(self.query(f"OUTP{ch}?"))
         
         self.write(f"OUTP{ch} {int(on)}")
-        self.info(f"{'En' if on else 'Dis'}abled channel {ch} output.")
+        self.info(f"{'En' if on else 'Dis'}abled channel {ch} output; "
+                   "setting to a maximally clean zero...")
+        self.set_V(ch, 0.0)
 
     def output_all(self, on: bool):
         """
@@ -186,21 +196,23 @@ class ad5791(pyvisaDevice):
 
     # Calibrated voltages
 
-    def _raw_to_cal(ch: int, V: float) -> float:
+    def _raw_to_cal(self, ch: int, V: float) -> float:
         """
         Return the calibrated voltage corresponding to a raw, uncalibrated 
         voltage.
         """
 
-        return V # fix this once we have the calibration
+        a, b = self.calibration[ch]
+        return a*V + b
     
-    def _cal_to_raw(ch: int, V: float) -> float:
+    def _cal_to_raw(self, ch: int, V: float) -> float:
         """
         Return the raw, uncalibrated voltage corresponding to a calibrated
         voltage.
         """
 
-        return V # fix this once we have the calibration
+        a, b = self.calibration[ch]
+        return (V - b) / a
 
     def sweep_V(self, ch: int, V: float, 
                 max_step: float = None, wait: float = None):
@@ -258,3 +270,12 @@ class ad5791(pyvisaDevice):
         self.set_raw_V(ch, self._cal_to_raw(V), chatty = False)
         if chatty:
             self.info(f"Set channel {ch} to calibrated value {V} V.")
+
+    def load_calibration(self, path: str = None):
+        if path is None:
+            path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                r'ad5791_cal.json'
+            )
+        with open(path, 'r') as f:
+            self.calibration = json.load(f)
