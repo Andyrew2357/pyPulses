@@ -20,6 +20,7 @@ from .keithley2000 import keithley2000
 from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
 from .mso44 import mso44
+from .pcm1704 import pcm1704
 from .pid_dcbox import PIDbox
 from .srs_lockin import (sr830, sr844, sr850, sr860, sr865a)
 from .watd_scope import watdScope
@@ -44,6 +45,7 @@ __all__ = [
     "keithley2400",
     "keithley2450",
     "mso44",
+    "pcm1704",
     "PIDbox",
     "sr830",
     "sr844",
