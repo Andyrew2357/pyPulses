@@ -3,8 +3,9 @@ Utility functions for dealing with curves. This includes interpolation,
 inversion, smoothing, etc.
 """
 
-from typing import Callable, Tuple
+from typing import Callable, List, Tuple
 import numpy as np
+import bisect
 
 def prune_sort(x: np.ndarray | list, y: np.ndarray | list
                ) -> Tuple[np.ndarray, np.ndarray]:
@@ -253,3 +254,40 @@ def pchip_dval_from_params(xs, ys, c1s, c2s, c3s):
         return dval
     
     return interp
+
+class MonotonicPiecewiseLinear():
+    def __init__(self, x_breaks, y_breaks):
+        """
+        Parameters
+        ----------
+        x_breaks : array, shape (n,)
+            Breakpoints in x (must be sorted).
+        y_breaks : array, shape (n,)
+            Function values at the breakpoints (same length as x_breaks).
+        """
+        if len(x_breaks) != len(y_breaks):
+            raise ValueError("x_breaks and y_breaks must have same length")
+        self.xb = np.asarray(x_breaks)
+        self.yb = np.asarray(y_breaks)
+
+    def __call__(self, x):
+        """Forward evaluation"""
+        x = np.asarray(x)
+        idx = np.searchsorted(self.xb, x, side="right") - 1
+        idx = np.clip(idx, 0, len(self.xb) - 2)
+
+        x0, x1 = self.xb[idx], self.xb[idx+1]
+        y0, y1 = self.yb[idx], self.yb[idx+1]
+
+        return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+
+    def inverse(self, y):
+        """Inverse evaluation"""
+        y = np.asarray(y)
+        idx = np.searchsorted(self.yb, y, side="right") - 1
+        idx = np.clip(idx, 0, len(self.yb) - 2)
+
+        x0, x1 = self.xb[idx], self.xb[idx+1]
+        y0, y1 = self.yb[idx], self.yb[idx+1]
+
+        return x0 + (x1 - x0) * (y - y0) / (y1 - y0)

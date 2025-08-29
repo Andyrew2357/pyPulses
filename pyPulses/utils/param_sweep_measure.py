@@ -516,7 +516,8 @@ class ParamSweepMeasure:
         npoints = self.npoints - self.skip_points
         pcomplete = taken/npoints
         time_taken = time.time() - start_time
-        remaining = int(time_taken * (1/pcomplete - 1))
+        pcomplete_inv = 1 if pcomplete == 0 else 1/pcomplete
+        remaining = int(time_taken * (pcomplete_inv - 1))
         hrs = remaining // 3600
         remaining -= hrs * 3600
         mns = remaining // 60

@@ -3,12 +3,15 @@ This class is an interface to the PCM1704 based 24-bit DC box. The box uses an
 NI USB-6051 board to communicate, which we programmatically control with nidaqmx
 """
 
+from ..utils.curves import MonotonicPiecewiseLinear
+
 from ._registry import DeviceRegistry
 from .abstract_device import abstractDevice
 
 import os
 import time
 import json
+import threading
 from math import ceil
 import numpy as np
 import nidaqmx
@@ -33,8 +36,8 @@ class pcm1704(abstractDevice):
     n_ch = 8
 
     def __init__(self, logger = None, max_step: float = 0.05, 
-                 wait: float = 0.1, calibration_json: str = 'Lipton',
-                 dev_name: str = 'Dev1'):
+                 wait: float = 0.1, calibration_json: str = 'Darjeeling',
+                 dev_name: str = 'Dev2', change_delay: float = 2e-6):
         """
         Parameters
         ----------
@@ -43,11 +46,13 @@ class pcm1704(abstractDevice):
             maximum voltage step to take when sweeping.
         wait : float, default=0.1
             time to wait between setting voltages while sweeping.
-        calibration_json : str, default='Lipton'
+        calibration_json : str, default='Darjeeling'
             path to a file containing DAC calibration data. There are also two
             presets, 'Lipton' and 'Darjeeling' corresponding to the two
             instances of this instrument in our lab.
-        dev_name : str, default='Dev1'
+        dev_name : str, default='Dev2'
+        change_delay : float
+            USB-6051 spam protection to avoid communication errors.
         """
         
         super().__init__(logger)
@@ -59,6 +64,8 @@ class pcm1704(abstractDevice):
 
         self.load_calibration(calibration_json)
 
+        self.change_delay = change_delay
+        self._lock = threading.Lock()
         self.open(dev_name)
 
     def open(self, dev_name):
@@ -93,14 +100,15 @@ class pcm1704(abstractDevice):
     def _write_port_A(self, value: int, mask: int = 0xFF):
         self.current_output = (self.current_output & ~mask) | (value & mask)
         self.task_out.write(self.current_output, auto_start = True)
+        time.sleep(self.change_delay)
 
     def _pulse(self, bitmask: int):
         self._write_port_A(self.current_output | bitmask, bitmask)
-        time.sleep(1e-6)
+        time.sleep(self.change_delay)
         self._write_port_A(self.current_output & ~bitmask, bitmask)
-        time.sleep(1e-6)
+        time.sleep(self.change_delay)
 
-    def select_channel(self, ch: int):
+    def _select_channel(self, ch: int):
         assert 0 <= ch < self.n_ch, f"illegal channel: {ch}"
         addr = (self.AD0 if ch & 1 else 0) \
              | (self.AD1 if ch & 2 else 0) \
@@ -125,19 +133,21 @@ class pcm1704(abstractDevice):
     def _set_bits(self, ch: int, bits: int) -> float:
         v = max(0, min(bits, self.bits_max))
         self.ch_bits[ch] = v
-        self.select_channel(ch)
 
-        for i in range(24):
-            if i == 1:
-                self._write_port_A(self.WCE0, self.WCE0 | self.WCE1)
-            bitval = (v >> (23 - i)) & 1 if i != 23 else 0
-            self._write_port_A(self.SDATA if bitval else 0, self.SDATA)
+        with self._lock:
+            self._select_channel(ch)
+
+            for i in range(24):
+                if i == 1:
+                    self._write_port_A(self.WCE0, self.WCE0 | self.WCE1)
+                bitval = (v >> (23 - i)) & 1 if i != 23 else 0
+                self._write_port_A(self.SDATA if bitval else 0, self.SDATA)
+                self._pulse(self.SCLK)
+
+            # latch
+            self._write_port_A(self.WCE1, self.WCE0 | self.WCE1)
             self._pulse(self.SCLK)
-
-        # latch
-        self._write_port_A(self.WCE1, self.WCE0 | self.WCE1)
-        self._pulse(self.SCLK)
-        self._pulse(self.SCLK)
+            self._pulse(self.SCLK)
 
     def _get_bits(self, ch: int) -> int:
         return self.ch_bits[ch]
@@ -156,6 +166,15 @@ class pcm1704(abstractDevice):
         chatty : bool, default=True
             whether to log the change in channel settings.
         """
+
+        minv = self.calibration['raw_min'][ch]
+        maxv = self.calibration['raw_max'][ch]
+        if V > maxv or V < minv:
+            Vt = min(maxv, max(minv, V))
+            self.warn(
+                f"{V} on PCM1704 channel {ch} is out of range; truncating to {Vt}."
+            )
+            V = Vt
 
         bits = self._raw_voltage_to_bits(V)
         self._set_bits(ch, bits)
@@ -200,8 +219,10 @@ class pcm1704(abstractDevice):
             wait time between steps while sweeping.
         """
         
-        if V > self.v_fullscale or V < -self.v_fullscale:
-            Vt = min(self.v_fullscale, max(-self.v_fullscale, V))
+        minv = self.calibration['raw_min'][ch]
+        maxv = self.calibration['raw_max'][ch]
+        if V > maxv or V < minv:
+            Vt = min(maxv, max(minv, V))
             self.warn(
                 f"{V} on PCM1704 channel {ch} is out of range; truncating to {Vt}."
             )
@@ -229,8 +250,7 @@ class pcm1704(abstractDevice):
         voltage.
         """
 
-        a, b = self.calibration[ch]
-        return a*V + b
+        return self.calibration['pwl_fit'][ch](V)
     
     def _cal_to_raw(self, ch: int, V: float) -> float:
         """
@@ -238,8 +258,7 @@ class pcm1704(abstractDevice):
         voltage.
         """
 
-        a, b = self.calibration[ch]
-        return (V - b) / a
+        return self.calibration['pwl_fit'][ch].inverse(V)
     
     def sweep_V(self, ch: int, V: float, 
                 max_step: float = None, wait: float = None):
@@ -294,7 +313,7 @@ class pcm1704(abstractDevice):
             whether to log the change in channel settings.
         """
 
-        self.set_raw_V(ch, self._cal_to_raw(V), chatty = False)
+        self.set_raw_V(ch, self._cal_to_raw(ch, V), chatty = False)
         if chatty:
             self.info(f"Set channel {ch} to calibrated value {V} V.")
 
@@ -306,8 +325,25 @@ class pcm1704(abstractDevice):
                     self.calibration = json.load(f)[path]
             except:
                 self.warn("No calibration file found.")
-                self.calibration = {ch: (1, 0) for ch in range(self.n_ch)}
-            return
-        
-        with open(path, 'r') as f:
-            self.calibration = json.load(f)
+                self.calibration = {
+                    'raw_min': {ch: -self.v_fullscale for ch in range(self.n_ch)},
+                    'raw_max': {ch: self.v_fullscale for ch in range(self.n_ch)},
+                    'pwl_fit': {ch: {
+                        'x_breaks': [-self.v_fullscale, self.v_fullscale],
+                        'y_breaks': [-self.v_fullscale, self.v_fullscale],
+                    } 
+                    for ch in range(self.n_ch)}
+                }
+
+        else:
+            with open(path, 'r') as f:
+                self.calibration = json.load(f)
+
+        self.calibration['raw_min'] = {int(k): v for k, v 
+                    in self.calibration['raw_min'].items()}
+        self.calibration['raw_max'] = {int(k): v for k, v 
+                    in self.calibration['raw_max'].items()}
+        self.calibration['pwl_fit'] = {
+            int(k): MonotonicPiecewiseLinear(p['x_breaks'], p['y_breaks'])
+            for k, p in self.calibration['pwl_fit'].items()
+        }

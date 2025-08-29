@@ -267,7 +267,7 @@ class ad5791(pyvisaDevice):
             whether to log the change in channel settings.
         """
 
-        self.set_raw_V(ch, self._cal_to_raw(V), chatty = False)
+        self.set_raw_V(ch, self._cal_to_raw(ch, V), chatty = False)
         if chatty:
             self.info(f"Set channel {ch} to calibrated value {V} V.")
 
@@ -279,3 +279,4 @@ class ad5791(pyvisaDevice):
             )
         with open(path, 'r') as f:
             self.calibration = json.load(f)
+            self.calibration = {int(k): v for k, v in self.calibration.items()}

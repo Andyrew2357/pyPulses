@@ -19,6 +19,7 @@ from .ips120 import ips120
 from .keithley2000 import keithley2000
 from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
+from .keithley2700 import keithley2700
 from .mso44 import mso44
 from .pcm1704 import pcm1704
 from .pid_dcbox import PIDbox
@@ -44,6 +45,7 @@ __all__ = [
     "keithley2000",
     "keithley2400",
     "keithley2450",
+    "keithley2700",
     "mso44",
     "pcm1704",
     "PIDbox",
