@@ -15,7 +15,7 @@ import threading
 from math import ceil
 import numpy as np
 import nidaqmx
-from nidaqmx.constants import LineGrouping
+from nidaqmx.constants import LineGrouping, AcquisitionType
 
 class pcm1704(abstractDevice):
     """Class interface for controlling the PCM1704 based 24-bit DC box."""
@@ -37,7 +37,7 @@ class pcm1704(abstractDevice):
 
     def __init__(self, logger = None, max_step: float = 0.05, 
                  wait: float = 0.1, calibration_json: str = 'Darjeeling',
-                 dev_name: str = 'Dev2', change_delay: float = 2e-6):
+                 dev_name: str = 'Dev2', clk_rate: float = 5e5):
         """
         Parameters
         ----------
@@ -51,8 +51,8 @@ class pcm1704(abstractDevice):
             presets, 'Lipton' and 'Darjeeling' corresponding to the two
             instances of this instrument in our lab.
         dev_name : str, default='Dev2'
-        change_delay : float
-            USB-6051 spam protection to avoid communication errors.
+        clock_rate : float, default=5e5
+            USB-6051 clock rate for sending a waveform.
         """
         
         super().__init__(logger)
@@ -64,56 +64,68 @@ class pcm1704(abstractDevice):
 
         self.load_calibration(calibration_json)
 
-        self.change_delay = change_delay
+        self.clk_rate = clk_rate
         self._lock = threading.Lock()
-        self.open(dev_name)
-
-    def open(self, dev_name):
-        """Open all the relevant USB-6051 lines."""
-
-        self.task_out = nidaqmx.Task()
-        self.task_out.do_channels.add_do_chan(f'{dev_name}/port0/line0:7', 
-                            line_grouping = LineGrouping.CHAN_FOR_ALL_LINES)
-        # Port B = digital input (for test/check)
-        self.task_in = nidaqmx.Task()
-        self.task_in.di_channels.add_di_chan(f'{dev_name}/port1/line0:7',
-                            line_grouping = LineGrouping.CHAN_FOR_ALL_LINES)
-        
-        self.current_output = 0
         self.ch_bits = [0.0] * self.n_ch
+        self.dev_name = dev_name
 
-    def close(self):
-        """Close all of the USB-6051 lines."""
+    def _make_waveform(self, ch: int, bits: int) -> np.ndarray:
+        """
+        Build a waveform of port0 states for 24-bit serial write + latch.
+        """
 
-        self.task_out.close()
-        self.task_in.close()
-
-    def __del__(self):
-        self.close()
-        super().__del__()
-
-    def test(self):
-        self._write_port_A(self.full_input, self.full_input)
-        inputs = self.task_in.read()
-        return inputs
-
-    def _write_port_A(self, value: int, mask: int = 0xFF):
-        self.current_output = (self.current_output & ~mask) | (value & mask)
-        self.task_out.write(self.current_output, auto_start = True)
-        time.sleep(self.change_delay)
-
-    def _pulse(self, bitmask: int):
-        self._write_port_A(self.current_output | bitmask, bitmask)
-        time.sleep(self.change_delay)
-        self._write_port_A(self.current_output & ~bitmask, bitmask)
-        time.sleep(self.change_delay)
-
-    def _select_channel(self, ch: int):
-        assert 0 <= ch < self.n_ch, f"illegal channel: {ch}"
+        states = []
+        # Address lines (channel select)
         addr = (self.AD0 if ch & 1 else 0) \
              | (self.AD1 if ch & 2 else 0) \
              | (self.AD2 if ch & 4 else 0)
-        self._write_port_A(addr, self.AD0 | self.AD1 | self.AD2)
+        base = (self.WCE1 & ~(self.AD0 | self.AD1 | self.AD2)) | addr
+        states.append(base)
+
+        # 24-bit shift register load
+        for i in range(24):
+            if i == 1:
+                base = (addr & ~(self.WCE0 | self.WCE1)) | self.WCE0 # bring WCE0 high
+                states.append(base)
+
+            bitval = (bits >> (23 - i)) & 1 if i != 23 else 0
+            sdata = self.SDATA if bitval else 0
+
+            states.append(base | sdata)             # SCLK low
+            states.append(base | sdata | self.SCLK) # SCLK high
+            states.append(base | sdata)             # SCLK low
+
+        # Latch with WCE1 + extra SCLK pulses
+        base = (base & ~(self.WCE0 | self.WCE1)) | self.WCE1
+        states.append(base)
+        states.append(base | self.SCLK)
+        states.append(base)
+        states.append(base | self.SCLK)
+        states.append(base)
+        
+        return np.array(states, dtype = np.uint8)
+    
+    def _do_waveform(self, waveform: np.ndarray):
+        """
+        Send waveform to NI-DAQmx as hardware-timed digital output.
+        """
+
+        # convert 8-bit integers to boolean
+        bools = np.unpackbits(waveform[:, None], axis = 1)[:, -8:]
+
+        with nidaqmx.Task() as task:
+            task.do_channels.add_do_chan(
+                f'{self.dev_name}/port0/line0:7',
+                line_grouping = LineGrouping.CHAN_FOR_ALL_LINES,
+            )
+            task.timing.cfg_samp_clk_timing(
+                rate = self.clk_rate,
+                sample_mode = AcquisitionType.FINITE,
+                samps_per_chan = len(bools),
+            )
+            task.write(bools.tolist(), auto_start = False)
+            task.start()
+            task.wait_until_done()
 
     def _raw_voltage_to_bits(self, rawV: float) -> int:
         if abs(rawV) > self.v_fullscale:
@@ -133,21 +145,9 @@ class pcm1704(abstractDevice):
     def _set_bits(self, ch: int, bits: int) -> float:
         v = max(0, min(bits, self.bits_max))
         self.ch_bits[ch] = v
-
-        with self._lock:
-            self._select_channel(ch)
-
-            for i in range(24):
-                if i == 1:
-                    self._write_port_A(self.WCE0, self.WCE0 | self.WCE1)
-                bitval = (v >> (23 - i)) & 1 if i != 23 else 0
-                self._write_port_A(self.SDATA if bitval else 0, self.SDATA)
-                self._pulse(self.SCLK)
-
-            # latch
-            self._write_port_A(self.WCE1, self.WCE0 | self.WCE1)
-            self._pulse(self.SCLK)
-            self._pulse(self.SCLK)
+        wf = self._make_waveform(ch, bits)
+        # with self._lock:
+        #     self._do_waveform(wf)
 
     def _get_bits(self, ch: int) -> int:
         return self.ch_bits[ch]
