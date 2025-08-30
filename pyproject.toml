@@ -43,7 +43,11 @@ plotting = [
 repository = "https://github.com/Andyrew2357/pyPulses.git"
 
 [build-system]
-requires = ["setuptools"]
+requires = [
+    "setuptools>=61",
+    "wheel",
+    "pybind11>=2.6"
+]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

@@ -1,6 +1,15 @@
 """
-This class is an interface to the PCM1704 based 24-bit DC box. The box uses an
-NI USB-6051 board to communicate, which we programmatically control with nidaqmx
+This class is an interface to the PCM1704-based 24-bit DC box. The box uses an
+NI USB-6051 board to communicate, which we programmatically control with a C++
+subroutine. 
+
+Technically, we could get away with just using nidaqmx in python, but I switched 
+over to this when I saw what I *thought* were inconsistencies in the set value 
+due to timing, and I determined that I needed microsecond level delays, which 
+python can't handle without rounding up to milliseconds, introducing huge
+overhead. It turns out these were actually just due to me hitting the multimeter 
+too quickly. Regardless, I've tested it to be very marginally faster this way,
+so I'll stick with this
 """
 
 from ..utils.curves import MonotonicPiecewiseLinear
@@ -8,28 +17,26 @@ from ..utils.curves import MonotonicPiecewiseLinear
 from ._registry import DeviceRegistry
 from .abstract_device import abstractDevice
 
+try:
+    from .subroutines.pcm1704_driver import PCM1704Driver # type: ignore
+except ImportError:
+    class PCM1704Driver():
+        def __init__(*args, **kwargs):
+            raise RuntimeError(
+                "pcm1704_driver extension not built. "
+                "Please install NI-DAQmx and rebuild pyPulses."
+            )
+
 import os
 import time
 import json
 import threading
 from math import ceil
 import numpy as np
-import nidaqmx
-from nidaqmx.constants import LineGrouping, AcquisitionType
 
 class pcm1704(abstractDevice):
-    """Class interface for controlling the PCM1704 based 24-bit DC box."""
+    """Class interface for controlling the PCM1704-based 24-bit DC box."""
     
-    # Bit masks
-    SCLK  = 1 << 0
-    SDATA = 1 << 1
-    AD2   = 1 << 2
-    AD1   = 1 << 3
-    AD0   = 1 << 4
-    WCE1  = 1 << 5
-    WCE0  = 1 << 6
-    
-    full_input = 0x7F
     v_fullscale = 12.0
     bits_max = 0xFFFFFF
     bits_half_max = 0x7FFFFF
@@ -37,7 +44,7 @@ class pcm1704(abstractDevice):
 
     def __init__(self, logger = None, max_step: float = 0.05, 
                  wait: float = 0.1, calibration_json: str = 'Darjeeling',
-                 dev_name: str = 'Dev2', clk_rate: float = 5e5):
+                 dev_name: str = 'Dev2', change_delay_us: int = 0):
         """
         Parameters
         ----------
@@ -51,8 +58,8 @@ class pcm1704(abstractDevice):
             presets, 'Lipton' and 'Darjeeling' corresponding to the two
             instances of this instrument in our lab.
         dev_name : str, default='Dev2'
-        clock_rate : float, default=5e5
-            USB-6051 clock rate for sending a waveform.
+        change_delay_us : int, default=2
+            microsecond delays while bit-banging.
         """
         
         super().__init__(logger)
@@ -64,68 +71,18 @@ class pcm1704(abstractDevice):
 
         self.load_calibration(calibration_json)
 
-        self.clk_rate = clk_rate
         self._lock = threading.Lock()
         self.ch_bits = [0.0] * self.n_ch
-        self.dev_name = dev_name
+        self.driver = PCM1704Driver(dev_name, change_delay_us)
 
-    def _make_waveform(self, ch: int, bits: int) -> np.ndarray:
-        """
-        Build a waveform of port0 states for 24-bit serial write + latch.
-        """
+    def _close(self):
+        """Close the C++ driver (destructor will clean up DAQmx task)"""
+        if hasattr(self, 'driver'):
+            del self.driver
 
-        states = []
-        # Address lines (channel select)
-        addr = (self.AD0 if ch & 1 else 0) \
-             | (self.AD1 if ch & 2 else 0) \
-             | (self.AD2 if ch & 4 else 0)
-        base = (self.WCE1 & ~(self.AD0 | self.AD1 | self.AD2)) | addr
-        states.append(base)
-
-        # 24-bit shift register load
-        for i in range(24):
-            if i == 1:
-                base = (addr & ~(self.WCE0 | self.WCE1)) | self.WCE0 # bring WCE0 high
-                states.append(base)
-
-            bitval = (bits >> (23 - i)) & 1 if i != 23 else 0
-            sdata = self.SDATA if bitval else 0
-
-            states.append(base | sdata)             # SCLK low
-            states.append(base | sdata | self.SCLK) # SCLK high
-            states.append(base | sdata)             # SCLK low
-
-        # Latch with WCE1 + extra SCLK pulses
-        base = (base & ~(self.WCE0 | self.WCE1)) | self.WCE1
-        states.append(base)
-        states.append(base | self.SCLK)
-        states.append(base)
-        states.append(base | self.SCLK)
-        states.append(base)
-        
-        return np.array(states, dtype = np.uint8)
-    
-    def _do_waveform(self, waveform: np.ndarray):
-        """
-        Send waveform to NI-DAQmx as hardware-timed digital output.
-        """
-
-        # convert 8-bit integers to boolean
-        bools = np.unpackbits(waveform[:, None], axis = 1)[:, -8:]
-
-        with nidaqmx.Task() as task:
-            task.do_channels.add_do_chan(
-                f'{self.dev_name}/port0/line0:7',
-                line_grouping = LineGrouping.CHAN_FOR_ALL_LINES,
-            )
-            task.timing.cfg_samp_clk_timing(
-                rate = self.clk_rate,
-                sample_mode = AcquisitionType.FINITE,
-                samps_per_chan = len(bools),
-            )
-            task.write(bools.tolist(), auto_start = False)
-            task.start()
-            task.wait_until_done()
+    def __del__(self):
+        self._close()
+        super().__del__()
 
     def _raw_voltage_to_bits(self, rawV: float) -> int:
         if abs(rawV) > self.v_fullscale:
@@ -145,9 +102,8 @@ class pcm1704(abstractDevice):
     def _set_bits(self, ch: int, bits: int) -> float:
         v = max(0, min(bits, self.bits_max))
         self.ch_bits[ch] = v
-        wf = self._make_waveform(ch, bits)
-        # with self._lock:
-        #     self._do_waveform(wf)
+        with self._lock:
+            self.driver.set_bits(ch, bits)
 
     def _get_bits(self, ch: int) -> int:
         return self.ch_bits[ch]
@@ -347,3 +303,4 @@ class pcm1704(abstractDevice):
             int(k): MonotonicPiecewiseLinear(p['x_breaks'], p['y_breaks'])
             for k, p in self.calibration['pwl_fit'].items()
         }
+        

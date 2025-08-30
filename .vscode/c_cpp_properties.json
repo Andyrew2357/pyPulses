@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "C:/Program Files (x86)/National Instruments/NI-DAQ/DAQmx ANSI C Dev/include",
+                "C:/Users/pulsing_meas/Documents/pyPulses/.venv/Lib/site-packages/pybind11/include",
+                "C:/Users/pulsing_meas/AppData/Local/Programs/Python/Python313/include"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "windowsSdkVersion": "10.0.26100.0",
+            "compilerPath": "cl.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ],
+    "version": 4
+}
