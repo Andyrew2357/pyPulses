@@ -1,3 +1,4 @@
+import shutil
 import inspect
 import importlib
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 PACKAGE = "pyPulses"
 SUBMODULES = ["devices", "plotting", "routines", "utils"]
 OUTPUT_ROOT = Path("docs-site/docs/reference")
+MKDOCS_YML = Path("docs-site/mkdocs.yml")
 
 MKDOCSTRINGS_OPTIONS = {
     "show_signature": True,
@@ -179,6 +181,9 @@ def write_doc(title, import_path, output_path):
 
 
 def main():
+    if OUTPUT_ROOT.exists():
+        shutil.rmtree(OUTPUT_ROOT)
+
     full_nav = []
 
     for submodule in SUBMODULES:
@@ -262,7 +267,7 @@ def main():
             if documented_properties:
                 print(f"    └─ Properties: {', '.join(documented_properties)}")
             
-            sub_nav.append(f"      - {name}: reference/{submodule}/{name}.md")
+            sub_nav.append(f"      - {name}: reference/{submodule}/{name}.md\n")
 
         # Process functions
         if functions:
@@ -271,18 +276,40 @@ def main():
                                 md_path, functions)
             print(f"  - Functions: {', '.join(functions.keys())}")
             sub_nav.append(
-                f"      - Functions: reference/{submodule}/functions.md"
+                f"      - Functions: reference/{submodule}/functions.md\n"
             )
 
         if sub_nav:
-            full_nav.append(f"    - {submodule.title()}:")
+            full_nav.append(f"    - {submodule.title()}:\n")
             full_nav.extend(sub_nav)
 
-    # Print nav block
-    print("\n🧾 Suggested `mkdocs.yml` nav block:\n")
-    print("  - Reference:")
-    for line in full_nav:
-        print(line)
+    # Write mkdocs.yml with appropriate nav block
+    with open(MKDOCS_YML, 'w+') as f:
+        f.write(
+"""site_name: pyPulses
+theme:
+  name: material
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [".."]
+          options:
+            docstring_style: numpy
+            show_signature: true
+            show_source: false
+            merge_init_into_class: true
+            group_by_category: true
+            inherited_members: true
+
+nav:
+  - Home: index.md
+  - Reference:
+"""
+        )
+        f.writelines(full_nav)
 
 if __name__ == "__main__":
     main()

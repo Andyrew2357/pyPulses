@@ -21,3 +21,4 @@ dist/
 
 # Docs
 docs-site/docs/reference
+docs-site/mkdocs.yml
