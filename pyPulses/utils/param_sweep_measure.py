@@ -145,14 +145,12 @@ class ParamSweepMeasure:
     retain_return   : bool = True                                               # whether we return results (can be memory intensive)
     logger          : logging.Logger = None                                     # logger
     pre_callback    : Callable[                                                 # callback before measurement
-                        [datetime.datetime, np.ndarray, np.ndarray], Any
-                        ] | \
-                      Callable[[np.ndarray, np.ndarray], Any] = None
+                        [np.ndarray, np.ndarray, datetime.datetime], Any
+                        ] = None
     post_callback   : Callable[                                                 # callback after measurement
-                        [datetime.datetime, np.ndarray, np.ndarray, np.ndarray], 
+                        [np.ndarray, np.ndarray, np.ndarray, datetime.datetime], 
                         Any
-                        ] | \
-                      Callable[[np.ndarray, np.ndarray, np.ndarray], Any] = None
+                        ] = None
     space_mask      : Callable[[int | np.ndarray, np.ndarray], bool] \
                         = lambda *args: True                                    # mask for which points to take
     skip_points     : int = 0                                                   # points to skip (useful when restarting an interrupted scan)
@@ -455,10 +453,7 @@ class ParamSweepMeasure:
 
         # Pre-measurement Callback
         if self.pre_callback:
-            if self.timestamp:
-                self.pre_callback(now, idx, target_coords)
-            else:
-                self.pre_callback(idx, target_coords)
+            self.pre_callback(idx, target_coords, now)
 
         # Measure the desired parameters
         measured_vars = self.get_measured_vars()
@@ -468,11 +463,8 @@ class ParamSweepMeasure:
 
         # Post-measurement Callback
         if self.post_callback:
-            if self.timestamp:
-                self.post_callback(now, idx, target_coords, measured_vars)
-            else:
-                self.post_callback(idx, target_coords, measured_vars)
-        
+            self.post_callback(idx, target_coords, measured_vars, now)
+
         return measured_vars
     
     def _get_live_plotter(self):

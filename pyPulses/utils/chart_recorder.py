@@ -16,14 +16,12 @@ class ChartRecorder():
     starting_fnum   : int = 1                                                   # starting file number
     logger          : logging.Logger = None                                     # logger
     pre_callback    : Callable[                                                 # callback before measurement
-                        [datetime.datetime, np.ndarray, np.ndarray], Any
-                        ] | \
-                    Callable[[np.ndarray, np.ndarray], Any] = None
+                        [np.ndarray, np.ndarray, datetime.datetime], Any
+                        ] = None
     post_callback   : Callable[                                                 # callback after measurement
-                        [datetime.datetime, np.ndarray, np.ndarray, np.ndarray], 
+                        [np.ndarray, np.ndarray, np.ndarray, datetime.datetime], 
                         Any
-                        ] | \
-                    Callable[[np.ndarray, np.ndarray, np.ndarray], Any] = None
+                        ] = None
     timestamp       : bool = True                                               # whether to include a timestamp for each point
 
     # Recorder arguments
