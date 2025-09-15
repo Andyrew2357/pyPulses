@@ -1,6 +1,7 @@
+from ..utils.stats import series_correlated_covariance
+
 from .srs_lockin_base import SRSLockin
 from .pyvisa_device import parse_IEEE_488_2
-
 
 import numpy as np
 import time
@@ -291,6 +292,7 @@ class srs_acquisition:
     sampint     : float = None  # sampling interval in seconds
     data_config : str   = None  # configuration of returned data
     timeout     : float = None  # fallback timeout
+    tau         : float = None
 
 class sr860(SRSLockin):
     """Class interface for controlling the SR860 DSP Lock-in"""
@@ -439,6 +441,7 @@ class sr860(SRSLockin):
         self._acquisition.sampint = 1/sample_rate
         self._acquisition.data_config = config
         self._acquisition.timeout = timeout
+        self._acquisition.tau = self.time_constant()
         self._acquisition.ready = True
         self._acquisition.running = False
 
@@ -541,7 +544,7 @@ class sr860(SRSLockin):
                 data = data.reshape(-1, 4)
 
         self.info(f"Retrieved buffered data.")
-        return data.T
+        return data
     
     def get_average(self, auto_rescale: bool = False
                     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -549,7 +552,7 @@ class sr860(SRSLockin):
         Sample X,Y some desired number of times and return an average along with
         covariance in the measured values.
 
-        (Assumes that you have already called setup_acquisition)
+        (Assumes that you have already called setup_data_acquisition)
 
         Parameters
         ----------
@@ -574,9 +577,50 @@ class sr860(SRSLockin):
         self._start_acquisition()
         samps = self._get_buffered_data()
 
-        # TODO FIGURE OUT IF THIS DIVISION SHOULD ACTUALLY HAPPEN...
-        return samps.mean(axis = 1), np.cov(samps) # / samps.shape[0]
+        return samps.mean(axis = 0), np.cov(samps.T)
     
+    def get_average_series_correlated(self, 
+                                      auto_rescale: bool = False, 
+                                      L: int = None
+                                      ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Sample X,Y some desired number of times and return an average along with
+        covariance in the measured values. This covariance is estimated 
+        accounting for series correlations. See utils.stats for details.
+
+        (Assumes that you have already called setup_data_acquisition)
+
+        Parameters
+        ----------
+        auto_rescale : bool, default=False
+            whether to call `auto_rescale` prior to taking the average
+        L : int, optional
+            maximum correlation length to consider for covariance estimation 
+            (in units of sampling interval). By default, we try to use 20 time 
+            constants.
+            
+        Returns
+        -------
+        mean, cov : np.ndarray
+        """
+
+        if not self._acquisition.ready:
+            raise RuntimeError(
+                "An acquisition must be configured before attempting to take "
+                "an average."
+            )
+
+        if auto_rescale:
+            self.auto_gain()
+
+        # take the acquisition
+        self._start_acquisition()
+        samps = self._get_buffered_data()
+
+        if L is None:
+            L = int(20 * self._acquisition.tau / self._acquisition.sampint)
+        return samps.mean(axis = 0), series_correlated_covariance(samps, L = L)
+
     def _serialize_state(self) -> dict:
         state = super()._serialize_state()
         if self._acquisition.ready:
@@ -584,7 +628,8 @@ class sr860(SRSLockin):
                 'buffer_size'   : self._acquisition.buffer_size,
                 'sampint'       : self._acquisition.sampint,
                 'data_config'   : self._acquisition.data_config,
-                'timeout'       : self._acquisition.timeout
+                'timeout'       : self._acquisition.timeout,
+                'tau'           : self._acquisition.tau
             }
         return state
     

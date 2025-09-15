@@ -384,6 +384,7 @@ class KapBridge():
 
             # lock-in reading and covariance
             L, R = self.get_xy_average(auto_rescale = True)
+            L = L.T # By convention, my lock-in classes return the transpose
             x_m, y_m = L
 
             self.info(f"Lock-in reading: x = {L[0]:.5e} V, y = {L[1]:.5e} V\n"

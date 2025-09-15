@@ -13,6 +13,7 @@ from .param_sweep_measure import SweepMeasureParallelepiped
 from .param_sweep_measure import SweepMeasureProduct
 from .rootfinder import RootFinderState, RootFinderStatus
 from .send_mail import sendMail
+from . import stats
 from .tandem_sweep import tandemSweep, ezTandemSweep
 
 __all__ = [
@@ -20,7 +21,7 @@ __all__ = [
     "BalanceConfig",
     "BrentSolver",
     "clearLoggers",
-    "ChartRecorder"
+    "ChartRecorder",
     "decorators",
     "DummyPred",
     "DummyPredFunc",
@@ -33,6 +34,7 @@ __all__ = [
     "ParamSweepMeasure",
     "RootFinderState",
     "RootFinderStatus",
+    "stats",
     "SweepMeasure",
     "SweepMeasureCut",
     "SweepMeasureParallelepiped",

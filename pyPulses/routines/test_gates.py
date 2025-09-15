@@ -66,6 +66,7 @@ class GateTest():
     origin          : List[float] | dict
     e0              : Point = (1.0, 0.0)
     ramp_wait       : float = 0.1
+    fast_ramp_wait  : float = None
     max_vertices    : int = 20
     small_edge_size : float = None
     plot            : bool = False
@@ -76,6 +77,9 @@ class GateTest():
     def __post_init__(self):
         self.gating_region = None
         self.safe = False
+
+        if self.fast_ramp_wait is None:
+            self.fast_ramp_wait = self.ramp_wait
 
         if isinstance(self.origin, dict):
             self.zero = [self.origin['x'], self.origin['y']]
@@ -144,7 +148,7 @@ class GateTest():
     def go_to_origin(self) -> SweepResult:
         return ezTandemSweep(parms = self.parms, 
                              target = self.zero, 
-                             wait = self.ramp_wait,
+                             wait = self.fast_ramp_wait,
                              callback = self._plot_position_callback)
 
     def run(self):
@@ -251,7 +255,7 @@ class GateTest():
             # sweep to the midpoint
             res = ezTandemSweep(parms = self.parms, 
                                 target = m, 
-                                wait = self.ramp_wait,
+                                wait = self.fast_ramp_wait,
                                 callback = self._plot_position_callback)
             
             if res != SweepResult.SUCCEEDED:
