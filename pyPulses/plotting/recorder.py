@@ -1,5 +1,7 @@
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import plotly.io as pio
+pio.renderers.default = 'notebook_connected'
 from IPython.display import display, HTML
 try:
     display(HTML(
@@ -7,6 +9,8 @@ try:
     ))
 except:
     pass
+
+from ipywidgets import Output, VBox
 
 import time
 import numpy as np
@@ -150,8 +154,34 @@ class Recorder():
         )
 
     def show(self) -> go.FigureWidget:
-        display(self.widget)
+
+        if pio.renderers.default == 'vscode':
+            pio.renderers.default = 'notebook_connected'
+
+        # This is to fix some weirdness with Jupyter/VSCode 
+        # (not an issue on all devices)
+        out = Output()
+        with out:
+            display(self.widget)
+
+        display(VBox([out]))
         return self.widget
+    
+    def close(self, remove_display: bool = False):
+        if hasattr(self, 'widget') and self.widget is not None:
+            try:
+                if remove_display:
+                    self.widget.close()
+                else:
+                    # detach by removing any lingering callbacks and references
+                    self.widget._ipython_display_ = lambda *a, **kwargs: None
+            
+            except Exception:
+                pass
+
+        self.elements.clear()
+        self.subplots.clear()
+        self.elem_locations.clear()
 
     def draw(self, now = None):
         with self.widget.batch_update():

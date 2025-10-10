@@ -292,6 +292,12 @@ class ParamSweepMeasure:
             if self.cleanup:
                 self.cleanup()
 
+            if self.plot_fields is not None and 'sr' in locals():
+                try:
+                    sr.close(remove_display = False)
+                except Exception:
+                    pass
+
         if self.retain_return:
             return result
         
