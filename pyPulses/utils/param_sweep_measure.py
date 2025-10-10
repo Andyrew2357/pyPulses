@@ -473,10 +473,12 @@ class ParamSweepMeasure:
             plot_fields = variables
         else:
             plot_fields = []
-            for i, v in variables:
+            for i, v in enumerate(variables):
                 if i in self.plot_fields or \
                     v.get('name', '') in self.plot_fields:
                     plot_fields.append(v)
+                else:
+                    plot_fields.append({})
                 
         plot_kwargs = self.plot_kwargs or {}
         return SweepRecorder(plot_fields, **plot_kwargs)
