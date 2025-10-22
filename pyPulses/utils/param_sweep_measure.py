@@ -4,7 +4,6 @@ import numpy as np
 import itertools
 import datetime
 import time
-import os
 import logging
 from copy import deepcopy
 from dataclasses import dataclass
@@ -263,7 +262,8 @@ class ParamSweepMeasure:
         try:
             if self.plot_fields is not None:
                 sr = self._get_live_plotter()
-                sr.show()
+                widget = sr.show()
+                self._last_recorder_output_label = sr._output_id
             
             self._log_header()
 

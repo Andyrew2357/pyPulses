@@ -11,12 +11,14 @@ except:
     pass
 
 from ipywidgets import Output, VBox
-
+from IPython.display import clear_output
 import time
 import numpy as np
 from math import sqrt, ceil
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple
+
+from .._output_registry import OutputRegistry
 
 class PlotElement(ABC):
     """Base class for self-managing plot elements"""
@@ -153,25 +155,50 @@ class Recorder():
                       't': self.height // 30, 'b': self.height // 30}
         )
 
-    def show(self) -> go.FigureWidget:
+    def show(self, label: str = None) -> go.FigureWidget:
+        """
+        Display the figure and pin it in the OutputRegistry.
+
+        By pinning, we keep the python-side object strongly references so comms 
+        don't get garbage collected. We also register the figure as the primary
+        widget so OutputRegistry.redisplay(...) can rebind the front-end.
+        """
 
         if pio.renderers.default == 'vscode':
             pio.renderers.default = 'notebook_connected'
 
-        # This is to fix some weirdness with Jupyter/VSCode 
-        # (not an issue on all devices)
-        out = Output()
+        label = label or f'recorder:{int(time.time())}'
+        out_id, out = OutputRegistry.new_output(label = label, auto_display = True)
+
+        # ensure a clean initial display in the output
         with out:
+            clear_output(wait = True)
             display(self.widget)
 
-        display(VBox([out]))
+        # record ids locally
+        self._output_id = out_id
+        self._panel_id = None
+
+        # pin the output to keep a strong ref for the duration of the run
+        OutputRegistry.pin(out_id, out)
+        # register the widget as primary for redisplay recovery
+        OutputRegistry._meta[out_id]['primary_widget'] = self.widget
+
         return self.widget
     
     def close(self, remove_display: bool = False):
+        """
+        Close internal resources. By default we do not remove the displayed
+        output; pass remove_display = True to also tear down the front-end.
+        """
+
         if hasattr(self, 'widget') and self.widget is not None:
             try:
                 if remove_display:
-                    self.widget.close()
+                    try:
+                        self.widget.close()
+                    except Exception:
+                        pass
                 else:
                     # detach by removing any lingering callbacks and references
                     self.widget._ipython_display_ = lambda *a, **kwargs: None
@@ -182,6 +209,27 @@ class Recorder():
         self.elements.clear()
         self.subplots.clear()
         self.elem_locations.clear()
+
+        try:
+            if hasattr(self, '_panel_id'):
+                OutputRegistry.clear(self._panel_id, remove_display = remove_display)
+        except Exception:
+            pass
+
+        if remove_display:
+            self.dismiss()
+
+    def dismiss(self):
+        """
+        Owner-initiated removal: explicitly unpin and clear the output/panel.
+        """
+
+        try:
+            if hasattr(self, '_output_id'):
+                OutputRegistry.unpin(self._output_id)
+                OutputRegistry.clear(self._output_id, remove_display = True)
+        except Exception:
+            pass
 
     def draw(self, now = None):
         with self.widget.batch_update():

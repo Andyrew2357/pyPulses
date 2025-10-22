@@ -15,6 +15,8 @@ from contextvars import ContextVar
 from types import ModuleType
 from typing import Callable, List
 
+from ._job_registry import ThreadJobRegistry
+from ._output_registry import OutputRegistry
 
 """Thread-local / current-control plumbing"""
 
@@ -197,6 +199,7 @@ class ThreadJob:
 
             self.result = self.func(*self.args, **self.kwargs)
 
+            ThreadJobRegistry.update_status(self.job_id, 'finished')
             self._emit('finish', self.result)
             if callable(self.on_finish):
                 try:
@@ -205,6 +208,8 @@ class ThreadJob:
                     traceback.print_exc()
 
         except StopRequested:
+
+            ThreadJobRegistry.update_status(self.job_id, 'stopped')
             self._emit('stop', None)
             if callable(self.on_stop):
                 try:
@@ -215,6 +220,7 @@ class ThreadJob:
         except Exception as e:
             self.exc = e
             tb = traceback.format_exc()
+            ThreadJobRegistry.update_status(self.job_id, 'errored')
             self._emit('error', tb)
             if callable(self.on_error):
                 try:
@@ -225,6 +231,7 @@ class ThreadJob:
         finally:
             _current_control.reset(token)
             self._joined = True
+            ThreadJobRegistry.cleanup(self.job_id)
 
     def start(self, force_restart: bool = True):
         if self.thread and self.thread.is_alive():
@@ -238,11 +245,14 @@ class ThreadJob:
         self.thread = threading.Thread(target=self._runner, daemon=True)
         self._joined = False
         self.thread.start()
+        self.job_id = ThreadJobRegistry.register(self)
 
     def pause(self):
+        ThreadJobRegistry.update_status(self.job_id, 'paused')
         self.control.pause()
 
     def resume(self):
+        ThreadJobRegistry.update_status(self.job_id, 'running')
         self.control.resume()
 
     def stop(self):
@@ -257,7 +267,7 @@ class ThreadJob:
         self._joined = True
 
 
-    def show_controls(self):
+    def show_controls(self, display_target = None, keep_on_finish = True) -> str | None:
         """Display pause/resume/stop buttons inline (only in Jupyter)."""
         if not _in_notebook():
             print("Control UI only works in Jupyter notebooks.")
@@ -277,7 +287,36 @@ class ThreadJob:
         status_label = widgets.HTML(value="")
         buttons = widgets.HBox([pause_btn, resume_btn, stop_btn])
         panel = widgets.VBox([buttons, status_label])
-        display(panel)
+
+        if display_target is None:
+            out_id, out = OutputRegistry.new_output(
+                label = f'job:{id(self)}', 
+                auto_display = True,
+            )
+            panel_id = OutputRegistry.register_panel(panel, 
+                label = f'job:{id(self)}', 
+                out_id = out_id, 
+                job_id = getattr(self, 'job_id', None), 
+                keep_on_finish = keep_on_finish,
+            )
+            self._control_out_id = out_id
+            self._control_panel_id = panel_id
+        else:
+            panel_id = OutputRegistry.register_panel(panel, 
+                label = f'job:{id(self)}',
+                out_id = None,
+                job_id = getattr(self, 'job_id', None),
+                keep_on_finish = keep_on_finish,
+            )
+            self._control_panel_id = panel_id
+
+        # pin the panel so the UI and comm stay alive for the run
+        try:
+            OutputRegistry.pin(panel_id, panel)
+            # set primary widget for redisplay recovery
+            OutputRegistry._meta[panel_id]['primary_widget'] = panel
+        except Exception:
+            pass
 
         def pause_clicked(_): self.pause()
         def resume_clicked(_): self.resume()
@@ -288,21 +327,42 @@ class ThreadJob:
         stop_btn.on_click(stop_clicked)
 
         def finished_cleanup(job, *args):
-            panel.children = [widgets.HTML(value="<b>Job finished</b>")]
+            status_label.value = "<b>Job finished</b>"
+            try:
+                OutputRegistry.unpin(panel_id)
+            except Exception:
+                pass
+            if not keep_on_finish:
+                try:
+                    OutputRegistry.clear(panel_id, remove_display = True)
+                except Exception:
+                    pass
+
         def stopped_cleanup(job, *args):
-            panel.children = [widgets.HTML(value="<b>Job stopped</b>")]
+            status_label.value = "<b>Job stopped</b>"
+            try:
+                OutputRegistry.unpin(panel_id)
+            except Exception:
+                pass
+            if not keep_on_finish:
+                try:
+                    OutputRegistry.clear(panel_id, remove_display = True)
+                except Exception:
+                    pass
+
         def show_error(job, tb):
-            panel.children = [widgets.HTML(
-                value=f"<b>Error</b><br><pre style='font-size:smaller'>{tb}</pre>"
-            )]
+            status_label.value = f"<b>Error</b><br><pre style='font-size:smaller'>{tb}</pre>"
 
         self.on('finish', finished_cleanup)
         self.on('stop', stopped_cleanup)
         self.on('error', show_error)
 
+        return panel_id
+
     def start_with_controls(self, force_restart: bool = True):
-        self.show_controls()
+        pid = self.show_controls()
         self.start(force_restart = force_restart)
+        return pid
 
 
 """Check to see if we're in a notebook"""

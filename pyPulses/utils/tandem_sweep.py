@@ -32,7 +32,8 @@ def tandemSweep(setters: List[Callable[[float], Any]],
                 panic_condition: Callable[..., bool] = lambda *args, **kwargs: False,
                 panic_behavior: str | Callable[..., Any] | None = 'zero',
                 handle_exceptions: bool = True,
-                ignore_checkpoints: bool = True) -> SweepResult:
+                ignore_checkpoints: bool = True,
+                verbose: bool = False) -> SweepResult:
     """
     Sweeps multiple parameters smoothly while respecting their maximum step
     sizes.
@@ -71,12 +72,20 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     ignore_checkpoints : bool, default=True
         whether to comply with checkpoints on each loop iteration for threaded
         execution
+    verbose : bool, default=False
+        whether to print the values of parameters on each step
 
     Returns
     -------
     SweepResult
     """
-    
+
+    start = np.array(start)
+    if np.isscalar(end):
+        end = np.full_like(start, fill_value = end)
+    else:
+        end = np.array(end)
+
     N = len(setters)
     if len(start) != N or len(end) != N or len(max_step) != N:
         raise IndexError(
@@ -108,9 +117,6 @@ def tandemSweep(setters: List[Callable[[float], Any]],
         raise ValueError("'min_step' values cannot exceed 'max_step' values.")
     if np.any(min_step < 0):
         raise ValueError("'min_step' values cannot be negative.")
-    
-    start = np.array(start)
-    end = np.array(end)
 
     # Determine the number of steps to take. This is determined by the 'weakest
     # link', the variable the ramp that needs the most steps respecting its
@@ -123,11 +129,11 @@ def tandemSweep(setters: List[Callable[[float], Any]],
     # size is 0). This is to prevent repeatedly calling costly setters for
     # meaningless changes.
     prev_settings = start.copy()
-    for i in range(M):
+    for j in range(M):
         if not ignore_checkpoints:
             _checkpoint()
 
-        new_settings = start + i * (end - start) / M
+        new_settings = start + j * (end - start) / M
 
         # determine which parameters are close enough not to set
         similar = np.abs(new_settings - prev_settings) <= min_step
@@ -182,12 +188,14 @@ def tandemSweep(setters: List[Callable[[float], Any]],
                     raise ValueError(
                         f"Invalid `panic_behavior` argument: {panic_condition}"
                     )
-            
-            if callback:
-                callback(new_settings)
 
             prev_settings[i] = new_settings[i]
+            if callback:
+                callback(new_settings)
         
+        if verbose:
+            print("".join(f'\t{val:12g}' for val in new_settings), end = '\r')
+
         time.sleep(wait)
 
     # Make sure we actually make it to the target by the end 
@@ -196,6 +204,9 @@ def tandemSweep(setters: List[Callable[[float], Any]],
         if np.abs(prev_settings[i] - end[i]) > tolerance[i]:
             setters[i](end[i])
     
+    if verbose:
+        print("".join(f'\t{val:12g}' for val in end))
+
     return SweepResult.SUCCEEDED
 
 def ezTandemSweep(parms: List[dict], 
@@ -205,7 +216,8 @@ def ezTandemSweep(parms: List[dict],
                   panic_condition: Callable[..., bool] = lambda *args, **kwargs: False,
                   panic_behavior: str | Callable[..., Any] | None = 'zero',
                   handle_exceptions: bool = True, 
-                  ignore_checkpoints: bool = False) -> SweepResult:
+                  ignore_checkpoints: bool = False,
+                  verbose: bool = False) -> SweepResult:
     """
     Wrapper of `tandemSweep` for more human syntax. 
     
@@ -252,6 +264,8 @@ def ezTandemSweep(parms: List[dict],
     ignore_checkpoints : bool, default=False
         whether to comply with checkpoints on each loop iteration for threaded
         execution
+    verbose : bool, default=False
+        whether to print the values of parameters on each step
 
     Returns
     -------
@@ -274,7 +288,9 @@ def ezTandemSweep(parms: List[dict],
             raise ValueError("Invalid parameter name in target.")
         target = [target.get(p, start[i]) for i, p in enumerate(names)]
 
+    if verbose:
+        print("".join(f'\t{col:>12}' for col in names))
     return tandemSweep(setters, start, target, 
                        wait, max_step, min_step, tolerance, 
                        callback, panic_condition, panic_behavior,
-                       handle_exceptions, ignore_checkpoints)
+                       handle_exceptions, ignore_checkpoints, verbose)
