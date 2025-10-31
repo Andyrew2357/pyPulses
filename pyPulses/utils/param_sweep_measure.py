@@ -161,7 +161,7 @@ class ParamSweepMeasure:
     ramp_kwargs     : dict = None                                               # keyword arguments for tandem sweep
 
     # provide these if you want to plot
-    plot_fields     : str | List[int | str]                                     # fields to plot while taking sweep
+    plot_fields     : str | List[int | str] = None                              # fields to plot while taking sweep
     plot_kwargs     : dict = None                                               # keyword arguments passed to sweep recorder
 
     # cleanup steps to perform after the sweep
