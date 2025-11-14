@@ -257,6 +257,7 @@ class ParamSweepMeasure:
             result = np.full(shape = (*self.dimensions, self.num_measurement_cols),
                              fill_value = np.nan, dtype = float)
 
+        self.old_coords = None
         start_time = time.time()
         points_taken = 0
         try:
@@ -381,7 +382,10 @@ class ParamSweepMeasure:
         -------
         np.ndarray
         """
-        return np.array([P() for P in self.coord_vars])
+        
+        if self.old_coords is None:
+            self.old_coords = np.array([P() for P in self.coord_vars])
+        return self.old_coords
 
     def set_coordinates(self, target_coords: np.ndarray):
         """
@@ -404,6 +408,7 @@ class ParamSweepMeasure:
                         self.ramp_tolerance, 
                         ignore_checkpoints = not self.ramp_checkpoints, 
                         **self.ramp_kwargs)
+        self.old_coords = target_coords.copy()
             
     def get_measured_vars(self) -> np.ndarray:
         M = np.full(self.num_measurement_cols, fill_value = np.nan)
@@ -802,8 +807,11 @@ class SweepMeasureProduct(ParamSweepMeasure):
     ----------
     axes: tuple of ndarrays 
         Axes for each parameter
+    serpentine: bool, default=False
+        Whether to use serpentine traversal
     """
-    axes: Tuple[np.ndarray] # axes over which to sweep parameters
+    axes: Tuple[np.ndarray]   # axes over which to sweep parameters
+    serpentine: bool = False  # whether to use serpentine traversal
 
     def __post_init__(self):
         super().__post_init__()
@@ -817,9 +825,27 @@ class SweepMeasureProduct(ParamSweepMeasure):
         self.npoints = self.dimensions.prod()
 
     def _iterator(self):
-        for idx in itertools.product(*[range(d) for d in self.dimensions]):
-            yield np.array(idx), \
-                np.array([self.axes[d][idx[d]] for d in range(self.dim)])
+
+        if self.serpentine:
+            for idx in itertools.product(*[range(d) for d in self.dimensions]):
+                # apply serpentine ordering logic:
+                sidx = []
+                for i in range(self.dim):
+                    if i == 0:
+                        sidx.append(idx[i])
+                    else:
+                        if sum(sidx) % 2 == 0:
+                            sidx.append(idx[i])
+                        else:
+                            sidx.append(self.dimensions[i] - 1 - idx[i])
+
+                yield np.array(sidx), \
+                    np.array([self.axes[d][sidx[d]] for d in range(self.dim)])
+
+        else:
+            for idx in itertools.product(*[range(d) for d in self.dimensions]):
+                yield np.array(idx), \
+                    np.array([self.axes[d][idx[d]] for d in range(self.dim)])
 
 @dataclass(kw_only=True)
 class SweepMeasureParallelepiped(ParamSweepMeasure):
@@ -840,6 +866,7 @@ class SweepMeasureParallelepiped(ParamSweepMeasure):
     origin      : List[float]   # starting corner of the parallelepiped
     endpoints   : np.ndarray    # other corners (fastest direction last)
     shape       : List[int]     # number of points for each axis
+    serpentine  : bool = False  # whether to use serpentine traversal
 
     def __post_init__(self):
         super().__post_init__()
@@ -863,7 +890,25 @@ class SweepMeasureParallelepiped(ParamSweepMeasure):
 
     def _iterator(self):
         A = (self.endpoints - self.origin.reshape(1, -1)).T
-        for idx in itertools.product(*(range(d) for d in self.shape)):
-            idx = np.array(idx)
-            yield idx, (self.origin + \
-                            (A @ (idx / (self.dimensions - 1)))).flatten()
+
+        if self.serpentine:
+            for idx in itertools.product(*(range(d) for d in self.shape)):
+                sidx = []
+                for i in range(self.dim):
+                    if i == 0:
+                        sidx.append(idx[i])
+                    else:
+                        if sum(sidx) % 2 == 0:
+                            sidx.append(idx[i])
+                        else:
+                            sidx.append(self.shape[i] - 1 - idx[i])
+                sidx = np.array(sidx)
+
+                yield sidx, (self.origin + \
+                                (A @ (sidx / (self.dimensions - 1)))).flatten()
+
+        else:
+            for idx in itertools.product(*(range(d) for d in self.shape)):
+                idx = np.array(idx)
+                yield idx, (self.origin + \
+                                (A @ (idx / (self.dimensions - 1)))).flatten()
