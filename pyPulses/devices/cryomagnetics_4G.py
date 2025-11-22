@@ -27,6 +27,7 @@ class cryomagnetics4G(pyvisaDevice):
             "gpib_eos_mode"     : False,
             "gpib_eos_char"     : ord('\n'),
             "gpib_eoi_mode"     : True,
+            "write_termination" : '\n',
 
             'max_retries': 3,
             'retry_delay': 0.1,

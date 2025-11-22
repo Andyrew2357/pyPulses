@@ -339,6 +339,13 @@ class CapBridge():
         self.Vex   = balance.Vex
         self.Cstd  = balance.Cstd
 
+    def reinit(self, balance: BalanceCapBridgeResult, 
+               get_XY: Callable[[], Tuple[float, float]]):
+        self.Kc1, self.Kc2, self.Kr1, self.Kr2, self.Vc0, self.Vr0 = balance.balance_matrix
+        self.get_XY = get_XY
+        self.Vex   = balance.Vex
+        self.Cstd  = balance.Cstd
+        
     def XYtoC(self, X: float, Y: float) -> Tuple[float, float]:
         """
         Convert lock-in measurement to capacitance.
