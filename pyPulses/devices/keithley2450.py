@@ -91,11 +91,12 @@ class keithley2450(pyvisaDevice):
         -------
         V : float
         """
-        source_mode = self.query("SOUR:FUNC?").strip()
-        if source_mode == 'VOLT':
-            return float(self.query("READ? \"defbuffer1\", SOUR"))
-        else:
-            return float(self.query("MEAS:VOLT?"))
+        # source_mode = self.query("SOUR:FUNC?").strip()
+        # if source_mode == 'VOLT':
+        #     return float(self.query("READ? \"defbuffer1\", SOUR"))
+        # else:
+        #     return float(self.query("MEAS:VOLT?"))
+        return float(self.query("MEAS:VOLT?"))
 
     def set_I(self, I: float):
         """

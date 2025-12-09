@@ -11,6 +11,7 @@ up to ~ 50 MHz with 48 bit resolution.
 from .pyvisa_device import pyvisaDevice
 import pyvisa.constants
 from math import floor
+import time
 
 class ad9854(pyvisaDevice):
     """Class interface for communicating with the AD5984 AC box."""
@@ -192,12 +193,14 @@ class ad9854(pyvisaDevice):
         self._write_command(bytes([255, 254, 253, 12, 55, 1, 2, 3, 4, 5, 6]),
                             speedy = False)
         self.info("Perfomed master reset of AC box.")
+        time.sleep(0.1)
 
     def configure_control_register(self):
         """Configure device control registers."""
         self._write_command(bytes([255, 254, 253, 12, 7, 16, 68, 0, 32, 0, 0]),
                             speedy = False)
         self.info("Configured AC box control register.")
+        time.sleep(0.1)
 
     def _write_command(self, command: bytes, speedy: bool = True):
         """Internal method to handle command writing with error recovery."""

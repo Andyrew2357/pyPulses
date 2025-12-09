@@ -332,14 +332,13 @@ class ad5764(pyvisaDevice):
             self.error("Invalid voltage read from Arduino.")
             return None
 
+        self.V[ch] = v
         return v
 
     def _true_query_state(self):
         """Query the actual DAC voltages from the Arduino."""
-
+                
         for ch in range(8):
             v = self._true_query(ch)
-            if v is not None:
-                self.V[ch] = v
-            else:
+            if v is None:
                 self.error(f"Failed to query channel {ch} voltage.")
