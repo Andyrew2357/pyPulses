@@ -120,11 +120,11 @@ class BalanceCapBridgeResult:
         s += f"     Vc0 / Vex: {self.Vc0Vex:.5e}\n"
         s += f"     Vr0 / Vex: {self.Vr0Vex:.5e}\n"
         s += f"             R: {self.R:.5e}\n"
-        s += f"         phase: {self.phase:5e}\n"
+        s += f"         phase: {self.phase:.5f}\n"
         if self.error is not None:
             s += f"       error_X: {self.error[0]:.5e}\n"
             s += f"       error_Y: {self.error[1]:.5e}\n"
-        s += f"           Vex: {self.Vex:.5e}\n"
+        s += f"           Vex: {self.Vex:.5f}\n"
         s += f"          Cstd: {self.Cstd:.5e}"
         return s
 
@@ -182,13 +182,18 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
         Vhi = C.Vstd_range * max(np.sqrt(vr**2 + (vc + dvc)**2), 
                                  np.sqrt(vc**2 + (vr + dvr)**2))
         if Vhi > 2:
-            msg  = f"WARNING: Balance Cancelled.\n"
-            msg += f"Standard voltage will reach {Vhi:.5f} V.\n"
-            msg += f"To override warning, run with ignore_warning = True."
             if C.logger:
-                C.logger.warning(msg)
+                C.logger.warning(
+                    f"WARNING: Balance Cancelled.\n"
+                    f"Standard voltage will reach {Vhi:.5f} V.\n"
+                    f"To override warning, run with ignore_warning = True."
+                )
             else:
-                print(msg)
+                print(
+                    f"WARNING: Balance Cancelled.\n"
+                    f"Standard voltage will reach {Vhi:.5f} V.\n"
+                    f"To override warning, run with ignore_warning = True."
+                )
             return BalanceCapBridgeResult(status = False)
 
     # measure off-balance voltage components at three points 
@@ -277,12 +282,16 @@ def balanceCapBridge(C          : BalanceCapBridgeConfig,
     
     # set excitation to balance point
     if R > C.Vstd_range:
-        msg  = f"WARNING: Balanced Vstd ({R:.5e} V) is outside available range."
-        msg += f"To proceed, run with higher Vstd_range or  lower Vex."
         if C.logger:
-            C.logger.warning(msg)
+            C.logger.warning(
+                f"WARNING: Balanced Vstd ({R:.5e} V) is outside available range."
+                f"To proceed, run with higher Vstd_range or  lower Vex."
+            )
         else:
-            print(msg)
+            print(
+                f"WARNING: Balanced Vstd ({R:.5e} V) is outside available range."
+                f"To proceed, run with higher Vstd_range or  lower Vex."
+            )
 
         if C.logger:
             C.logger.info(out)
