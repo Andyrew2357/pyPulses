@@ -1,5 +1,6 @@
 from .cap_bridge import (BalanceCapBridgeConfig, BalanceCapBridgeResult, 
                          balanceCapBridge, CapBridge)
+from .cap_utils import balanceCapBridgeTwoPoint, TwoPointCapBalance
 from . import extract_gap
 from .kap_bridge import (balanceKapBridge, KapBridgeBalanceResult,
                          KapBridgeContext)
@@ -9,6 +10,7 @@ from .test_gates import GateTest
 
 __all__ =[
     "balanceCapBridge",
+    "balanceCapBridgeTwoPoint"
     "BalanceCapBridgeConfig",
     "BalanceCapBridgeResult",
     "balanceKapBridge",
@@ -18,5 +20,6 @@ __all__ =[
     "KapBridgeBalanceResult",
     "KapBridgeContext",
     "PulsedR",
-    "RPredictor"
+    "RPredictor",
+    "TwoPointCapBalance",
 ]
