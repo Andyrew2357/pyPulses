@@ -14,6 +14,14 @@ def extrap(x: np.ndarray, order: int) -> float:
     poly = np.poly1d(coeff)
     return poly(len(x))
 
+def rth_cov_to_xy_cov(Q_rth: np.ndarray, v: np.ndarray) -> np.ndarray:
+    r = np.sqrt(v[0]**2 + v[1]**2)
+    th = np.arctan2(v[1], v[0])
+    c = np.cos(th)
+    s = np.sin(th)
+    J = np.array([[c, -r * s], [s, r * c]])
+    return J @ Q_rth @ J.T
+
 class KFilter():
     def __init__(self, 
                  A: np.ndarray, 
@@ -55,22 +63,18 @@ class KFilter():
 
         def predicted_gain(A):
             X, Y = A
-            c = (2 * np.pi)**2
-            b = 1 - c
-            Q = p**2 * np.array([
-                [X**2 + c * Y**2, b * X * Y], 
-                [b * X * Y, c * X**2 + Y**2],
-            ])
+            Q = process_noise_coeff**2 * rth_cov_to_xy_cov(
+                np.diag([ (X**2 + Y**2), (2 * np.pi)**2 ]), A)
             return A, np.eye(2), Q
         
         def lockin_response(A, dv):
             dx, dy = dv
             H = np.array([[dx, -dy], [dy, dx]])
-            return H @ A, A
+            return H @ A, H
         
         self.kalman = kalman(
             f_F = predicted_gain,
-            h_h = lockin_response,
+            h_H = lockin_response,
             x = A,
             P = P,
         )
@@ -89,6 +93,8 @@ class KapBridgeContext():
     get_xy                      : Callable[[], Tuple[np.ndarray, np.ndarray]]
     time_const                  : Callable[[float], Any]
     Vstd_range                  : float
+    abs_amp_resolution          : float = 30e-6  # tailored to AD9854
+    phase_resolution            : float = 3.7e-3 # tailored to AD9854
     raw_settle_tc               : float = 5.0
     raw_balance_small_val       : float = 0.01
     raw_balance_step_size       : float = 0.5
@@ -99,9 +105,10 @@ class KapBridgeContext():
     order                       : int = 2
     support                     : int = 3
     process_noise_coeff         : float = 0.01
+    store_failed_balances       : bool = True # Usually the failed ones are still close
     erroff                      : float = 0.0
     errmult                     : float = 2.0
-    iteration_callback          : Callable
+    iteration_callback          : Callable = None
     logger                      : logging.Logger = None
 
     def __post_init__(self):
@@ -126,7 +133,7 @@ class KapBridgeContext():
         self.kfilter.append(x, y)
 
     def extrapolate(self) -> Tuple[float, float]:
-        return self.extrapolate()
+        return self.kfilter.extrapolate()
 
     def log(self, *args):
         if self.logger:
@@ -146,11 +153,12 @@ class KapBridgeBalanceResult():
     errt    : float
     itr     : int
 
-def balanceKapBridge(self, ctx: KapBridgeContext) -> KapBridgeBalanceResult:
+def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
     
     # if we're starting from scratch, perform a raw two-point balance
     if ctx.kfilter is None:        
-        ctx.Vstd(ctx.raw_balance_small_val * ctx.Vstd_range)
+        Vi_mag = ctx.raw_balance_small_val * ctx.Vstd_range
+        ctx.Vstd(Vi_mag)
         ctx.Theta(0.0)
 
         if ctx.raw_balance_pre_callback:
@@ -161,14 +169,14 @@ def balanceKapBridge(self, ctx: KapBridgeContext) -> KapBridgeBalanceResult:
             Theta = ctx.Theta,
             Vout = ctx.raw_balance_get_xy or ctx.get_xy,
             Vstd_range = ctx.Vstd_range,
-            dVstd = ctx.Vstd_range + ctx.raw_balance_step_size,
+            dVstd = ctx.Vstd_range * ctx.raw_balance_step_size,
             settle_time = ctx.raw_settle_tc * ctx.time_const(),
         )
 
         if ctx.raw_balance_post_callback:
             ctx.raw_balance_post_callback()
 
-        if not balance.balanced:
+        if not balance.status:
             raise RuntimeError("Expected balance point falls out of bounds.")
 
         A = np.array([balance.A.real, balance.A.imag])
@@ -184,16 +192,26 @@ def balanceKapBridge(self, ctx: KapBridgeContext) -> KapBridgeBalanceResult:
     ctx.log(f"Projected x = {xb:.5f} V, y = {yb:.5f} V")
 
     rb = np.sqrt(xb**2 + yb**2)
-    thb = np.degrees(np.arctan2(yb, xb))
-    if rb > self.Vstd_range:
-        new_rb = self.Vstd_range
+    thb = np.degrees(np.arctan2(yb, xb)) % 360
+    if rb > ctx.Vstd_range:
+        new_rb = ctx.Vstd_range
         xb *= new_rb / rb
         yb *= new_rb / rb
         rb = new_rb
         ctx.log(f"Truncated to x = {xb:.5f} V, y = {yb:.5f} V")
     
     # iteratively move to the balance point until error bound is met
-    for itr in range(self.max_tries):
+    prev_LX = None
+    prev_LY = None
+    prev_R = np.full((2, 2), np.inf)
+    for itr in range(ctx.max_tries):
+
+        # Round everything based on the resolution of the AC source
+        rb = round(rb / ctx.abs_amp_resolution) * ctx.abs_amp_resolution
+        thb = round(thb / ctx.phase_resolution) * ctx.phase_resolution
+        xb = rb * np.cos(np.deg2rad(thb))
+        yb = rb * np.sin(np.deg2rad(thb))
+
         ctx.log(
             "==================================================\n"
             f"Set r = {rb:.5f} V, th = {thb:.3f}"
@@ -226,16 +244,39 @@ def balanceKapBridge(self, ctx: KapBridgeContext) -> KapBridgeBalanceResult:
             dvy = yb - prev_yb
             R_diff = R + prev_R
 
-
             dL = np.array([dLX, dLY])
             dv = np.array([dvx, dvy])
-            ctx.update(dL, R_diff, dv)
+
+            # Since dv is treated as a certain parameter by the Kalman filter,
+            # we want to account for the uncertainty in its true value due to 
+            # finite resolution by mixing it into the measurement uncertainty.
+
+            A, P = ctx.get_state()
+            Amat = np.array([[A[0], -A[1]], [A[1], A[0]]])
+            R_dv_rth = np.diag([ctx.abs_amp_resolution**2, 
+                             (ctx.phase_resolution * np.pi / 180)**2])
+            R_dv = rth_cov_to_xy_cov(R_dv_rth, np.array([xb, yb])) + \
+                    rth_cov_to_xy_cov(R_dv_rth, np.array([prev_xb, prev_yb]))
+            R_diff_eff = R_diff + Amat @ R_dv @ Amat.T
+
+            ctx.log(
+                "Incorporating new measurement into Kalman filter.\n"
+                f"dL = [{dLX:.5e}, {dLY:.5e}]\n"
+                f"     Covariance: ┏                          ┓\n"
+                f"                 ┃ {f"{R_diff_eff[0,0]:.5e}":<12}"
+                f"{f"{R_diff_eff[0,0]:.5e}":>12} ┃\n"
+                f"                 ┃ {f"{R_diff_eff[0,0]:.5e}":<12}"
+                f"{f"{R_diff_eff[0,0]:.5e}":>12} ┃\n"
+                f"                 ┗                          ┛"
+            )
+
+            ctx.update(dL, R_diff_eff, dv)
 
         ctx.predict()
         A, P = ctx.get_state()
         ctx.log(
-            "Predicted Bridge Gain"
-            f"X = {A[0]:.5e}, Y = {A[1]:.5e}"
+            "Predicted Bridge Gain\n"
+            f"X = {A[0]:.5e}, Y = {A[1]:.5e}\n"
             f"     Covariance: ┏                          ┓\n"
             f"                 ┃ {f"{P[0,0]:.5e}":<12}{f"{P[0,0]:.5e}":>12} ┃\n"
             f"                 ┃ {f"{P[0,0]:.5e}":<12}{f"{P[0,0]:.5e}":>12} ┃\n"
@@ -250,21 +291,45 @@ def balanceKapBridge(self, ctx: KapBridgeContext) -> KapBridgeBalanceResult:
         # store the old state
         prev_xb = xb
         prev_yb = yb
-        prev_LX = LX
-        prev_LY = LY
-        prev_R = R
         prev_rb = rb
 
         # move to the new projected balance point
         xb -= dx
         yb -= dy
         rb = np.sqrt(xb**2 + yb**2)
-        thb = np.degrees(np.arctan2(yb, xb))
+        thb = np.degrees(np.arctan2(yb, xb)) % 360
 
         ctx.log(
             f"Corrected balance at x = {xb:.5f} V, y = {yb:.5f} V\n"
             f"(relative change of {100*(rb/prev_rb - 1):.5f} %)"
         )
+
+        # If the requested change butts up against the resolutions of the AC
+        # source, we terminate to avoid meaningless corrections.
+        if abs(rb - prev_rb) < ctx.abs_amp_resolution and \
+           abs(thb - np.degrees(np.arctan2(prev_yb, prev_xb))) < ctx.phase_resolution:
+            ctx.log(
+                f"Balanced on iteration {itr + 1} due to resolution limit.\n"
+                f"  Previous r = {prev_rb:.5f} V, th = {np.degrees(np.arctan2(prev_yb, prev_xb)):.3f}\n"
+                f"  Current  r = {rb:.5f} V, th = {thb:.3f}\n"
+            )
+
+            # append the new balance point ot the historical data
+            ctx.append(xb, yb)
+
+            return KapBridgeBalanceResult(
+                status  = True,
+                Vb      = (xb, yb),
+                prev_Vb = (prev_xb, prev_yb),
+                L       = (LX, LY),
+                prev_L  = (prev_LX, prev_LY),
+                R       = R,
+                prev_R  = prev_R,
+                A       = A,
+                P       = P,
+                errt    = 0.0,
+                itr     = itr,
+            )
 
         # If the lock-in reading was sufficiently small, terminate.
         # By sufficiently small we mean that it is indistinguishible from 0
@@ -273,16 +338,17 @@ def balanceKapBridge(self, ctx: KapBridgeContext) -> KapBridgeBalanceResult:
         # The threshold is largely set by the first measurement we take, and
         # later we mix it slightly with subsequent measurements.
 
-        LR2 = LX * LX + LY * LY
-        LR = np.sqrt(LR2)
+        LR = np.sqrt(LX * LX + LY * LY)
         L = np.array([[LX], [LY]])
-        LRerr = np.sum(L.T @ R @ L)/ LR2
+        LRerr = np.sqrt(np.sum(L.T @ R @ L)) / LR
 
         err_bound = ctx.erroff + ctx.errmult * LRerr
         if itr == 0:
             errt = err_bound
         else:
             errt = 0.95 * errt + 0.05 * err_bound
+
+        ctx.log(f"Error Tolerance: {errt:.5e} V\n")
 
         if LR < errt:
             ctx.log(
@@ -307,10 +373,20 @@ def balanceKapBridge(self, ctx: KapBridgeContext) -> KapBridgeBalanceResult:
                 errt    = errt,
                 itr     = itr,
             )
+        
+        # store the previous measurement and uncertainty
+        prev_LX = LX
+        prev_LY = LY
+        prev_R = R
 
     # if we reach this point, we have not balanced after max_tries
     else:
         ctx.log(f"Failed to balance after {ctx.max_tries} tries.")
+
+        if ctx.store_failed_balances:
+            # append the new balance point ot the historical data
+            ctx.append(xb, yb)
+
         return KapBridgeBalanceResult(
             status  = False,
             Vb      = (xb, yb),

@@ -18,7 +18,7 @@ class TwoPointCapBalance:
 def balanceCapBridgeTwoPoint(
     Vstd: Callable[[float | None], Any], 
     Theta: Callable[[float | None], Any],
-    Vout: Callable[[], complex | List[float], Tuple[List[float], np.ndarray]],
+    Vout: Callable[[], complex | List[float] | Tuple[List[float], np.ndarray]],
     Vstd_range: float,
     dVstd: complex,
     settle_time: float = 1.0,
@@ -27,7 +27,7 @@ def balanceCapBridgeTwoPoint(
     Lunc = []
     def set_Vstd(x: complex):
         mag = abs(x)
-        phs = np.arctan2d(x.imag, x.real)
+        phs = np.degrees(np.angle(x)) % 360
         Vstd(mag)
         Theta(phs)
 
@@ -35,7 +35,7 @@ def balanceCapBridgeTwoPoint(
         L = Vout()
         if isinstance(L, complex):
             return L
-        elif isinstance(L[0], list):
+        elif isinstance(L[1], np.ndarray):
             Lunc.append(L[1])
             return L[0][0] + 1j * L[0][1]
         else:
@@ -43,7 +43,7 @@ def balanceCapBridgeTwoPoint(
 
     V = Vstd()
     Theta_ = Theta()
-    Vi = V * (np.cos(Theta_) + 1j * np.sin(Theta_))
+    Vi = V * (np.cos(np.deg2rad(Theta_)) + 1j * np.sin(np.deg2rad(Theta_)))
     Li = get_Vout()
     Vf = Vi + dVstd
     set_Vstd(Vf)
