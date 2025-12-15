@@ -30,7 +30,7 @@ class ad9854(pyvisaDevice):
             "baud_rate": 19200,
             "data_bits": 8,
             "parity": pyvisa.constants.Parity.none,
-            "stop_bits": pyvisa.constants.StopBits.one,
+            "stop_bits": pyvisa.constants.StopBits.two,
             "flow_control": pyvisa.constants.VI_ASRL_FLOW_NONE,
             "write_buffer_size": 512,
 
@@ -41,6 +41,7 @@ class ad9854(pyvisaDevice):
             
         super().__init__(self.pyvisa_config, logger, instrument_id)
         
+        time.sleep(2.0)
         self.master_reset()
         self.configure_control_register()
 
@@ -92,31 +93,28 @@ class ad9854(pyvisaDevice):
         """
         return self.freq
 
-    def set_phase(self, chip: int, phase: float):
+    def set_phase(self, phase: float) -> float:
         """
         Set phase offset for specified chip.
         
         Parameters
         ----------
-        chip : int
-            chip number (1 or 2).
         phase : float
             phase offset in degrees.
         """
 
-        if not chip in [1, 2]:
-            self.error(f"Chip ({chip}) must be either 1 or 2.")
-            return
-        
+        chip = 2        
         phase = phase % 360 # Wrap to [0, 360)
         ptw = int(floor(phase / 360 * 2**self.Nphase))
+        if ptw == (2**self.Nphase - 1):
+            ptw = 0
         pw1, pw2 = (ptw >> 8) & 0xFF, ptw & 0xFF
         command = bytes([255, 254, 253, chip, 0, pw1, pw2, 0, 0, 0, 0])
         self._write_command(command)
-        self.phase = phase
+        self.phase = ptw * 360 / 2**self.Nphase
 
         self.info(f"Set phase offset to {phase} degrees.")
-        return phase
+        return self.phase
 
     def get_phase(self) -> float:
         """
@@ -126,8 +124,38 @@ class ad9854(pyvisaDevice):
             phase offset in degrees.
         """
         return self.phase
+    
+    def set_amplitude_unitless(self, chip: int, channel: str, A: float) -> float:
+        if not chip in [1, 2]:
+            self.error(f"Chip ({chip}) must be either 1 or 2.")
+            return
 
-    def set_amplitude(self, chip: int, channel: str, Vrms: float):
+        if channel == 'X':
+            chnum = 8
+        elif channel == 'Y':
+            chnum = 9
+        else:
+            self.error(f"Channel ({channel}) must be either 'X' or 'Y'.")
+            return
+        
+        amplitude = max(0, min(A, 1.0))
+        vtw = int(amplitude * (2**self.Namp - 1))
+        vw1, vw2 = (vtw >> 8) & 0xFF, vtw & 0xFF
+        command = bytes([255, 254, 253, chip, chnum, vw1, vw2, 0, 0, 0, 0])
+        self._write_command(command)
+        self.amplitudes[(chip, channel)] = amplitude
+
+        self.info(f"Set {channel}{chip} amplitude to {amplitude} V rms.")
+        return amplitude
+    
+    def get_amplitude_unitless(self, chip: int, channel: str) -> float | None:
+        if chip not in [1, 2] or channel not in ['X', 'Y']:
+            self.error(f"chip = {chip}, channel = {channel} is invalid.")
+            return
+        
+        return self.amplitudes[(chip, channel)]
+
+    def set_amplitude(self, chip: int, channel: str, Vrms: float) -> float:
         """
         Set amplitude for specified chip and channel.
         
@@ -141,29 +169,10 @@ class ad9854(pyvisaDevice):
             RMS voltage.
         """
 
-        if not chip in [1, 2]:
-            self.error(f"Chip ({chip}) must be either 1 or 2.")
-            return
+        amplitude = self.set_amplitude_unitless(chip, channel, Vrms / self.vmax)
+        return self.vmax * amplitude
 
-        if channel == 'X':
-            chnum = 8
-        elif channel == 'Y':
-            chnum = 9
-        else:
-            self.error(f"Channel ({channel}) must be either 'X' or 'Y'.")
-            return
-        
-        amplitude = max(0, min(Vrms, self.vmax))
-        vtw = int((amplitude / self.vmax) * (2**self.Namp - 1))
-        vw1, vw2 = (vtw >> 8) & 0xFF, vtw & 0xFF
-        command = bytes([255, 254, 253, chip, chnum, vw1, vw2, 0, 0, 0, 0])
-        self._write_command(command)
-        self.amplitudes[(chip, channel)] = amplitude
-
-        self.info(f"Set {channel}{chip} amplitude to {amplitude} V rms.")
-        return amplitude
-
-    def get_amplitude(self, chip, channel) -> float | None:
+    def get_amplitude(self, chip: int, channel: str) -> float | None:
         """
         Parameters
         ----------
@@ -181,7 +190,7 @@ class ad9854(pyvisaDevice):
             self.error(f"chip = {chip}, channel = {channel} is invalid.")
             return
         
-        return self.amplitudes[(chip, channel)]
+        return self.vmax * self.amplitudes[(chip, channel)]
 
     def master_reset(self):
         """
@@ -217,8 +226,9 @@ class ad9854(pyvisaDevice):
 
     def _flush_buffers(self):
         """Clear communication buffers."""
-        try:
-            self.read_raw()
-        except pyvisa.errors.VisaIOError:
-            pass
-        self.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
+        # try:
+        #     self.read_raw()
+        # except pyvisa.errors.VisaIOError:
+        #     pass
+        # self.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
+        pass
