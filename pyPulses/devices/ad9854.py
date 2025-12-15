@@ -232,3 +232,13 @@ class ad9854(pyvisaDevice):
         #     pass
         # self.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
         pass
+
+    def reset_arduino(self):
+        try:
+            self.device.dtr = False
+            time.sleep(0.1)
+            self.device.dtr = True
+            time.sleep(2.0)
+            self.info("Arduino reset via DTR toggle.")
+        except Exception as e:
+            self.warn(f"Failed to reset Arduino via DTR: {e}")
