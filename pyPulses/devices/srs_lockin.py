@@ -311,6 +311,9 @@ class sr860(SRSLockin):
         self.pyvisa_config = {
             "resource_name"     : "USB0::0xB506::0x2000::003931::INSTR",
             "output_buffer_size": 512,
+            "input_buffer_size" : 5 * 1024 * 1024,
+            "timeout"           : 10_000,
+            "read_termination"  : None,
 
             'max_retries': 3,
             'retry_delay': 0.1,
@@ -462,7 +465,7 @@ class sr860(SRSLockin):
                 "Cannot start acquisition while one is already running."
             )
         
-        self.write("CAPTURESTART ONE, IMM")
+        self.write("CAPTURESTART 0,0")
         self._acquisition.running = True
         self.info("Started data acquisition.")
 
@@ -492,10 +495,14 @@ class sr860(SRSLockin):
 
         # wait until enough points are available
         start_time = time.time()
+        bytes_per_sample = {'X': 2, 'XY': 4, 'RT': 4, 'XYRT': 8}[self._acquisition.data_config]
+        expected_time = (self._acquisition.buffer_size * 1024 \
+                         * self._acquisition.sampint / bytes_per_sample)
+        time.sleep(0.9 * expected_time)
         seen = defaultdict(int)
         while True:
             n = int(self.query("CAPTUREBYTES?"))
-            if n >= 1024*self._acquisition.buffer_size:
+            if n >= 1024 * self._acquisition.buffer_size:
                 break
 
             # If no progress is being made, we should stop waiting
@@ -508,31 +515,27 @@ class sr860(SRSLockin):
                 break
             
             # calculate time to wait
-            delay = max((1024*self._acquisition.buffer_size - n) \
-                        * self._acquisition.sampint / 16, 0.01)
+            delay = max((1024 * self._acquisition.buffer_size - n) \
+                        * self._acquisition.sampint / bytes_per_sample, 0.05)
             self.info(f"Waiting for {delay:.2f} s to acquire data.")
             time.sleep(delay)
 
         # end the acquisition and request data
         self._stop_acquisition()
-        for i in range(max_tries):
-            self.write(f"CAPTUREGET? 0,{self._acquisition.buffer_size}")
-            time.sleep((self._acquisition.buffer_size + i - 1) * 10e-3)
-
-            # read in and parse the binary data. Then reshape
-            raw = self.read_raw()
-            if len(raw) != 0:
-                break
-            
-            # If we failed to retrieve the data, we request it again with a
-            # longer delay between the request and raw read.
-        else:
-            self.error(
-                "Failed to retrieve binary data when reading buffer."
+        chunk_kb = 16 # read in 16 kB chunks
+        total_kb = self._acquisition.buffer_size
+        chunks = []
+        for start_kb in range(0, total_kb, chunk_kb):
+            size_kb = min(chunk_kb, total_kb - start_kb)
+            self.write(f"CAPTUREGET? {start_kb},{size_kb}")
+            chunk_data = self.device.read_binary_values(
+                datatype = 'f', 
+                is_big_endian = False,
+                container = np.array,
             )
-            return np.array([])
+            chunks.append(chunk_data)
+        data = np.concatenate(chunks)
 
-        data = parse_IEEE_488_2(raw)
         match self._acquisition.data_config:
             case 'X':
                 data = data.reshape(-1, 1)
@@ -576,8 +579,10 @@ class sr860(SRSLockin):
         # take the acquisition
         self._start_acquisition()
         samps = self._get_buffered_data()
-
-        return samps.mean(axis = 0), np.cov(samps.T)
+        cov = np.cov(samps.T)
+        if self._acquisition.sampint < self._acquisition.tau:
+            cov *= (self._acquisition.tau / self._acquisition.sampint) ** 2
+        return samps.mean(axis = 0), cov
     
     def get_average_series_correlated(self, 
                                       auto_rescale: bool = False, 
