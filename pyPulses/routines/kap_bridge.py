@@ -93,8 +93,8 @@ class KapBridgeContext():
     get_xy                      : Callable[[], Tuple[np.ndarray, np.ndarray]]
     time_const                  : Callable[[float], Any]
     Vstd_range                  : float
-    abs_amp_resolution          : float = 1 / 4096      # tailored to AD9854 (unitless)
-    phase_resolution            : float = 360 / 16384   # tailored to AD9854 (degrees)
+    abs_amp_resolution          : float = 0.5 * 1 / 4096    # tailored to AD9854 (unitless)
+    phase_resolution            : float = 0.5 * 360 / 16384 # tailored to AD9854 (degrees)
     raw_settle_tc               : float = 5.0
     raw_balance_small_val       : float = 0.01
     raw_balance_step_size       : float = 0.5
@@ -342,8 +342,8 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
            abs((thb - np.degrees(np.arctan2(prev_yb, prev_xb))) % 360) < ctx.phase_resolution:
             ctx.log(
                 f"Balanced on iteration {itr + 1} due to resolution limit.\n"
-                f"  Previous r = {prev_rb:.5f} V, th = {np.degrees(np.arctan2(prev_yb, prev_xb)):.3f}\n"
-                f"  Current  r = {rb:.5f} V, th = {thb:.3f}\n"
+                f"  Previous  r = {prev_rb:.5f} V, th = {np.degrees(np.arctan2(prev_yb, prev_xb)):.3f}\n"
+                f"  Requested r = {rb:.5f} V, th = {thb:.3f}\n"
             )
 
             # append the new balance point ot the historical data

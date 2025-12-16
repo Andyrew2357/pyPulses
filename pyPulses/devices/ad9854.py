@@ -82,6 +82,7 @@ class ad9854(pyvisaDevice):
         bytes_ = [(ftw >> (8*i)) & 0xFF for i in range(5, -1, -1)]
         command = bytes([255, 254, 253, 12, 2] + bytes_)
         self._write_command(command)
+        time.sleep(0.2)
         self.freq = f
 
         self.info(f"Set frequency to {f} Hz")
@@ -113,6 +114,7 @@ class ad9854(pyvisaDevice):
         pw1, pw2 = (ptw >> 8) & 0xFF, ptw & 0xFF
         command = bytes([255, 254, 253, chip, 0, pw1, pw2, 0, 0, 0, 0])
         self._write_command(command)
+        time.sleep(0.2)
         self.phase = ptw * 360 / 2**self.Nphase
 
         self.info(f"Set phase offset to {phase} degrees.")
@@ -145,6 +147,7 @@ class ad9854(pyvisaDevice):
         vw1, vw2 = (vtw >> 8) & 0xFF, vtw & 0xFF
         command = bytes([255, 254, 253, chip, chnum, vw1, vw2, 0, 0, 0, 0])
         self._write_command(command)
+        time.sleep(0.2)
         self.amplitudes[(chip, channel)] = amplitude
 
         self.info(f"Set {channel}{chip} amplitude to {amplitude} V rms.")
@@ -204,14 +207,14 @@ class ad9854(pyvisaDevice):
         self._write_command(bytes([255, 254, 253, 12, 55, 1, 2, 3, 4, 5, 6]),
                             speedy = False)
         self.info("Perfomed master reset of AC box.")
-        time.sleep(0.1)
+        time.sleep(0.5)
 
     def configure_control_register(self):
         """Configure device control registers."""
         self._write_command(bytes([255, 254, 253, 12, 7, 16, 68, 0, 32, 0, 0]),
                             speedy = False)
         self.info("Configured AC box control register.")
-        time.sleep(0.1)
+        time.sleep(1.0)
 
     def _write_command(self, command: bytes, speedy: bool = True):
         """Internal method to handle command writing with error recovery."""

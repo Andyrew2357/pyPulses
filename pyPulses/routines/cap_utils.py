@@ -47,6 +47,9 @@ def balanceCapBridgeTwoPoint(
     Li = get_Vout()
     Vf = Vi + dVstd
     set_Vstd(Vf)
+    V = Vstd()
+    Theta_ = Theta()
+    Vf = V * (np.cos(np.deg2rad(Theta_)) + 1j * np.sin(np.deg2rad(Theta_)))
     time.sleep(settle_time)
     Lf = get_Vout()
     A = (Lf - Li) / dVstd
