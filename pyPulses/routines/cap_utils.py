@@ -22,6 +22,7 @@ def balanceCapBridgeTwoPoint(
     Vstd_range: float,
     dVstd: complex,
     settle_time: float = 1.0,
+    fudge: float = 1.0
 ):
 
     Lunc = []
@@ -61,7 +62,7 @@ def balanceCapBridgeTwoPoint(
 
     if len(Lunc) > 0:
         dV_mat = np.array([[dVstd.real, -dVstd.imag], [dVstd.imag, dVstd.real]])
-        P = dV_mat.T @ (Lunc[0] + Lunc[1]) @ dV_mat / abs(dVstd)**4
+        P = fudge * dV_mat.T @ (Lunc[0] + Lunc[1]) @ dV_mat / abs(dVstd)**4
     else:
         P = None
 

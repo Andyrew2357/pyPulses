@@ -85,7 +85,22 @@ class KFilter():
 
     def extrapolate(self) -> Tuple[float, float]:
         return extrap(self.x_hist, self.order), extrap(self.y_hist, self.order)
-    
+
+@dataclass
+class KapBridgeBalanceResult():
+    status  : bool
+    Vb      : Tuple[float, float]
+    prev_Vb : Tuple[float, float]
+    L       : Tuple[float, float]
+    prev_L  : Tuple[float, float]
+    R       : np.ndarray | None
+    prev_R  : np.ndarray | None
+    A       : np.ndarray
+    P       : np.ndarray | None
+    init_L  : Tuple[float, float]
+    errt    : float
+    itr     : int
+
 @dataclass
 class KapBridgeContext():
     Vstd                        : Callable[[float | None], Any]
@@ -101,6 +116,7 @@ class KapBridgeContext():
     raw_balance_get_xy          : Callable[[], Any] | None = None
     raw_balance_pre_callback    : Callable | None = None
     raw_balance_post_callback   : Callable | None = None
+    raw_balance_errmult         : float = 1.0
     max_tries                   : int = 10
     order                       : int = 2
     support                     : int = 3
@@ -112,7 +128,9 @@ class KapBridgeContext():
     logger                      : logging.Logger = None
 
     def __post_init__(self):
-        self.kfilter = None
+        self.kfilter: KFilter | None = None
+        self.prev_result: KapBridgeBalanceResult | None = None
+        self.prev_lockin_reading: float | None = None
 
     def add_kfilter(self, A: np.ndarray, P: np.ndarray):
         self.kfilter = KFilter(A, P, self.support, self.order, self.process_noise_coeff)
@@ -139,20 +157,6 @@ class KapBridgeContext():
         if self.logger:
             self.logger.info(*args)
 
-@dataclass
-class KapBridgeBalanceResult():
-    status  : bool
-    Vb      : Tuple[float, float]
-    prev_Vb : Tuple[float, float]
-    L       : Tuple[float, float]
-    prev_L  : Tuple[float, float]
-    R       : np.ndarray | None
-    prev_R  : np.ndarray | None
-    A       : np.ndarray
-    P       : np.ndarray | None
-    errt    : float
-    itr     : int
-
 def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
     
     # if we're starting from scratch, perform a raw two-point balance
@@ -162,7 +166,7 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
         ctx.Theta(0.0)
 
         if ctx.raw_balance_pre_callback:
-            ctx.raw_balance_pre_callback()
+            ctx.raw_balance_pre_callback(ctx)
 
         balance = balanceCapBridgeTwoPoint(
             Vstd = ctx.Vstd,
@@ -171,10 +175,11 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
             Vstd_range = ctx.Vstd_range,
             dVstd = ctx.Vstd_range * ctx.raw_balance_step_size,
             settle_time = ctx.raw_settle_tc * ctx.time_const(),
+            fudge = ctx.raw_balance_errmult,
         )
 
         if ctx.raw_balance_post_callback:
-            ctx.raw_balance_post_callback()
+            ctx.raw_balance_post_callback(ctx)
 
         if not balance.status:
             raise RuntimeError("Expected balance point falls out of bounds.")
@@ -203,12 +208,13 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
     # iteratively move to the balance point until error bound is met
     prev_LX = None
     prev_LY = None
-    prev_R = np.full((2, 2), np.inf)
+    prev_R = np.diag([np.inf, np.inf])
+    initial_L = None
     for itr in range(ctx.max_tries):
 
         ctx.log(
             "==================================================\n"
-            f"Set r = {rb:.5f} V, th = {thb:.3f}"
+            f"Set r = {rb:.5f}, th = {thb:.3f}"
         )
         ctx.Vstd(rb)
         ctx.Theta(thb)
@@ -224,6 +230,9 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
 
         L, R = ctx.get_xy()
         LX, LY = L
+        if itr == 0:
+            initial_L = (LX, LY)
+        ctx.prev_lockin_reading = (LX, LY)
 
         ctx.log(
             f"Lock-in reading: LX = {LX:.5e}, LY = {LY:.5e}\n"
@@ -313,7 +322,7 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
         thb = np.degrees(np.arctan2(yb, xb)) % 360
 
         ctx.log(
-            f"Corrected balance at x = {xb:.5f} V, y = {yb:.5f} V\n"
+            f"Corrected balance at x = {xb:.5f}, y = {yb:.5f}\n"
             f"(relative change of {100*(rb/prev_rb - 1):.5f} %)"
         )
 
@@ -334,7 +343,7 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
         else:
             errt = 0.95 * errt + 0.05 * err_bound
 
-        ctx.log(f"Error Tolerance: {errt:.5e} V\n")
+        ctx.log(f"Error Tolerance: {errt:.5e}\n")
 
         # If the requested change butts up against the resolutions of the AC
         # source, we terminate to avoid meaningless corrections.
@@ -342,14 +351,14 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
            abs((thb - np.degrees(np.arctan2(prev_yb, prev_xb))) % 360) < ctx.phase_resolution:
             ctx.log(
                 f"Balanced on iteration {itr + 1} due to resolution limit.\n"
-                f"  Previous  r = {prev_rb:.5f} V, th = {np.degrees(np.arctan2(prev_yb, prev_xb)):.3f}\n"
-                f"  Requested r = {rb:.5f} V, th = {thb:.3f}\n"
+                f"  Previous  r = {prev_rb:.5f}, th = {np.degrees(np.arctan2(prev_yb, prev_xb)):.3f}\n"
+                f"  Requested r = {rb:.5f}, th = {thb:.3f}\n"
             )
 
             # append the new balance point ot the historical data
             ctx.append(xb, yb)
 
-            return KapBridgeBalanceResult(
+            result = KapBridgeBalanceResult(
                 status  = True,
                 Vb      = (xb, yb),
                 prev_Vb = (prev_xb, prev_yb),
@@ -359,21 +368,23 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
                 prev_R  = prev_R,
                 A       = A,
                 P       = P,
+                init_L  = initial_L,
                 errt    = errt,
                 itr     = itr,
             )
+            break
 
         if LR < errt:
             ctx.log(
                 f"Balanced on iteration {itr + 1}.\n"
-                f"  Error Tolerance: {errt:.5e} V\n"
-                f"  Lock-in Reading: {LR:.5e} V\n"
+                f"  Error Tolerance: {errt:.5e}\n"
+                f"  Lock-in Reading: {LR:.5e}\n"
             )
 
             # append the new balance point ot the historical data
             ctx.append(xb, yb)
 
-            return KapBridgeBalanceResult(
+            result = KapBridgeBalanceResult(
                 status  = True,
                 Vb      = (xb, yb),
                 prev_Vb = (prev_xb, prev_yb),
@@ -383,9 +394,11 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
                 prev_R  = prev_R,
                 A       = A,
                 P       = P,
+                init_L  = initial_L,
                 errt    = errt,
                 itr     = itr,
             )
+            break
         
         # store the previous measurement and uncertainty
         prev_LX = LX
@@ -400,7 +413,7 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
             # append the new balance point ot the historical data
             ctx.append(xb, yb)
 
-        return KapBridgeBalanceResult(
+        result = KapBridgeBalanceResult(
             status  = False,
             Vb      = (xb, yb),
             prev_Vb = (prev_xb, prev_yb),
@@ -410,6 +423,10 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
             prev_R  = prev_R,
             A       = A,
             P       = P,
+            init_L  = initial_L,
             errt    = errt,
             itr     = itr
         )
+
+    ctx.prev_result = result
+    return result
