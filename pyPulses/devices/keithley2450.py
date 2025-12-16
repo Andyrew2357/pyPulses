@@ -117,11 +117,11 @@ class keithley2450(pyvisaDevice):
         -------
         I : float
         """
-        source_mode = self.query("SOUR:FUNC?").strip()
-        if source_mode == 'CURR':
-            return float(self.query("READ? \"defbuffer1\", SOUR"))
-        else:
-            return float(self.query("MEAS:CURR?"))
+        # source_mode = self.query("SOUR:FUNC?").strip()
+        # if source_mode == 'CURR':
+        #     return float(self.query("READ? \"defbuffer1\", SOUR"))
+        # else:
+        return float(self.query("MEAS:CURR?"))
 
     def set_compliance(self, val: float):
         """

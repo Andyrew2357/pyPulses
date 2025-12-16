@@ -93,8 +93,8 @@ class KapBridgeContext():
     get_xy                      : Callable[[], Tuple[np.ndarray, np.ndarray]]
     time_const                  : Callable[[float], Any]
     Vstd_range                  : float
-    abs_amp_resolution          : float = 30e-6  # tailored to AD9854
-    phase_resolution            : float = 3.7e-3 # tailored to AD9854
+    abs_amp_resolution          : float = 1 / 4096      # tailored to AD9854 (unitless)
+    phase_resolution            : float = 360 / 16384   # tailored to AD9854 (degrees)
     raw_settle_tc               : float = 5.0
     raw_balance_small_val       : float = 0.01
     raw_balance_step_size       : float = 0.5
@@ -206,18 +206,18 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
     prev_R = np.full((2, 2), np.inf)
     for itr in range(ctx.max_tries):
 
-        # Round everything based on the resolution of the AC source
-        rb = round(rb / ctx.abs_amp_resolution) * ctx.abs_amp_resolution
-        thb = round(thb / ctx.phase_resolution) * ctx.phase_resolution
-        xb = rb * np.cos(np.deg2rad(thb))
-        yb = rb * np.sin(np.deg2rad(thb))
-
         ctx.log(
             "==================================================\n"
             f"Set r = {rb:.5f} V, th = {thb:.3f}"
         )
         ctx.Vstd(rb)
         ctx.Theta(thb)
+
+        # Have to properly round everything based on the resolution of the AC source
+        rb = ctx.Vstd()
+        thb = ctx.Theta()
+        xb = rb * np.cos(np.deg2rad(thb))
+        yb = rb * np.sin(np.deg2rad(thb))
 
         if ctx.iteration_callback:
             ctx.iteration_callback(itr, ctx)
@@ -233,6 +233,8 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
             f"                 ┗                          ┛"
         )
 
+        pA = None
+        pP = None
         if not itr == 0:
             # We gain more information about the effective gain of the bridge
             # setup as we take more measurements. Here we update the Kalman
@@ -267,13 +269,24 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
                 f"{f"{R_diff_eff[0,0]:.5e}":>12} ┃\n"
                 f"                 ┃ {f"{R_diff_eff[0,0]:.5e}":<12}"
                 f"{f"{R_diff_eff[0,0]:.5e}":>12} ┃\n"
-                f"                 ┗                          ┛"
+                f"                 ┗                          ┛\n"
+                f"Size of Uncertainties:\n"
+                f"              P: {P[0,0]:.5e}, {P[1,1]:.5e}\n"
+                f"         R_diff: {R_diff[0,0]:.5e}, {R_diff[1,1]:.5e}\n"
+                f"     R_diff_eff: {R_diff_eff[0,0]:.5e}, {R_diff_eff[1,1]:.5e}"
             )
 
             ctx.update(dL, R_diff_eff, dv)
+            pA = A
+            pP = P
 
         ctx.predict()
         A, P = ctx.get_state()
+        if pA is not None:
+            Amag = np.sqrt(pA[0]*pA[0] + pA[1]*pA[1])
+            dAmag = np.sqrt((A[0]-pA[0])**2 + (A[1]-pA[1])**2)
+            ctx.log(f"Relative change in gain magnitude: {(dAmag / Amag * 100):.5f} %")
+
         ctx.log(
             "Predicted Bridge Gain\n"
             f"X = {A[0]:.5e}, Y = {A[1]:.5e}\n"
@@ -304,10 +317,29 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
             f"(relative change of {100*(rb/prev_rb - 1):.5f} %)"
         )
 
+        # If the lock-in reading was sufficiently small, terminate.
+        # By sufficiently small we mean that it is indistinguishible from 0
+        # within the uncertainty of the measurement.
+
+        # The threshold is largely set by the first measurement we take, and
+        # later we mix it slightly with subsequent measurements.
+
+        LR = np.sqrt(LX * LX + LY * LY)
+        L = np.array([[LX], [LY]])
+        LRerr = np.sqrt(np.sum(L.T @ R @ L)) / LR
+
+        err_bound = ctx.erroff + ctx.errmult * LRerr
+        if itr == 0:
+            errt = err_bound
+        else:
+            errt = 0.95 * errt + 0.05 * err_bound
+
+        ctx.log(f"Error Tolerance: {errt:.5e} V\n")
+
         # If the requested change butts up against the resolutions of the AC
         # source, we terminate to avoid meaningless corrections.
         if abs(rb - prev_rb) < ctx.abs_amp_resolution and \
-           abs(thb - np.degrees(np.arctan2(prev_yb, prev_xb))) < ctx.phase_resolution:
+           abs((thb - np.degrees(np.arctan2(prev_yb, prev_xb))) % 360) < ctx.phase_resolution:
             ctx.log(
                 f"Balanced on iteration {itr + 1} due to resolution limit.\n"
                 f"  Previous r = {prev_rb:.5f} V, th = {np.degrees(np.arctan2(prev_yb, prev_xb)):.3f}\n"
@@ -327,28 +359,9 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
                 prev_R  = prev_R,
                 A       = A,
                 P       = P,
-                errt    = 0.0,
+                errt    = errt,
                 itr     = itr,
             )
-
-        # If the lock-in reading was sufficiently small, terminate.
-        # By sufficiently small we mean that it is indistinguishible from 0
-        # within the uncertainty of the measurement.
-
-        # The threshold is largely set by the first measurement we take, and
-        # later we mix it slightly with subsequent measurements.
-
-        LR = np.sqrt(LX * LX + LY * LY)
-        L = np.array([[LX], [LY]])
-        LRerr = np.sqrt(np.sum(L.T @ R @ L)) / LR
-
-        err_bound = ctx.erroff + ctx.errmult * LRerr
-        if itr == 0:
-            errt = err_bound
-        else:
-            errt = 0.95 * errt + 0.05 * err_bound
-
-        ctx.log(f"Error Tolerance: {errt:.5e} V\n")
 
         if LR < errt:
             ctx.log(

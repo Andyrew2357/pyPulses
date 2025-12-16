@@ -41,8 +41,10 @@ class ad9854(pyvisaDevice):
             
         super().__init__(self.pyvisa_config, logger, instrument_id)
         
+        self.reset_arduino()
         time.sleep(2.0)
         self.master_reset()
+        time.sleep(1.0)
         self.configure_control_register()
 
         # Device parameters
