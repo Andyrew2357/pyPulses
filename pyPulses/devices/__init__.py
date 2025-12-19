@@ -23,8 +23,9 @@ from .keithley2700 import keithley2700
 from .mso44 import mso44
 from .pcm1704 import pcm1704
 from .pid_dcbox import PIDbox
+from .pulse_pair import pulsePair
 from .srs_lockin import (sr830, sr844, sr850, sr860, sr865a)
-from .watd_scope import watdScope
+from .wfatd import wfAverager, wfBalance, wfJump, wfSlope
 
 __all__ = [
     "ad5764",
@@ -49,12 +50,16 @@ __all__ = [
     "mso44",
     "pcm1704",
     "PIDbox",
+    "pulsePair",
     "sr830",
     "sr844",
     "sr850",
     "sr860",
     "sr865a",
-    "watdScope"
+    "wfAverager", 
+    "wfBalance", 
+    "wfJump", 
+    "wfSlope",
 ]
 
 visa_dll = 'C:/Windows/System32/visa64.dll'

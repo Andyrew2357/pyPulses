@@ -5,9 +5,9 @@ It supports measurements of the initial slope for balancing pulse heights and
 measurements of the integrated 'settled' response for balancing discharge pulses.
 """
 
-from ._registry import DeviceRegistry
-from .abstract_device import abstractDevice
-from .mso44 import mso44
+from ..pyPulses.devices._registry import DeviceRegistry
+from ..pyPulses.devices.abstract_device import abstractDevice
+from ..pyPulses.devices.mso44 import mso44
 from typing import Tuple
 import numpy as np
 import time

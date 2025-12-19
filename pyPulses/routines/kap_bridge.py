@@ -1,7 +1,7 @@
-from ..utils import kalman
+from ..thread_job import _checkpoint
+from ..utils.kalman import kalman
 from .cap_utils import balanceCapBridgeTwoPoint, TwoPointCapBalance
 
-import time
 import logging
 from collections import deque
 from dataclasses import dataclass
@@ -211,6 +211,7 @@ def balanceKapBridge(ctx: KapBridgeContext) -> KapBridgeBalanceResult:
     prev_R = np.diag([np.inf, np.inf])
     initial_L = None
     for itr in range(ctx.max_tries):
+        _checkpoint()
 
         ctx.log(
             "==================================================\n"

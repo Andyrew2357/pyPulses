@@ -24,6 +24,7 @@ class dtgDifferentialPair():
         self.chx = dtg.get_channel(chx)
         self.chy = dtg.get_channel(chy)
 
+    # Enabled
     def enable(self, on: bool):
         """
         Enable or disable the pair output
@@ -36,32 +37,61 @@ class dtgDifferentialPair():
         self.dtg.chan_output(self.chx, on)
         self.dtg.chan_output(self.chy, on)
 
+    # Lead Delay
     @property
     def ldelay(self) -> float:
         """Lead delay of `chx`"""
         if self.chx.ldelay is None:
             return self.dtg.lead_delay(self.chx)
-        else:
-            return self.chx.ldelay
+
+        return self.chx.ldelay
         
     @ldelay.setter
     def ldelay(self, l: float):
-        toff = self.toff
+        toff = self.ldoff
         self.dtg.lead_delay(self.chx, l)
         self.dtg.lead_delay(self.chy, l + toff)
 
     @property
-    def toff(self) -> float:
+    def ldoff(self) -> float:
         """Lead delay of `chy` relative to `chx`"""
         if self.chy.ldelay is None:
             self.dtg.lead_delay(self.chy)
 
-        return self.chy.ldelay - self.chy.ldelay
+        return self.chy.ldelay - self.ldelay
     
-    @toff.setter
-    def toff(self, dt: float):
+    @ldoff.setter
+    def ldoff(self, dt: float):
         self.dtg.lead_delay(self.chy, self.ldelay + dt)
 
+    # Trail Delays
+    @property
+    def tdelay(self) -> float:
+        """Trail delay of `chx`"""
+        if self.chx.tdelay is None:
+            return self.dtg.trail_delay(self.chx)
+
+        return self.chx.tdelay
+        
+    @tdelay.setter
+    def tdelay(self, t: float):
+        toff = self.tdoff
+        self.dtg.trail_delay(self.chx, t)
+        self.dtg.trail_delay(self.chy, t + toff)
+
+    @property
+    def tdoff(self) -> float:
+        """Trail delay of `chy` relative to `chx`"""
+        if self.chy.tdelay is None:
+            self.dtg.trail_delay(self.chy)
+
+        return self.chy.tdelay - self.tdelay
+    
+    @ldoff.setter
+    def tdoff(self, dt: float):
+        self.dtg.trail_delay(self.chy, self.tdelay + dt)
+
+    # Width
     @property
     def width(self) -> float:
         """width of the `chx` pulse"""
@@ -91,6 +121,7 @@ class dtgDifferentialPair():
         self.dtg.pulse_width(self.chx, self.width)
         self.dtg.pulse_width(self.chy, self.width + dw)
 
+    # Polarity
     @property
     def polarity(self) -> bool:
         """polarity of `chx`; `chy` is opposite"""
@@ -101,6 +132,7 @@ class dtgDifferentialPair():
         self.dtg.polarity(self.chx, pos)
         self.dtg.polarity(self.chy, not pos)
 
+    # X Levels
     @property
     def Xlow(self) -> float:
         """logical low level of `chx`"""
@@ -125,6 +157,7 @@ class dtgDifferentialPair():
     def Xhigh(self, V: float):
         self.dtg.high_level(self.chx, V)
 
+    # Y Levels
     @property
     def Ylow(self) -> float:
         """logical low level of `chy`"""

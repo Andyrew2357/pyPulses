@@ -581,7 +581,7 @@ class sr860(SRSLockin):
         samps = self._get_buffered_data()
         cov = np.cov(samps.T)
         if self._acquisition.sampint < self._acquisition.tau:
-            cov *= (self._acquisition.tau / self._acquisition.sampint) ** 2
+            cov *= (self._acquisition.tau / self._acquisition.sampint)
         return samps.mean(axis = 0), cov
     
     def get_average_series_correlated(self, 
