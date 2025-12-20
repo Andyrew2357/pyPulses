@@ -6,6 +6,7 @@ DTG channels in software to make them behave in the appropriate manner
 from .dtg import DTG
 from .dtg_utils import Channel
 
+# TODO NEED TO MODIFY THIS BECAUSE OF WEIRDNESS DUE TO LHOLD AND THOLD TYPE STUFF
 class dtgDifferentialPair():
     """Differential pair for use with Oliver's pulse shaper box"""
     def __init__(self, dtg: DTG, chx: str | Channel, chy: str | Channel):
@@ -125,6 +126,9 @@ class dtgDifferentialPair():
     @property
     def polarity(self) -> bool:
         """polarity of `chx`; `chy` is opposite"""
+        if self.chx.polarity is None:
+            return self.dtg.polarity(self.chx)
+        
         return self.chx.polarity
     
     @polarity.setter

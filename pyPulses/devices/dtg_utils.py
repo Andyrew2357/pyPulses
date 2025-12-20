@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import List
 from bitarray import bitarray
 
+# TODO NEED TO MODIFY THIS BECAUSE OF WEIRDNESS DUE TO LHOLD AND THOLD TYPE STUFF
 @dataclass
 class Channel:
     name : str
@@ -63,6 +64,7 @@ class Channel:
     
     @width.setter
     def width(self, W: float):
+        W = max(W, self.min_width)
         if self._ldelay is not None:
             self._tdelay = self._ldelay + W
         self._width = W

@@ -4,12 +4,16 @@ from .wfatd import wfAverager
 from typing import Any, Callable
 import numpy as np
 
+# TODO NEED TO MODIFY THIS BECAUSE OF WEIRDNESS DUE TO LHOLD AND THOLD TYPE STUFF
 class pulsePair(abstractDevice):
     def __init__(self,
         timing: dtgDifferentialPair, 
         X: Callable[[float], Any] | Callable[[], float],
-        Y: Callable[[float], Any] | Callable[[], float],    
+        Y: Callable[[float], Any] | Callable[[], float],
+        logical_low: float = 0.0,
+        logical_high: float = 2.0,
     ):
+        super().__init__()
         self._timing = timing
         self._X = X
         self._Y = Y
@@ -22,6 +26,19 @@ class pulsePair(abstractDevice):
             True:  {'dT0X': 0.0, 'dT0Y': 0.0, 'dT1X': 0.0, 'dT1Y': 0.0},
             False: {'dT0X': 0.0, 'dT0Y': 0.0, 'dT1X': 0.0, 'dT1Y': 0.0},
         }
+
+        self.logical_low = logical_low
+        self.logical_high = logical_high
+
+    def enable(self, on: bool | None = None) -> bool | None:
+        if on is None:
+            return self._timing.enable
+        if on:
+            self._timing.Xlow = self.logical_low
+            self._timing.Xhigh = self.logical_high
+            self._timing.Ylow = self.logical_low
+            self._timing.Yhigh = self.logical_high
+        self._timing.enable(on)
 
     def T0(self, t: float | None = None) -> float | None:
         dT0X = self._tuning[self._timing.polarity]['dT0X']

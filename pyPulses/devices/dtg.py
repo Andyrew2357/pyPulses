@@ -426,6 +426,7 @@ class DTG(pyvisaDevice):
         self.write(f"TBAS:COUNt {N}")
         self.info(f"Set burst count to {N}.")
 
+    # TODO NEED TO MODIFY THIS BECAUSE OF WEIRDNESS DUE TO LHOLD AND THOLD TYPE STUFF
     # ======================= PHYSICAL CHANNEL SETTINGS =======================
 
     # --------------------- Pulse Generator Mode Specific ----------------------
@@ -627,7 +628,7 @@ class DTG(pyvisaDevice):
         t = min(ldelay + 1.0 / (f * prate), max(ldelay + ch.min_width, t))
         ch.ldelay = t
         self.write(f"{ch}:TDELay {t}")
-        self.info(f"Set tral delay on channel {ch._id()} to {t} s.")
+        self.info(f"Set trail delay on channel {ch._id()} to {t} s.")
         return t
 
     # --------------------------------------------------------------------------
