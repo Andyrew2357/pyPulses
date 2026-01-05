@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from typing import List
 from bitarray import bitarray
 
-# TODO NEED TO MODIFY THIS BECAUSE OF WEIRDNESS DUE TO LHOLD AND THOLD TYPE STUFF
+from .pyvisa_device import pyvisaDevice
+
 @dataclass
 class Channel:
     name : str
@@ -19,18 +20,7 @@ class Channel:
     min_V_diff: float
     min_width : float
     rise_time : float
-
-    def __post_init__(self):
-        self.enabled    : bool    = None
-        self.polarity   : bool    = None
-        self._high      : float   = None
-        self._low       : float   = None
-        self._width     : float   = None
-        self._ldelay    : float   = None
-        self._tdelay    : float   = None
-        self.prate      : float   = None
-        self.termination_Z: float = None
-        self.termination_V: float = None
+    dtg: pyvisaDevice
 
     def __str__(self) -> str:
         return f"PGEN{self.slot}{self.mf}:CH{self.ch}"
@@ -38,56 +28,124 @@ class Channel:
     def _id(self) -> str:
         return f"{self.mf}{self.slot}{self.ch}"
     
-    @property
-    def high(self) -> float | None:
-        return self._high
+    def query(self, *args, **kwargs):
+        return self.dtg.query(*args, **kwargs)
     
-    @high.setter
-    def high(self, V: float):
-        if self._low is not None:
-            self._low = min(V - self.min_V_diff, self._low)
-        self._high = V
+    def write(self, *args, **kwargs):
+        self.dtg.write(*args, **kwargs)
 
-    @property
-    def low(self) -> float | None:
-        return self._low
-    
-    @low.setter
-    def low(self, V: float):
-        if self._high is not None:
-            self._high = max(V + self.min_V_diff, self._high)
-        self._low = V
+    def info(self, *args, **kwargs):
+        self.dtg.info(*args, **kwargs)
 
-    @property
-    def width(self) -> float | None:
-        return self._width
+    def warn(self, *args, **kwargs):
+        self.dtg.warn(*args, **kwargs)
     
-    @width.setter
-    def width(self, W: float):
-        W = max(W, self.min_width)
-        if self._ldelay is not None:
-            self._tdelay = self._ldelay + W
-        self._width = W
-    
-    @property
-    def ldelay(self) -> float | None:
-        return self._ldelay
-    
-    @ldelay.setter
-    def ldelay(self, l: float):
-        if self._width is not None:
-            self._tdelay = l + self._width
-        self._ldelay = l
+    def high(self, V: float | None = None) -> float | None:
+        if V is None:
+            return float(self.query(f"{self}:HIGH?"))
+        V = min(self.max_V, max(self.min_V + self.min_V_diff, V))
+        self.write(f"{self}:HIGH {V}")
+        self.info(f"Set logical high level of channel {self._id()} to {V} V.")
 
-    @property
-    def tdelay(self) -> float | None:
-        return self._tdelay
-    
-    @tdelay.setter
-    def tdelay(self, t: float):
-        if self._ldelay is not None:
-            self._width = t - self._ldelay
-        self._tdelay = t
+    def low(self, V: float | None = None) -> float | None:
+        if V is None:
+            return float(self.query(f"{self}:LOW?"))
+        V = min(self.max_V - self.min_V_diff, max(self.min_V, V))
+        self.write(f"{self}:LOW {V}")
+        self.info(f"Set logical low level of channel {self._id()} to {V} V.")
+
+    def lhold(self, mode: str | None = None) -> str | None:
+        if mode is None:
+            return self.query(f"{self}:LHOLD?").strip()
+        if mode not in ['LDEL', 'PHAS']:
+            self.warn('Invalid request for LHOLD. Try `LDEL` or `PHAS`.')
+            return
+        self.write(f"{self}:LHOLD {mode}")
+        self.info(f"Set lead hold mode of channel {self._id()} to {mode}.")
+
+    def thold(self, mode: str | None = None) -> str | None:
+        if mode is None:
+            return self.query(f"{self}:THOLD?").strip()
+        if mode not in ['TDEL', 'DCYC', 'WIDT']:
+            self.warn('Invalid request for THOLD. Try `TDEL`, `DCYC`, or `WIDT`.')
+            return
+        self.write(f"{self}:THOLD {mode}")
+        self.info(f'Set trail hold mode of channel {self._id()} to {mode}.')
+
+    def width(self, W: float | None) -> float | None:
+        if W is None:
+            return float(self.query(f"{self}:WIDTh?"))
+        self.write(f"{self}:WIDTh {W}")
+        self.info(f"Set pulse width of channel {self._id()} to {W} s.")
+
+    def ldelay(self, l: float | None = None) -> float | None:
+        if l is None:
+            return float(self.query(f"{self}:LDELay?"))
+        self.write(f"{self}:LDELay {l}")
+        self.info(f"Set lead delay on channel {self._id()} to {l} s.")
+
+    def tdelay(self, t: float | None = None) -> float | None:
+        if t is None:
+            return float(self.query(f"{self}:TDELay?"))
+        self.write(f"{self}:TDELay {t}")
+        self.info(f"Set trail delay on channel {self._id()} to {t} s.")
+
+    def prate(self, prate: float | None = None) -> float | None:        
+        
+        rel = {
+            'NORM': 1.0, 
+            'HALF': 0.5, 
+            'QUAR': 0.25, 
+            'EIGH': 0.125, 
+            'SIXT': 0.0625, 
+            'OFF': 0
+        }
+        
+        if prate is None:
+            return rel[self.query(f"{self}:PRATE?").strip()]
+
+        if prate >= 1.0:
+            val = 'NORM'
+        elif prate >= 0.5:
+            val = 'HALF'
+        elif prate >= 0.25:
+            val = 'QUAR'
+        elif prate >= 0.125:
+            val = 'EIGH'
+        else:
+            val = 'OFF'
+
+        self.write(f"{self}:PRATE {val}")
+        self.info(f"Set relative rate of channel {self._id()} to {rel[val]}")
+
+    def polarity(self, pos: bool | None = None) -> bool | None:
+        if pos is None:
+            return self.query(f"{self}:POLarity?").strip() == 'NORM'
+        self.write(f"{self}:POLarity {'NORM' if pos else 'INV'}")
+        self.info(f"Set polarity of channel {self._id()} to {'posi' if pos else 'nega'}tive.")
+
+    def enabled(self, on: bool | None = None) -> bool | None:
+        if on is None:
+            return int(self.query(f"{self}:OUTPut?")) == 1
+        self.write(f"{self}:OUTPut {'ON' if on else 'OFF'}")
+        self.info(f"{'En' if on else 'Dis'}abled channel {self._id()}.")
+
+    def termination_Z(self, Z: float | None = None) -> float | None:
+        if Z is None:
+            return float(self.query(f"{self}:TIMPedance?"))
+        if Z >= 1e3:
+            Z = 1e3
+        else:
+            Z = 50
+        self.write(f"{self}:TIMPedance {Z}")
+        self.info(f"Set termination impedance on channel {self._id()} to {Z} Ohm.")
+
+    def termination_V(self, V: float | None = None) -> float | None:
+        if V is None:
+            return float(self.query(f"{self}:TVOLtage?"))
+        V = max(-2.0, min(5.0, V))
+        self.write(f"{self}:TVOLtage {V}")
+        self.info(f"Set termination voltage on channel {self._id()} to {V} V.")
 
 class Group():
     """Logical bus corresponding to physical channels of the device"""

@@ -432,7 +432,7 @@ class DTG(pyvisaDevice):
     # --------------------- Pulse Generator Mode Specific ----------------------
 
     @_mode_required("PULS")
-    def prate(self, ch: str | Channel, prate: float = None) -> float:
+    def prate(self, ch: str | Channel, prate: float = None) -> float | None:
         """
         Set or query the relative rate of a channel, rounded appropriately
         
@@ -449,40 +449,7 @@ class DTG(pyvisaDevice):
         prate : float
         """
 
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-        
-        relrates = {
-            'NORM': 1.0, 
-            'HALF': 0.5, 
-            'QUAR': 0.25, 
-            'EIGH': 0.125, 
-            'SIXT': 0.0625, 
-            'OFF': 0
-        }
-
-        if prate is None:
-            ch.prate = relrates[self.query(f"{ch}:PRATE?").strip()]
-            return ch.prate
-        
-        if prate >= 1.0:
-            val = 'NORM'
-        elif prate >= 0.5:
-            val = 'HALF'
-        elif prate >= 0.25:
-            val = 'QUAR'
-        elif prate >= 0.125:
-            val = 'EIGH'
-        elif prate >= 0.0625:
-            val = 'SIXT'
-        else:
-            val = 'OFF'
-
-        ch.prate = relrates[val]
-        self.write(f"{ch}:PRATE {val}")
-        self.info(f"Set relative rate of channel {ch._id()} to {ch.prate}.")
-        return ch.prate
+        return self.get_channel(ch).prate(prate)
 
     @_mode_required("PULS")
     def polarity(self, ch: str | Channel, pos: bool = None) -> bool | None:
@@ -502,23 +469,46 @@ class DTG(pyvisaDevice):
             only returns if `pos` is None.
         """
 
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-        
-        if pos is None:
-            ch.polarity = self.query(f"{ch}:POLarity?") == 'NORM\n'
-            return ch.polarity
-        
-        ch.polarity = pos
-        self.write(f"{ch}:POLarity {'NORM' if pos else 'INV'}")
-        self.info(
-            f"Set polarity of channel {ch._id()} to "
-            f"{'posi' if pos else 'nega'}tive."
-        )
+        return self.get_channel(ch).polarity(pos)
+    
+    @_mode_required("PULS")
+    def lead_hold(self, ch: str | Channel, mode: str | None = None) -> str | None:
+        """
+        Set or query the lead hold parameter of a channel.
+
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        mode : str, optional
+            One of `LDEL` or `PHAS`.
+
+        Returns
+        -------
+        lhold : str or None
+        """
+        return self.get_channel(ch).lhold(mode)
+    
+    @_mode_required("PULS")
+    def trail_hold(self, ch: str | Channel, mode: str | None = None) -> str | None:
+        """
+        Set or query the trail hold parameter of a channel.
+
+        Parameters
+        ----------
+        ch : str or Channel
+            target channel.
+        mode : str, optional
+            One of `TDEL`, `DCYC`, or `WIDT`.
+
+        Returns
+        -------
+        thold : str or None
+        """
+        return self.get_channel(ch).thold(mode)
 
     @_mode_required("PULS")
-    def pulse_width(self, ch: str | Channel, W: float = None) -> float:
+    def pulse_width(self, ch: str | Channel, W: float = None) -> float | None:
         """
         Set or query the pulse width of a channel.
 
@@ -534,29 +524,10 @@ class DTG(pyvisaDevice):
         pulse width : float
         """
 
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-        
-        if W is None:
-            ch.width = float(self.query(f"{ch}:WIDTh?"))
-            return ch.width
-
-        f = self._frequency
-        if f is None:
-            f = self.frequency()
-        prate = ch.prate
-        if prate is None:
-            prate = self.prate(ch)
-
-        W = min(1.0 / (f * prate), max(ch.min_width, W))
-        ch.width = W
-        self.write(f"{ch}:WIDTh {W}")
-        self.info(f"Set pulse width of channel {ch._id()} to {W} s.")
-        return W
+        return self.get_channel(ch).width(W)
 
     @_mode_required("PULS")
-    def lead_delay(self, ch: str | Channel, l: float = None) -> float:
+    def lead_delay(self, ch: str | Channel, l: float = None) -> float | None:
         """
         Set or query the lead delay of a channel.
 
@@ -572,26 +543,10 @@ class DTG(pyvisaDevice):
         lead_delay : float
         """
 
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-        
-        if l is None:
-            ch.ldelay = float(self.query(f"{ch}:LDELay?"))
-            return ch.ldelay
-        
-        f = self._frequency
-        if f is None:
-            f = self.frequency()
-
-        l = min(1.0 / f, max(0.0, l))
-        ch.ldelay = l
-        self.write(f"{ch}:LDELay {l}")
-        self.info(f"Set lead delay on channel {ch._id()} to {l} s.")
-        return l
+        return self.get_channel(ch).ldelay(l)
     
     @_mode_required("PULS")
-    def trail_delay(self, ch: str | Channel, t: float = None) -> float:
+    def trail_delay(self, ch: str | Channel, t: float = None) -> float | None:
         """
         Set or query the trail delay of a channel.
 
@@ -607,34 +562,11 @@ class DTG(pyvisaDevice):
         trail_delay : float
         """
 
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-        
-        if t is None:
-            ch.tdelay = float(self.query(f"{ch}:TDELay?"))
-            return ch.tdelay
-        
-        f = self._frequency
-        if f is None:
-            f = self.frequency()
-        prate = ch.prate
-        if prate is None:
-            prate = self.prate(ch)
-        ldelay = ch.ldelay
-        if ldelay is None:
-            ldelay = self.lead_delay(ch)
-
-        t = min(ldelay + 1.0 / (f * prate), max(ldelay + ch.min_width, t))
-        ch.ldelay = t
-        self.write(f"{ch}:TDELay {t}")
-        self.info(f"Set trail delay on channel {ch._id()} to {t} s.")
-        return t
+        return self.get_channel(ch).tdelay(t)
 
     # --------------------------------------------------------------------------
 
-    def low_level(self, ch: str | Channel, V: float = None, force: bool = False
-                  ) -> float:
+    def low_level(self, ch: str | Channel, V: float = None) -> float | None:
         """
         Set or query the logical low level of a channel.
 
@@ -644,38 +576,15 @@ class DTG(pyvisaDevice):
             target channel
         V : float, optional
             logical low level in volts.
-        force : bool, default=False
-            force set the level (can change the other logical level).
         
         Returns
         -------
         logical_low : float
         """
 
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-        
-        if V is None:
-            ch.low = float(self.query(f"{ch}:LOW?"))
-            return ch.low
-        
-        if force:
-            h = ch.max_V - ch.min_V_diff
-        else:
-            high = ch.high 
-            if ch.high is None:
-                high = self.high_level(ch)
-            h = high - ch.min_V_diff
+        return self.get_channel(ch).low(V)
 
-        V = min(h, max(ch.min_V, V))
-        ch.low = V
-        self.write(f"{ch}:LOW {V}")
-        self.info(f"Set logical low level of channel {ch._id()} to {V} V.")
-        return V
-
-    def high_level(self, ch: str | Channel, V: float = None, force: bool = False
-                   ) -> float:
+    def high_level(self, ch: str | Channel, V: float = None) -> float | None:
         """
         Set or query the logical high level of a channel.
 
@@ -685,35 +594,13 @@ class DTG(pyvisaDevice):
             target channel.
         V : float, optional
             logical high level in volts.
-        force : bool, default=False
-            force set the level (can change the other logical level).
 
         Returns
         -------
         logical_high : float
         """
 
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-        
-        if V is None:
-            ch.high = float(self.query(f"{ch}:HIGH?"))
-            return ch.high
-        
-        if force:
-            l = ch.min_V + ch.min_V_diff
-        else:
-            low = ch.low
-            if low is None: 
-                low = self.low_level(ch)
-            l = low + ch.min_V_diff
-
-        V = min(ch.max_V, max(l, V))
-        ch.high = V
-        self.write(f"{ch}:HIGH {V}")
-        self.info(f"Set logical low level of channel {ch._id()} to {V} V.")
-        return V
+        return self.get_channel(ch).high(V)
     
     def chan_output(self, ch: str | Channel, on: bool = None) -> bool | None:
         """
@@ -732,19 +619,9 @@ class DTG(pyvisaDevice):
             only returns if `on` is None (query mode). 
         """
         
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-
-        if on is None:
-            ch.enabled = int(self.query(f"{ch}:OUTPut?"))
-            return ch.enabled
+        return self.get_channel(ch).enabled(on)
         
-        ch.enabled = on
-        self.write(f"{ch}:OUTPut {'ON' if on else 'OFF'}")
-        self.info(f"{'En' if on else 'Dis'}abled channel {ch._id()}.")
-
-    def termination_Z(self, ch, Z: float = None) -> float:
+    def termination_Z(self, ch, Z: float = None) -> float | None:
         """
         Set or query the termination impedence of the channel.
         
@@ -760,23 +637,7 @@ class DTG(pyvisaDevice):
         Z : float
         """
 
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-        
-        if Z is None:
-            ch.termination_Z = float(self.query(f"{ch}:TIMPedance?"))
-            return ch.termination_Z
-        
-        if Z >= 1e3:
-            Z = 1e3
-        else:
-            Z = 50
-
-        ch.termination_Z = Z
-        self.write(f"{ch}:TIMPedance {Z}")
-        self.info(f"Set termination impedance on channel {ch._id()} to {Z} Ohm.")
-        return Z
+        return self.get_channel(ch).termination_Z(Z)
 
     def termination_V(self, ch, V: float = None) -> float:
         """
@@ -794,19 +655,7 @@ class DTG(pyvisaDevice):
         V : float
         """
 
-        ch = self.get_channel(ch)
-        if ch is None:
-            return
-        
-        if V is None:
-            ch.termination_V = float(self.query(f"{ch}:TVOLtage?"))
-            return ch.termination_V
-        
-        V = max(-2.0, min(5.0, V))
-        ch.termination_V = V
-        self.write(f"{ch}:TVOLtage {V}")
-        self.info(f"Set termination voltage on channel {ch._id()} to {V} V.")
-        return V
+        return self.get_channel(ch).termination_V(V)
 
     # ========================== Data Generator Mode ==========================
 
@@ -1167,14 +1016,10 @@ class DTG(pyvisaDevice):
                 continue
 
             toff = period * wf.off
-            if ch.low is None:
-                low = self.low_level(ch)
-            else:
-                low = ch.low
-            if ch.high is None:
-                high = self.high_level(ch)
-            else:
-                high = ch.high
+            # low = ch.low()
+            # high = ch.high()
+            low = 0
+            high = 1
             dt = ch.rise_time
 
             S = low + (high - low) * wf.to_array()
@@ -1255,16 +1100,18 @@ class DTG(pyvisaDevice):
             'burst_count'   : self._burst_count,
             'channels': {
                 name: {
-                    'enabled'   : ch.enabled,
-                    'polarity'  : ch.polarity,
-                    'high'      : ch.high,
-                    'low'       : ch.low,
-                    'width'     : ch.width,
-                    'ldelay'    : ch.ldelay,
-                    'tdelay'    : ch.tdelay,
-                    'prate'     : ch.prate,
-                    'termination_Z': ch.termination_Z,
-                    'termination_V': ch.termination_V
+                    'enabled'   : ch.enabled(),
+                    'polarity'  : ch.polarity(),
+                    'high'      : ch.high(),
+                    'low'       : ch.low(),
+                    'width'     : ch.width(),
+                    'lhold'     : ch.lhold(),
+                    'thold'     : ch.thold(),
+                    'ldelay'    : ch.ldelay(),
+                    'tdelay'    : ch.tdelay(),
+                    'prate'     : ch.prate(),
+                    'termination_Z': ch.termination_Z(),
+                    'termination_V': ch.termination_V(),
                 }
                 for name, ch in self.channels.items()
             }
@@ -1329,6 +1176,8 @@ class DTG(pyvisaDevice):
             if self.mode == 'PULS':
                 self.polarity(ch, ch_state['polarity'])
                 self.prate(ch, ch_state['prate'])
+                self.lead_hold(ch, ch_state['lhold'])
+                self.trail_hold(ch, ch_state['thold'])
                 self.lead_delay(ch, ch_state['ldelay'])
                 self.trail_delay(ch, ch_state['tdelay'])
                 self.pulse_width(ch, ch_state['width'])

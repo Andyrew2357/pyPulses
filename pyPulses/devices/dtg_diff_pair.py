@@ -6,7 +6,6 @@ DTG channels in software to make them behave in the appropriate manner
 from .dtg import DTG
 from .dtg_utils import Channel
 
-# TODO NEED TO MODIFY THIS BECAUSE OF WEIRDNESS DUE TO LHOLD AND THOLD TYPE STUFF
 class dtgDifferentialPair():
     """Differential pair for use with Oliver's pulse shaper box"""
     def __init__(self, dtg: DTG, chx: str | Channel, chy: str | Channel):
@@ -24,9 +23,16 @@ class dtgDifferentialPair():
         self.dtg = dtg
         self.chx = dtg.get_channel(chx)
         self.chy = dtg.get_channel(chy)
+        self._post_init()
+    
+    def _post_init(self):
+        self.chx.lhold('LDEL')
+        self.chy.lhold('LDEL')
+        self.chx.thold('TDEL')
+        self.chy.thold('TDEL')
 
     # Enabled
-    def enable(self, on: bool):
+    def enable(self, on: bool | None = None) -> bool | None:
         """
         Enable or disable the pair output
 
@@ -35,153 +41,81 @@ class dtgDifferentialPair():
         on : bool
             true means enable
         """
-        self.dtg.chan_output(self.chx, on)
-        self.dtg.chan_output(self.chy, on)
+        if on is None:
+            return self.chx.enabled()
+        self.chx.enabled(on)
+        self.chy.enabled(on)
 
     # Lead Delay
-    @property
-    def ldelay(self) -> float:
+    def ldelay(self, l: float | None = None) -> float | None:
         """Lead delay of `chx`"""
-        if self.chx.ldelay is None:
-            return self.dtg.lead_delay(self.chx)
-
-        return self.chx.ldelay
+        if l is None:
+            return self.chx.ldelay()
+        toff = self.ldoff()
+        self.chx.ldelay(l)
+        self.chy.ldelay(l + toff)
         
-    @ldelay.setter
-    def ldelay(self, l: float):
-        toff = self.ldoff
-        self.dtg.lead_delay(self.chx, l)
-        self.dtg.lead_delay(self.chy, l + toff)
-
-    @property
-    def ldoff(self) -> float:
+    def ldoff(self, dt: float | None = None) -> float | None:
         """Lead delay of `chy` relative to `chx`"""
-        if self.chy.ldelay is None:
-            self.dtg.lead_delay(self.chy)
-
-        return self.chy.ldelay - self.ldelay
+        if dt is None:
+            return self.chy.ldelay() - self.chx.ldelay()
+        ldel = self.ldelay()
+        self.chy(ldel + dt)
     
-    @ldoff.setter
-    def ldoff(self, dt: float):
-        self.dtg.lead_delay(self.chy, self.ldelay + dt)
-
     # Trail Delays
-    @property
-    def tdelay(self) -> float:
+    def tdelay(self, t: float | None = None) -> float | None:
         """Trail delay of `chx`"""
-        if self.chx.tdelay is None:
-            return self.dtg.trail_delay(self.chx)
-
-        return self.chx.tdelay
+        if t is None:
+            return self.chx.tdelay()
+        toff = self.tdoff()
+        self.chx.tdelay(t)
+        self.chy.tdelay(t + toff)
         
-    @tdelay.setter
-    def tdelay(self, t: float):
-        toff = self.tdoff
-        self.dtg.trail_delay(self.chx, t)
-        self.dtg.trail_delay(self.chy, t + toff)
-
-    @property
-    def tdoff(self) -> float:
+    def tdoff(self, dt: float | None = None) -> float | None:
         """Trail delay of `chy` relative to `chx`"""
-        if self.chy.tdelay is None:
-            self.dtg.trail_delay(self.chy)
-
-        return self.chy.tdelay - self.tdelay
+        if dt is None:
+            return self.chy.tdelay() - self.chx.tdelay()
+        tdel = self.chx.tdelay()
+        self.chy.tdelay(tdel + dt)
     
-    @ldoff.setter
-    def tdoff(self, dt: float):
-        self.dtg.trail_delay(self.chy, self.tdelay + dt)
-
     # Width
-    @property
-    def width(self) -> float:
+    def width(self, w: float | None = None) -> float | None:
         """width of the `chx` pulse"""
-        if self.chx.width is None:
-            return self.dtg.pulse_width(self.chx)
-        else:
-            return self.chx.width
-        
-    @width.setter
-    def width(self, w: float):
-        woff = self.woff
-        self.dtg.pulse_width(self.chx, w)
-        self.dtg.pulse_width(self.chy, w + woff)
+        if w is None:
+            return self.chx.width()
+        woff = self.woff()
+        self.chx.width(w)
+        self.chy.width(w + woff)
 
-    @property
-    def woff(self) -> float:
+    def woff(self, dw: float | None = None) -> float | None:
         """width of the `chy` pulse relative to `chx`"""
-        if self.chy.width is None:
-            wy = self.dtg.pulse_width(self.chy)
-        else:
-            wy = self.chy.width
-
-        return wy - self.width
-
-    @woff.setter
-    def woff(self, dw: float):
-        self.dtg.pulse_width(self.chx, self.width)
-        self.dtg.pulse_width(self.chy, self.width + dw)
+        if dw is None:
+            return self.chy.width() - self.chx.width()
+        width = self.width()
+        self.chy.width(width + dw)
 
     # Polarity
-    @property
-    def polarity(self) -> bool:
+    def polarity(self, pos: bool | None = None) -> bool | None:
         """polarity of `chx`; `chy` is opposite"""
-        if self.chx.polarity is None:
-            return self.dtg.polarity(self.chx)
-        
-        return self.chx.polarity
+        if pos is None:
+            return self.chx.polarity()
+        self.chx.polarity(pos)
+        self.chy.polarity(not pos)
     
-    @polarity.setter
-    def polarity(self, pos: bool):
-        self.dtg.polarity(self.chx, pos)
-        self.dtg.polarity(self.chy, not pos)
-
     # X Levels
-    @property
-    def Xlow(self) -> float:
+    def Xlow(self, V: float | None = None) -> float | None:
         """logical low level of `chx`"""
-        if self.chx.low is None:
-            return self.dtg.low_level(self.chx)
-        else:
-            return self.chx.low
-        
-    @Xlow.setter
-    def Xlow(self, V: float):
-        self.dtg.low_level(self.chx, V)
+        return self.chx.low(V)
 
-    @property
-    def Xhigh(self) -> float:
+    def Xhigh(self, V: float | None = None) -> float | None:
         """logical high level of `chx`"""
-        if self.chx.high is None:
-            return self.dtg.high_level(self.chx)
-        else:
-            return self.chx.high
+        return self.chx.high(V)
         
-    @Xhigh.setter
-    def Xhigh(self, V: float):
-        self.dtg.high_level(self.chx, V)
-
     # Y Levels
-    @property
-    def Ylow(self) -> float:
+    def Ylow(self, V: float | None = None) -> float | None:
         """logical low level of `chy`"""
-        if self.chy.low is None:
-            return self.dtg.low_level(self.chy)
-        else:
-            return self.chy.low
-        
-    @Ylow.setter
-    def Ylow(self, V: float):
-        self.dtg.low_level(self.chy, V)
-
-    @property
-    def Yhigh(self) -> float:
+        return self.chy.low(V)
+    
+    def Yhigh(self, V: float | None = None) -> float | None:
         """logical high level of `chy`"""
-        if self.chy.high is None:
-            return self.dtg.high_level(self.chy)
-        else:
-            return self.chy.high
-        
-    @Yhigh.setter
-    def Yhigh(self, V: float):
-        self.dtg.high_level(self.chy, V)
+        return self.chy.high(V)
