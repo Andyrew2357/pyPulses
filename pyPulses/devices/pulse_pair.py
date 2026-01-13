@@ -10,7 +10,7 @@ class pulsePair(abstractDevice):
         X: Callable[[float], Any] | Callable[[], float],
         Y: Callable[[float], Any] | Callable[[], float],
         logical_low: float = 0.0,
-        logical_high: float = 2.0,
+        logical_high: float = 2.7,
     ):
         super().__init__()
         self._relay = relay
@@ -38,7 +38,7 @@ class pulsePair(abstractDevice):
         self._pol = self._relay.polarity()
 
     def enable(self, on: bool | None = None) -> bool | None:
-        return self._relay.enabled(on)
+        return self._relay.enable(on)
 
     def T0(self, t: float | None = None) -> float | None:
         dT0X = self._tuning[self._pol]['dT0X']
@@ -71,7 +71,7 @@ class pulsePair(abstractDevice):
         dT1X = self._tuning[self._pol]['dT1X']
         if w is None:
             return self._relay.width() + dT1X - dT0X
-        self._relay.width(x + dT0X - dT1X)
+        self._relay.width(w + dT0X - dT1X)
 
     def X(self, v: float | None = None) -> float | None:
         eta = 1 if self._pol else -1
@@ -82,12 +82,12 @@ class pulsePair(abstractDevice):
         self._X(abs(v))
 
     def Y(self, v: float | None = None) -> float | None:
-        eta = 1 if self._pol else -1
+        eta = -1 if self._pol else 1
         if v is None:
-            return eta * self._X()
+            return eta * self._Y()
         if eta * v < 0:
             self._switch_polarity()
-        self._X(abs(v))
+        self._Y(abs(v))
 
     def _switch_polarity(self):
         # Save the abstract timing settings

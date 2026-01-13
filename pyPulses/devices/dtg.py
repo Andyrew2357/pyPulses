@@ -71,7 +71,8 @@ class DTG(pyvisaDevice):
                             max_V       = self.MODULES[module_id]['max_V'],
                             min_V_diff  = self.MODULES[module_id]['min_V_diff'],
                             min_width   = self.MODULES[module_id]['min_width'],
-                            rise_time   = self.MODULES[module_id]['rise_time']
+                            rise_time   = self.MODULES[module_id]['rise_time'],
+                            dtg         = self,
                         )
 
         return self.modules

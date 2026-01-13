@@ -30,6 +30,7 @@ class dtgDifferentialPair():
         self.chy.lhold('LDEL')
         self.chx.thold('TDEL')
         self.chy.thold('TDEL')
+        self.polarity(self.chx.polarity())
 
     # Enabled
     def enable(self, on: bool | None = None) -> bool | None:
@@ -60,7 +61,7 @@ class dtgDifferentialPair():
         if dt is None:
             return self.chy.ldelay() - self.chx.ldelay()
         ldel = self.ldelay()
-        self.chy(ldel + dt)
+        self.chy.ldelay(ldel + dt)
     
     # Trail Delays
     def tdelay(self, t: float | None = None) -> float | None:
