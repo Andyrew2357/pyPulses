@@ -1,3 +1,4 @@
+from .wf_balance import wfBalanceKnob, wfBalanceCorrelated, wfBalanceResult
 from ..utils import kalman
 from ..devices.pulse_pair import pulsePair
 from ..devices.wfatd import wfAverager, wfBalance
@@ -149,20 +150,122 @@ def _limit_change(v, old_v, max_dv) -> Tuple[float, bool]:
         return old_v - max_dv, False
     return v, True
 
-def _initialBalanceTDCS(ctx: TDPTContext) -> Tuple[float, float]:
-    pass
+@dataclass
+class TDPTInitialResult():
+    C_success: bool
+    W_success: bool
+    bal_success: bool
+    C_err: float
+    W_err: float
+    A: np.ndarray
+    b: np.ndarray
+    x0: np.ndarray
 
-def balanceTDCS(ctx: TDPTContext) -> TDPTBalanceResult:
-    if ctx.wfilter is None or ctx.cfilter is None:
-        _initialBalanceTDCS(ctx)
+def initialBalanceTDCS(
+    ctx: TDPTContext, 
+    min_Cac: float = 0.0, 
+    max_Cac: float = 2.0,
+    C_err_thresh: float | None = None,
+    W_err_thresh: float | None = None,
+    reps: int = 2
+) -> bool:
     
+    if C_err_thresh is None:
+        C_err_thresh = ctx.C_error_thresh
+    if W_err_thresh is None:
+        W_err_thresh = ctx.W_error_thresh
+
     Xexc = ctx.exc.X()
     Xdis = ctx.dis.X()
+
+    def Cac(C: float | None = None):
+        if C is None:
+            return ctx.exc.Y() / Xexc
+        Yb = -C * Xexc
+        Ydis = -C * Xdis
+        ctx.exc.Y(Yb)
+        ctx.dis.Y(Ydis)
+
+    Cac_knob = wfBalanceKnob(min_Cac, max_Cac, Cac)
+    W_knob = wfBalanceKnob(ctx.min_W, ctx.max_W, ctx.dis.W)
+
+    C_ac_s = []
+    G_s = []
+    dMdW_s = []
+    A_s = []
+    b_s = []
+    x0_s = []
+    for i in range(reps):
+        bal = wfBalanceCorrelated(
+            knobs = [Cac_knob, W_knob], 
+            balances = [ctx.Cac_balance, ctx.W_balance],
+            averager = ctx.averager
+        )
+        A_s.append(bal.A)
+        b_s.append(bal.b)
+        x0_s.append(bal.x0)
+        C_ac_s.append(bal.x0[0])
+        G_s.append(-bal.A[0, 0] / Xexc)
+        dMdW_s.append(bal.A[1, 1])
+
+    A = np.array(A_s).mean(0)
+    b = np.array(b_s).mean(0)
+    x0 = np.array(x0_s).mean(0)
+    C_ac_s = np.array(C_ac_s)
+    G_s = np.array(G_s)
+    dMdW_s = np.array(dMdW_s)
+
+    C_ac = C_ac_s.mean()
+    W = x0[1]
+    G = G_s.mean()
+    C_stack = np.vstack([G_s - G, C_ac_s - C_ac])
+    PCac_small = C_stack @ C_stack.T
+    PCac = np.block([[PCac_small, 0], [0, np.inf]]) / reps
+
+    dMdW = dMdW_s.mean()
+    PdMdW = dMdW_s.std()**2
+
+    Cac(C_ac)
+    ctx.dis.W(W)
+    ctx.averager.take_curve()
+    Cac_err = ctx.Cac_balance()
+    Dis_err = ctx.W_balance()
+    ctx.add_filters(G, C_ac, PCac, dMdW, PdMdW)
+    return TDPTInitialResult(
+        C_success = Cac_err < C_err_thresh,
+        W_success = Dis_err < W_err_thresh,
+        bal_success = bal.success,
+        C_err = Cac_err,
+        W_err = Dis_err,
+        A = A,
+        b = b,
+        x0 = x0,
+    )
+
+def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
+    if ctx.wfilter is None or ctx.cfilter is None:
+        raise RuntimeError(
+            "TDPTContext must be initialized before it is used to balance"
+        )
+
+    # Fixed Pulse Heights
+    Xexc = ctx.exc.X()
+    Xdis = ctx.dis.X()
+
+    # Previous Settings
     pYb = ctx.exc.Y()
     pYdis = ctx.dis.Y()
     pWb = ctx.dis.W()
+    Wb = pWb
+
+    # Measurement Uncertainties
     pR = np.inf
     R = None
+
+    # Discharge Pulse Width Bracketing
+    W_low = ctx.min_W
+    W_high = ctx.max_W
+
     for itr in range(ctx.max_tries):
         _checkpoint()
         if ctx.iteration_callback:
@@ -186,7 +289,7 @@ def balanceTDCS(ctx: TDPTContext) -> TDPTBalanceResult:
             if not Ydis_change_success:
                 ctx.log(f"Requested change in Ydis ({temp_Ydis - pYdis:.5e}) "
                         "exceeded the value allowed for refinements!\n")
-        
+
         # Set the expected balance parameters    
         ctx.log(
             f"Moving to predicted balance point:\n"
@@ -211,6 +314,15 @@ def balanceTDCS(ctx: TDPTContext) -> TDPTBalanceResult:
         dQ, RdQ = ctx.Cac_balance()
         M, RM = ctx.W_balance()
 
+        # Update the bracketing on W; We infer which bound needs to be updated  ################### NEED TO FIX THIS / RECONSIDER
+        # based on the sign of dM/dW (inferred from Xdis) and M.                ################### BROADLY THERE ARE SIGN CHANGE REQUESTS THAT I SHOULD NOT RESPECT...
+        if M * Xdis > 0:
+            W_high = min(W_high, Wb)
+        else:
+            W_low = max(W_low, Wb)
+
+        ctx.log(f"New W bracketing: [{W_low:.5e}, {W_high:.5e}]")
+
         # Kalman updates based on the measurement
         ctx.update_Cac(dQ, RdQ, Yb, Xexc)
         if itr != 0:
@@ -219,6 +331,11 @@ def balanceTDCS(ctx: TDPTContext) -> TDPTBalanceResult:
             dW = Wb - pWb
             o_dMdW = dM / dW
             R = (RM + pRM) / dW**2 + (ctx.W_res * o_dMdW / dW)**2
+
+            # We warn if there is a sign inconsistent with the sign of Xdis
+            if Xdis * o_dMdW < 0:
+                ctx.log(f"Inconsistent signs of discharge pulse and slope change.") ############## NEED TO FIX THIS / RECONSIDER (DO I NEED TO EXPLICITLY CORRECT FOR THIS??)
+
             ctx.update_dMdW(o_dMdW, R)
 
         # Store the old parameters
@@ -237,11 +354,27 @@ def balanceTDCS(ctx: TDPTContext) -> TDPTBalanceResult:
         # W undergoes bracketed root finding
         Wb -= M / dMdW
 
+        # We limit changes based on bracketing
+        if Wb > W_high:
+            ctx.log(
+                f"Extrapolated discharge balance point (W = {Wb:.5e}) "
+                "is too long; Truncating..."
+            )
+            Wb = W_high
+
+        if Wb < W_low:
+            ctx.log(
+                f"Extrapolated discharge balance point (W = {Wb:.5e}) "
+                "is too short; Truncating..."
+            )
+            Wb = W_low
+
         # Check for termination
+        exc_sat = abs(dQ) < ctx.C_error_thresh
+        dis_sat = abs(M) < ctx.W_error_thresh or (W_high - W_low) < ctx.W_res
 
-        # THIS IS NOT COMPLETE - NEED TO FIGURE OUT TERMINATION CONDITIONS, LOGIC FOR DISCHARGE ROOT FINDING, ETC.
-
-        # We limit changes based on ctx parameters and bracketing
+        if exc_sat and dis_sat:
+            pass # SUCCESSFUL TERMINATION
         
         pdQ = dQ
         pM = M
@@ -249,4 +382,4 @@ def balanceTDCS(ctx: TDPTContext) -> TDPTBalanceResult:
         pRM = RM
         pR = R
     else:
-        pass
+        pass # FAILED TERMINATION
