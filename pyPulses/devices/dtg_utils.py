@@ -72,7 +72,7 @@ class Channel:
         self.write(f"{self}:THOLD {mode}")
         self.info(f'Set trail hold mode of channel {self._id()} to {mode}.')
 
-    def width(self, W: float | None) -> float | None:
+    def width(self, W: float | None = None) -> float | None:
         if W is None:
             return float(self.query(f"{self}:WIDTh?"))
         self.write(f"{self}:WIDTh {W}")

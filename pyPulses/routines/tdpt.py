@@ -67,8 +67,30 @@ class CFilter(kalman):
         return z, H
 
 @dataclass
+class TDPTBalanceParms():
+    Cac: float
+    dMdW: float
+    Yb: float
+    Ydis: float
+    Wb: float
+    dQ: float
+    RdQ: float
+    M: float
+    RM: float
+
+@dataclass
+class TDPTFilterParms():
+    Cfilter_x: np.ndarray
+    Cfilter_P: np.ndarray
+    Wfilter_x: float
+    Wfilter_P: float
+
+@dataclass
 class TDPTBalanceResult():
-    status: bool
+    status      : bool
+    parms       : TDPTBalanceParms
+    prev_parms  : TDPTBalanceParms | None
+    filter_parms: TDPTFilterParms
 
 @dataclass
 class TDPTContext():
@@ -139,6 +161,14 @@ class TDPTContext():
     def append_W(self, W: float):
         self.wfilter.append(W)
 
+    def getFilterParms(self) -> TDPTFilterParms:
+        return TDPTFilterParms(
+            Cfilter_x = self.cfilter.x.flatten(),
+            Cfilter_P = self.cfilter.P,
+            Wfilter_x = self.wfilter.kalman.x,
+            Wfilter_P = self.wfilter.kalman.P,
+        )
+
     def log(self, *args):
         if self.logger:
             self.logger.info(*args)
@@ -161,7 +191,7 @@ class TDPTInitialResult():
     b: np.ndarray
     x0: np.ndarray
 
-def initialBalanceTDCS(
+def initialBalanceTDPT(
     ctx: TDPTContext, 
     min_Cac: float = 0.0, 
     max_Cac: float = 2.0,
@@ -257,6 +287,12 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
     pYdis = ctx.dis.Y()
     pWb = ctx.dis.W()
     Wb = pWb
+
+    # Previous Measurements
+    pdQ = None
+    pRdQ = None
+    pM = None
+    pRM = None
 
     # Measurement Uncertainties
     pR = np.inf
@@ -374,7 +410,35 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
         dis_sat = abs(M) < ctx.W_error_thresh or (W_high - W_low) < ctx.W_res
 
         if exc_sat and dis_sat:
-            pass # SUCCESSFUL TERMINATION
+            # Append the latest W balance point to the context
+            ctx.append_W(Wb)
+
+            return TDPTBalanceResult(
+                status = True,
+                parms = TDPTBalanceParms(
+                    Cac = Cac,
+                    dMdW = dMdW,
+                    Yb = Yb,
+                    Ydis = Ydis,
+                    Wb = Wb,
+                    dQ = dQ,
+                    RdQ = RdQ,
+                    M = M,
+                    RM = RM,
+                ),
+                prev_parms = TDPTBalanceParms(
+                    Cac = pCac,
+                    dMdW = pdMdW,
+                    Yb = pYb,
+                    Ydis = pYdis,
+                    Wb = pWb,
+                    dQ = pdQ,
+                    RdQ = pRdQ,
+                    M = pM,
+                    RM = pRM,
+                ) if itr != 0 else None,
+                filter_parms = ctx.getFilterParms(),
+            )
         
         pdQ = dQ
         pM = M
@@ -382,4 +446,29 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
         pRM = RM
         pR = R
     else:
-        pass # FAILED TERMINATION
+        return TDPTBalanceResult(
+            status = False,
+            parms = TDPTBalanceParms(
+                Cac = Cac,
+                dMdW = dMdW,
+                Yb = Yb,
+                Ydis = Ydis,
+                Wb = Wb,
+                dQ = dQ,
+                RdQ = RdQ,
+                M = M,
+                RM = RM,
+            ),
+            prev_parms = TDPTBalanceParms(
+                Cac = pCac,
+                dMdW = pdMdW,
+                Yb = pYb,
+                Ydis = pYdis,
+                Wb = pWb,
+                dQ = pdQ,
+                RdQ = pRdQ,
+                M = pM,
+                RM = pRM,
+            ) if itr != 0 else None,
+            filter_parms = ctx.getFilterParms(),
+        )

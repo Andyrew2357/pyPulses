@@ -6,20 +6,31 @@ from .kap_bridge import (balanceKapBridge, KapBridgeBalanceResult,
                          KapBridgeContext)
 from .pulsed_R_bridge import PulsedR
 from .R_predictor import RPredictor
+from .tdpt import (balanceTDPT, initialBalanceTDPT, TDPTBalanceResult, 
+                   TDPTContext, TDPTInitialResult)
 from .test_gates import GateTest
+from .wf_balance import wfBalanceKnob, wfBalanceCorrelated, wfBalanceResult
 
 __all__ =[
     "balanceCapBridge",
-    "balanceCapBridgeTwoPoint"
+    "balanceCapBridgeTwoPoint",
     "BalanceCapBridgeConfig",
     "BalanceCapBridgeResult",
     "balanceKapBridge",
+    "balanceTDPT",
     "CapBridge",
     "extract_gap",
     "GateTest",
+    "initialBalanceTDPT",
     "KapBridgeBalanceResult",
     "KapBridgeContext",
     "PulsedR",
     "RPredictor",
+    "TDPTBalanceResult",
+    "TDPTContext",
+    "TDPTInitialResult",
     "TwoPointCapBalance",
+    "wfBalanceKnob",
+    "wfBalanceCorrelated",
+    "wfBalanceResult",
 ]

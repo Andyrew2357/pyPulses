@@ -54,12 +54,6 @@ class ad5764(pyvisaDevice):
         # sweep parameters
         self.max_step   = max_step
         self.wait       = wait
-
-        # perform true queries during initialization to maintain consistency
-        # with the Arduino. These are slow, so we prefer to do them only when
-        # the class is initialized.
-        self.V = [0] * 8
-        self._true_query_state()
         
         # mapping for controlling the instrument channels via serial bus
         self.channel_map = {
@@ -72,6 +66,12 @@ class ad5764(pyvisaDevice):
             6: (0, 17),
             7: (0, 16),
         }
+
+        # perform true queries during initialization to maintain consistency
+        # with the Arduino. These are slow, so we prefer to do them only when
+        # the class is initialized.
+        self.V = [0] * 8
+        self._true_query_state()
 
     def sweep_V(self, ch: int, V: float, 
                 max_step: float = None, wait: float = None):
