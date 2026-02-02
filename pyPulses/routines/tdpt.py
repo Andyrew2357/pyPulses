@@ -1,4 +1,4 @@
-from .wf_balance import wfBalanceKnob, wfBalanceCorrelated, wfBalanceResult
+from .wf_balance import wfBalanceKnob, balance_against_waveform
 from ..utils import kalman
 from ..devices.pulse_pair import pulsePair
 from ..devices.wfatd import wfAverager, wfBalance
@@ -48,7 +48,8 @@ class CFilter(kalman):
         super().__init__(
             f_F = self.f_F,
             h_H = self.h_H,
-            x = np.array([G, Cac, 0]).reshape(-1, 1)
+            x = np.array([G, Cac, 0]).reshape(-1, 1),
+            P = P,
         )
 
         self.Q_balance_change: np.ndarray
@@ -197,7 +198,9 @@ def initialBalanceTDPT(
     max_Cac: float = 2.0,
     C_err_thresh: float | None = None,
     W_err_thresh: float | None = None,
-    reps: int = 2
+    settle_time: float | None = None,
+    reps: int = 2,
+    correlated: bool = True,
 ) -> bool:
     
     if C_err_thresh is None:
@@ -210,7 +213,7 @@ def initialBalanceTDPT(
 
     def Cac(C: float | None = None):
         if C is None:
-            return ctx.exc.Y() / Xexc
+            return -ctx.exc.Y() / Xexc
         Yb = -C * Xexc
         Ydis = -C * Xdis
         ctx.exc.Y(Yb)
@@ -226,10 +229,12 @@ def initialBalanceTDPT(
     b_s = []
     x0_s = []
     for i in range(reps):
-        bal = wfBalanceCorrelated(
+        bal = balance_against_waveform(
             knobs = [Cac_knob, W_knob], 
             balances = [ctx.Cac_balance, ctx.W_balance],
-            averager = ctx.averager
+            averager = ctx.averager,
+            settle_time = settle_time or ctx.settle_time,
+            correlated = correlated,
         )
         A_s.append(bal.A)
         b_s.append(bal.b)
@@ -250,20 +255,22 @@ def initialBalanceTDPT(
     G = G_s.mean()
     C_stack = np.vstack([G_s - G, C_ac_s - C_ac])
     PCac_small = C_stack @ C_stack.T
-    PCac = np.block([[PCac_small, 0], [0, np.inf]]) / reps
+    PCac = np.block([[PCac_small, np.zeros((2,1))], [np.zeros((1,2)), np.inf]]) / reps
 
     dMdW = dMdW_s.mean()
     PdMdW = dMdW_s.std()**2
 
-    Cac(C_ac)
-    ctx.dis.W(W)
+    if min_Cac <= C_ac <= max_Cac:
+        Cac(C_ac)
+    if ctx.min_W <= W <= ctx.max_W:
+        ctx.dis.W(W)
     ctx.averager.take_curve()
-    Cac_err = ctx.Cac_balance()
-    Dis_err = ctx.W_balance()
+    Cac_err = ctx.Cac_balance()[0]
+    Dis_err = ctx.W_balance()[0]
     ctx.add_filters(G, C_ac, PCac, dMdW, PdMdW)
     return TDPTInitialResult(
-        C_success = Cac_err < C_err_thresh,
-        W_success = Dis_err < W_err_thresh,
+        C_success = np.abs(Cac_err) < C_err_thresh,
+        W_success = np.abs(Dis_err) < W_err_thresh,
         bal_success = bal.success,
         C_err = Cac_err,
         W_err = Dis_err,
