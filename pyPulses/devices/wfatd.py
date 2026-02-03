@@ -12,8 +12,8 @@ class wfAverager():
         self.curve = self.scope_call()
 
     def get_window(self, ta: float, tb: float) -> Tuple[np.ndarray, np.ndarray]:
-        ia = int(ta // self.dt)
-        ib = int(tb // self.dt)
+        ia = max(0, int(ta // self.dt))
+        ib = min(self.curve.size - 1, int(tb // self.dt))
         return self.dt * (ia + np.arange(ib - ia)), self.curve[ia:ib]
     
     def get_masked(self, mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -36,10 +36,17 @@ class wfSlope(wfBalance):
         super().__init__(averager)
         self.ta = ta
         self.tb = tb
+        self.m = None
+        self.c = None
 
     def __call__(self) -> Tuple[float, float]:
-        (m, _), cov = np.polyfit(*self.averager.get_window(self.ta, self.tb), 1, cov=True)
+        (m, c), cov = np.polyfit(*self.averager.get_window(self.ta, self.tb), 1, cov=True)
+        self.m = m
+        self.c = c
         return m, cov[0, 0]
+    
+    def get_fit(self) -> Tuple[float, float]:
+        return self.m, self.c
 
 class wfSlopeMasked(wfBalance):
     def __init__(self, 
@@ -48,10 +55,17 @@ class wfSlopeMasked(wfBalance):
     ):
         super().__init__(averager)
         self.mask = mask
+        self.m = None
+        self.c = None
 
     def __call__(self) -> Tuple[float, float]:
-        (m, _), cov = np.polyfit(*self.averager.get_masked(self.mask), 1, cov=True)
+        (m, c), cov = np.polyfit(*self.averager.get_masked(self.mask), 1, cov=True)
+        self.m = m
+        self.c = c
         return m, cov[0, 0]
+    
+    def get_fit(self) -> Tuple[float, float]:
+        return self.m, self.c
 
 class wfJump(wfBalance):
     def __init__(self,
