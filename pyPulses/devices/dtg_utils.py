@@ -112,6 +112,8 @@ class Channel:
             val = 'QUAR'
         elif prate >= 0.125:
             val = 'EIGH'
+        elif prate >= 0.0625:
+            val = 'SIXT'
         else:
             val = 'OFF'
 

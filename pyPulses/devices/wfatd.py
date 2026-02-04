@@ -4,13 +4,6 @@ from abc import abstractmethod
 from typing import Callable, List, Tuple
 import numpy as np
 
-class wfBalance():
-    def __init__(self, averager: wfAverager):
-        self.averager = averager
-
-    @abstractmethod
-    def __call__() -> Tuple[float, float]: ...
-
 class wfPostProcess():
     def __init__(self): ...
 
@@ -20,18 +13,23 @@ class wfPostProcess():
 class wfAverager():
     def __init__(self, scope_call: Callable[[], np.ndarray], dt: float, N: int):
         self.curve: np.ndarray = None
+        self.unprocessed_curve: np.ndarray = None
         self.scope_call = scope_call
         self.dt = dt
-        self.t = np.arange(0, len(self.curve) * self.dt, self.dt)
+        self.t = dt * np.arange(0, N)
         self.post_processes: List[wfPostProcess] = []
 
     def take_curve(self):
         self.curve = self.scope_call()
+        self.unprocessed_curve = self.curve.copy()
         for process in self.post_processes:
             self.curve = process(self.t, self.curve)
 
     def get_curve(self) -> Tuple[np.ndarray, np.ndarray]:
         return self.t, self.curve
+
+    def get_unprocessed_curve(self) -> Tuple[np.ndarray, np.ndarray]:
+        return self.t, self.unprocessed_curve
 
     def get_window(self, ta: float, tb: float) -> Tuple[np.ndarray, np.ndarray]:
         msk = (self.t >= ta) & (self.t <= tb)
@@ -46,7 +44,20 @@ class wfAverager():
     def remove_post_process(self, process: wfPostProcess):
         self.post_processes.remove(process)
 
+    def get_curve_binary(self) -> bytes:
+        return self.curve.tobytes()
+    
+    def get_unprocessed_curve_binary(self) -> bytes:
+        return self.unprocessed_curve.tobytes()
+
 """wfBalance Classes; each represents various values against which we can balance"""
+
+class wfBalance():
+    def __init__(self, averager: wfAverager):
+        self.averager = averager
+
+    @abstractmethod
+    def __call__(self) -> Tuple[float, float]: ...
 
 class wfFunction(wfBalance):
     def __init__(self, func: Callable[[], Tuple[float, float]]):
@@ -231,7 +242,7 @@ class wfCompensateHighPass(wfPostProcess):
                     Q(t) = dQ0 + Q'(t) + Int[Q'(t') dt', 0, t]/τ
 
     The trickiest part of implementing this procedure involves setting a zero
-    for the integral. 
+    for the integral and identifying the right time constant (Use with caution).
     """
 
     def __init__(self, 
@@ -252,7 +263,8 @@ class wfCompensateHighPass(wfPostProcess):
     def __call__(self, t: np.ndarray, curve: np.ndarray) -> np.ndarray:
         
         # Mask away artifacts by setting them to NaN
-        curve[self.ignore_msk] = np.nan
+        if self.ignore_msk is not None:
+            curve[self.ignore_msk] = np.nan
 
         # Create a mask for the region we're going to correct
         if self.correct_msk is None:
@@ -270,7 +282,9 @@ class wfCompensateHighPass(wfPostProcess):
             t[correct_msk],
             curve[correct_msk] - zero_lvl,
             mask_nans = True,
-        )
-        curve[correct_msk] += correction / self.tau
+        ) / self.tau
+        curve[correct_msk] += correction
 
+        print(correction)
+        print(zero_lvl)
         return curve
