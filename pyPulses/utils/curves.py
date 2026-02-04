@@ -291,3 +291,51 @@ class MonotonicPiecewiseLinear():
         y0, y1 = self.yb[idx], self.yb[idx+1]
 
         return x0 + (x1 - x0) * (y - y0) / (y1 - y0)
+
+"""Generic Integration tools (repurposed from gap extraction calculations)"""
+
+def pad_z(a: np.ndarray) -> np.ndarray:
+    """Pad zeros along the final axis"""
+
+    pad_width = [(0, 0)] * (a.ndim - 1) + [(1, 0)]
+    return np.pad(a, pad_width, mode = 'constant', constant_values = 0.0)
+
+def integrate_trapz(x: np.ndarray, f: np.ndarray, mask_nans: bool = False
+                    ) -> np.ndarray:
+    """
+    Vectorized trapezoidal integration along the last axis.
+    If 'mask_nans' is True, segments with NaNs are skipped.
+    """
+    f0 = f[..., :-1]
+    f1 = f[..., 1:]
+    dx = np.diff(x, axis=-1)
+
+    if mask_nans:
+        mask = np.isnan(f0) | np.isnan(f1)
+        integrand = np.where(mask, 0.0, 0.5 * (f0 + f1) * dx)
+    else:
+        integrand = 0.5 * (f0 + f1) * dx
+
+    return np.cumsum(integrand, axis=-1)
+
+def integrate_trapz_padded(x: np.ndarray, f: np.ndarray, 
+                           mask_nans: bool = False) -> np.ndarray:
+    """Like '_integrate_trapz', but prepends a zero for shape alignment."""
+    return pad_z(integrate_trapz(x, f, mask_nans))
+
+def squared_integral(dx: np.ndarray, f: np.ndarray, mask_nans: bool = False
+                     ) -> np.ndarray:
+    """
+    Compute cummulated sum of square of trapezoidal integrals along the last 
+    axis.
+    """
+    f0 = f[..., :-1]
+    f1 = f[..., 1:]
+
+    if mask_nans:
+        mask = np.isnan(f0) | np.isnan(f1)
+        integrand = np.where(mask, 0.0, 0.5 * (f0 + f1) * dx)
+    else:
+        integrand = 0.5 * (f0 + f1) * dx
+
+    return np.cumsum(integrand**2, axis = -1)

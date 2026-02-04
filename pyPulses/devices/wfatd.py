@@ -1,31 +1,60 @@
+from ..utils import curves
+
 from abc import abstractmethod
-from typing import Callable, Tuple
+from typing import Callable, List, Tuple
 import numpy as np
 
-class wfAverager():
-    def __init__(self, scope_call: Callable[[], np.ndarray], dt: float):
-        self.curve: np.ndarray = None
-        self.scope_call = scope_call
-        self.dt = dt
-
-    def take_curve(self):
-        self.curve = self.scope_call()
-
-    def get_window(self, ta: float, tb: float) -> Tuple[np.ndarray, np.ndarray]:
-        ia = max(0, int(ta // self.dt))
-        ib = min(self.curve.size - 1, int(tb // self.dt))
-        return self.dt * (ia + np.arange(ib - ia)), self.curve[ia:ib]
-    
-    def get_masked(self, mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        t = np.arange(0, len(self.curve) * self.dt, self.dt)
-        return t[mask], self.curve[mask]
-    
 class wfBalance():
     def __init__(self, averager: wfAverager):
         self.averager = averager
 
     @abstractmethod
     def __call__() -> Tuple[float, float]: ...
+
+class wfPostProcess():
+    def __init__(self): ...
+
+    @abstractmethod
+    def __call__(t: np.ndarray, curve: np.ndarray) -> np.ndarray: ...
+
+class wfAverager():
+    def __init__(self, scope_call: Callable[[], np.ndarray], dt: float, N: int):
+        self.curve: np.ndarray = None
+        self.scope_call = scope_call
+        self.dt = dt
+        self.t = np.arange(0, len(self.curve) * self.dt, self.dt)
+        self.post_processes: List[wfPostProcess] = []
+
+    def take_curve(self):
+        self.curve = self.scope_call()
+        for process in self.post_processes:
+            self.curve = process(self.t, self.curve)
+
+    def get_curve(self) -> Tuple[np.ndarray, np.ndarray]:
+        return self.t, self.curve
+
+    def get_window(self, ta: float, tb: float) -> Tuple[np.ndarray, np.ndarray]:
+        msk = (self.t >= ta) & (self.t <= tb)
+        return self.t[msk], self.curve[msk]
+    
+    def get_masked(self, mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        return self.t[mask], self.curve[mask]
+    
+    def add_post_process(self, process: wfPostProcess):
+        self.post_processes.append(process)
+
+    def remove_post_process(self, process: wfPostProcess):
+        self.post_processes.remove(process)
+
+"""wfBalance Classes; each represents various values against which we can balance"""
+
+class wfFunction(wfBalance):
+    def __init__(self, func: Callable[[], Tuple[float, float]]):
+        super().__init__(None)
+        self.func = func
+
+    def __call__(self) -> Tuple[float, float]:
+        return self.func()
 
 class wfSlope(wfBalance):
     def __init__(self, 
@@ -146,3 +175,102 @@ class wfJumpMasked(wfBalance):
     
     def get_right_slope(self) -> float:
         return self.mr
+    
+# TODO
+class wfIntegral(wfBalance):
+    def __init__(self,
+        averager: wfAverager,
+        ta: float,
+        tb: float,
+    ):
+        super().__init__(averager)
+        self.ta = ta
+        self.tb = tb
+
+        self.A: float | None = None
+
+    def __call__(self) -> Tuple[float, float]:
+        pass
+
+    def get_integral(self) -> float:
+        return self.A
+
+# TODO
+class wfIntegralMasked(wfBalance):
+    def __init__(self,
+        averager: wfAverager,
+        mask: np.ndarray,
+    ):
+        super().__init__(averager)
+        self.mask = mask
+
+        self.A: float | None = None
+
+    def __call__(self) -> Tuple[float, float]:
+        pass
+
+    def get_integral(self) -> float:
+        return self.A
+    
+"""wfPostProcess Classes; each is a post-processing step we can take after the curve is acquired"""
+
+class wfCompensateHighPass(wfPostProcess):
+    """
+    This process is intended to correct for a high pass filtering effect. Given
+    an RC filter like so,
+
+                                 C
+                          Q ────┤├─────┬───── Q'
+                                       ⌇ R
+                                       │
+                                       ⏚
+    
+    the observed signal Q' obeys a differential equation dQ'/dt = -Q'/τ + dQ/dt.
+    Integrating this gives us a method to recover Q from the observed Q'.
+
+                    Q(t) = dQ0 + Q'(t) + Int[Q'(t') dt', 0, t]/τ
+
+    The trickiest part of implementing this procedure involves setting a zero
+    for the integral. 
+    """
+
+    def __init__(self, 
+        tau: float, 
+        zero: wfSlope | wfSlopeMasked,
+        t0: float | None = None,
+        t1: float | None = None,
+        correct_msk: np.ndarray | None = None,
+        ignore_msk: np.ndarray | None = None,
+    ):
+        self.tau = tau
+        self.zero = zero
+        self.t0 = t0
+        self.t1 = t1
+        self.ignore_msk = ignore_msk
+        self.correct_msk = correct_msk
+
+    def __call__(self, t: np.ndarray, curve: np.ndarray) -> np.ndarray:
+        
+        # Mask away artifacts by setting them to NaN
+        curve[self.ignore_msk] = np.nan
+
+        # Create a mask for the region we're going to correct
+        if self.correct_msk is None:
+            correct_msk = (t >= self.t0) & (t <= self.t1)
+        else:
+            correct_msk = self.correct_msk
+
+        # Determine the 'zero' level
+        self.zero()
+        zm , zb = self.zero.get_fit()
+        zero_lvl = zm * t[correct_msk] + zb
+
+        # Apply the Correction over the desired interval
+        correction = curves.integrate_trapz_padded(
+            t[correct_msk],
+            curve[correct_msk] - zero_lvl,
+            mask_nans = True,
+        )
+        curve[correct_msk] += correction / self.tau
+
+        return curve
