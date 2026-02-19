@@ -285,6 +285,4 @@ class wfCompensateHighPass(wfPostProcess):
         ) / self.tau
         curve[correct_msk] += correction
 
-        print(correction)
-        print(zero_lvl)
         return curve

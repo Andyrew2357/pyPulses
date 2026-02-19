@@ -347,6 +347,8 @@ class CapBridge():
         self.get_XY = get_XY
         self.Vex   = balance.Vex
         self.Cstd  = balance.Cstd
+        self.Cex = None
+        self.Closs = None
 
     def reinit(self, balance: BalanceCapBridgeResult, 
                get_XY: Callable[[], Tuple[float, float]]):
@@ -354,6 +356,8 @@ class CapBridge():
         self.get_XY = get_XY
         self.Vex   = balance.Vex
         self.Cstd  = balance.Cstd
+        self.Cex = None
+        self.Closs = None
         
     def XYtoC(self, X: float, Y: float) -> Tuple[float, float]:
         """
