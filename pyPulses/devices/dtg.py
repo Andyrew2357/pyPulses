@@ -620,7 +620,7 @@ class DTG(pyvisaDevice):
             only returns if `on` is None (query mode). 
         """
         
-        return self.get_channel(ch).enabled(on)
+        return self.get_channel(ch).enable(on)
         
     def termination_Z(self, ch, Z: float = None) -> float | None:
         """
@@ -1101,7 +1101,7 @@ class DTG(pyvisaDevice):
             'burst_count'   : self._burst_count,
             'channels': {
                 name: {
-                    'enabled'   : ch.enabled(),
+                    'enabled'   : ch.enable(),
                     'polarity'  : ch.polarity(),
                     'high'      : ch.high(),
                     'low'       : ch.low(),

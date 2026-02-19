@@ -126,7 +126,7 @@ class Channel:
         self.write(f"{self}:POLarity {'NORM' if pos else 'INV'}")
         self.info(f"Set polarity of channel {self._id()} to {'posi' if pos else 'nega'}tive.")
 
-    def enabled(self, on: bool | None = None) -> bool | None:
+    def enable(self, on: bool | None = None) -> bool | None:
         if on is None:
             return int(self.query(f"{self}:OUTPut?")) == 1
         self.write(f"{self}:OUTPut {'ON' if on else 'OFF'}")
