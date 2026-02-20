@@ -71,7 +71,7 @@ class ad5764(pyvisaDevice):
         # with the Arduino. These are slow, so we prefer to do them only when
         # the class is initialized.
         self.V = [0] * 8
-        time.sleep(1.0) # wait a second; otherwise the first query may fail
+        time.sleep(3.0) # wait a little; otherwise the first query may fail
         self._true_query_state()
 
     def sweep_V(self, ch: int, V: float, 

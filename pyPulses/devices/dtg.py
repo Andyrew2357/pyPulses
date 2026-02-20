@@ -1101,7 +1101,7 @@ class DTG(pyvisaDevice):
             'burst_count'   : self._burst_count,
             'channels': {
                 name: {
-                    'enabled'   : ch.enable(),
+                    'enable'   : ch.enable(),
                     'polarity'  : ch.polarity(),
                     'high'      : ch.high(),
                     'low'       : ch.low(),
@@ -1169,7 +1169,7 @@ class DTG(pyvisaDevice):
                 continue
 
             ch = self.channels[ch_id]
-            self.chan_output(ch, ch_state['enabled'])
+            self.chan_output(ch, ch_state['enable'])
             self.low_level(ch, ch_state['low'])
             self.high_level(ch, ch_state['high'])
             self.termination_Z(ch, ch_state['termination_Z'])

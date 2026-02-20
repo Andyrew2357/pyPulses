@@ -43,9 +43,9 @@ class dtgDifferentialPair():
             true means enable
         """
         if on is None:
-            return self.chx.enabled()
-        self.chx.enabled(on)
-        self.chy.enabled(on)
+            return self.chx.enable()
+        self.chx.enable(on)
+        self.chy.enable(on)
 
     # Lead Delay
     def ldelay(self, l: float | None = None) -> float | None:

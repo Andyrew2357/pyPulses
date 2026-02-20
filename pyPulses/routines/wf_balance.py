@@ -111,7 +111,6 @@ def balance_against_waveform(
     Y = [B() for B in balances]
     b = np.array([y[0] for y in Y]).reshape(-1, 1)
     qb = np.array([y[1] for y in Y]).reshape(-1, 1)
-
     A = []
     qA = []
     for x in knobs:
