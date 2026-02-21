@@ -1,6 +1,8 @@
 from .pyvisa_device import pyvisaDevice
 import numpy as np
 
+from typing import Tuple
+
 class tektronix11801b(pyvisaDevice):
     def __init__(self, logger = None, instrument_id: str = None):
         """

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from collections import deque
 import numpy as np
 
-from typing import Callable, Tuple
+from typing import Callable, List, Tuple
 
 def extrap(x: np.ndarray, order: int) -> float:
     coeff = np.polyfit(np.arange(len(x)), x, min(order, len(x) - 1))        
@@ -17,12 +17,17 @@ def extrap(x: np.ndarray, order: int) -> float:
     return poly(len(x))
 
 class WFilter():
-    def __init__(self, support: int, order: int, dMdW: float, P: float):
+    def __init__(self, 
+        Q_bal_change: float, Q_exc_change: float, 
+        support: int, order: int, 
+        dMdW: float, P: float
+    ):
+        
         self.order = order
         self.W_hist = deque(maxlen = support)
         
-        self.Q_balance_change: float
-        self.Q_excitation_change: float # NEED TO INITIALIZE THESE!!!!!!
+        self.Q_balance_change = Q_bal_change
+        self.Q_excitation_change = Q_exc_change
         self.kalman = kalman(
             f_F = self.f_F,
             h_H = self.h_H,
@@ -44,7 +49,7 @@ class WFilter():
         return extrap(self.W_hist, self.order)
 
 class CFilter(kalman):
-    def __init__(self, G: float, Cac: float, P: np.ndarray):
+    def __init__(self, Q_bal_change: np.ndarray, Q_exc_change: np.ndarray, G: float, Cac: float, P: np.ndarray):
         super().__init__(
             f_F = self.f_F,
             h_H = self.h_H,
@@ -52,8 +57,8 @@ class CFilter(kalman):
             P = P,
         )
 
-        self.Q_balance_change: np.ndarray
-        self.Q_excitation_change: np.ndarray
+        self.Q_balance_change = Q_bal_change
+        self.Q_excitation_change = Q_exc_change
 
     def f_F(self, X: np.ndarray, dVx: float = 0.0):
         X[1] += X[2] * dVx
@@ -78,6 +83,11 @@ class TDPTBalanceParms():
     RdQ: float
     M: float
     RM: float
+    R: float
+
+    def spool(self) -> List[float]:
+        return self.Cac, self.dMdW, self.Yb, self.Ydis, self.Wb, \
+                self.dQ, self.RdQ, self.M, self.RM, self.R
 
 @dataclass
 class TDPTFilterParms():
@@ -86,6 +96,11 @@ class TDPTFilterParms():
     Wfilter_x: float
     Wfilter_P: float
 
+    def spool(self) -> List[float]:
+        G, Cac, dCacdVx = self.Cfilter_x
+        RG, RCac, RdCacdVx = np.diagonal(self.Cfilter_P)
+        return G, Cac, dCacdVx, RG, RCac, RdCacdVx, self.Wfilter_x, self.Wfilter_P
+
 @dataclass
 class TDPTBalanceResult():
     status      : bool
@@ -93,20 +108,40 @@ class TDPTBalanceResult():
     prev_parms  : TDPTBalanceParms | None
     filter_parms: TDPTFilterParms
 
+    def spool(self) -> list[int | float | None]:
+        parms = self.parms.spool()
+        if self.prev_parms is None:
+            prev_parms = [None]*len(parms)
+        else:
+            prev_parms = self.prev_parms.spool()
+
+        return int(self.status), *parms, *prev_parms, *self.filter_parms.spool()
+
 @dataclass
 class TDPTContext():
     exc: pulsePair
     dis: pulsePair
     pulse_height_res: float
+
     averager: wfAverager
     Cac_balance: wfBalance   # Ordinarily wfJump
+    max_Y: float
     C_error_thresh: float
+
+    C_bal_change_Q: np.ndarray
+    C_exc_change_Q: np.ndarray
 
     W_balance: wfBalance     # Ordinarily wfSlope
     min_W: float
     max_W: float
     W_res: float
     W_error_thresh: float
+
+    W_bal_change_Q: float
+    W_exc_change_Q: float
+
+    max_refinement_dYexc: float = np.inf
+    max_refinement_dYdis: float = np.inf
 
     settle_time: float = 0.1
     max_tries: int = 10
@@ -121,8 +156,8 @@ class TDPTContext():
         self.prev_result: TDPTBalanceResult | None = None
 
     def add_filters(self, G: float, Cac: float, PCac: np.ndarray, dMdW: float, PdMdW: float):
-        self.wfilter = WFilter(self.support, self.order, dMdW, PdMdW)
-        self.cfilter = CFilter(G, Cac, PCac)
+        self.wfilter = WFilter(self.support, self.order, self.W_bal_change_Q, self.W_exc_change_Q, dMdW, PdMdW)
+        self.cfilter = CFilter(self.C_bal_change_Q, self.C_exc_change_Q, G, Cac, PCac)
         
     def clear_filters(self):
         self.wfilter = None
@@ -132,17 +167,30 @@ class TDPTContext():
         self.cfilter.predict(dVx)
 
     def update_Cac(self, z: float, R: float, VY: float, VX: float):
+        # We explicitly prevent any unphysical changes in the sign of Cac or G
+        # and warn when they are requested
+        old_Cac = self.cfilter.x[1]
+        old_G = self.cfilter.x[0]
         self.cfilter.update(z, R, VY, VX)
+        Cac = self.cfilter.x[1]
+        G = self.cfilter.x[0]
+
+        if old_Cac * Cac < 0:
+            self.log(
+                f"WARNING: Requested sign change in Cac estimate is ignored\n"
+                f"         Was {old_Cac:.5e}, requested {Cac:.5e}."
+            )
+            self.cfilter.x[1] = old_Cac
+
+        if old_G * G < 0:
+            self.log(
+                f"WARNING: Requested sign change in G estimate is ignored\n"
+                f"         Was {old_G:.5e}, requested {G:.5e}."
+            )
+            self.cfilter.x[0] = old_G
 
     def get_Cac(self) -> float:
-        Cac = self.cfilter.x[0]
-        if Cac < 0:
-            self.log(
-                f"WARNING: Cac estimate is currently negative ({Cac:.5e}).\n"
-                "Ignoring sign change."
-            )
-            Cac = - Cac
-        return Cac
+        return self.cfilter.x[1]
 
     def predict_dMdW_balance_change(self):
         self.wfilter.kalman.predict(True)
@@ -151,7 +199,15 @@ class TDPTContext():
         self.wfilter.kalman.predict(False)
 
     def update_dMdW(self, dMdW: float, R: float):
-        self.wfilter.kalman.update(dMdW, R)
+        # If there is a sign change, we ignore this
+        old_dMdW = self.wfilter.kalman.x
+        if old_dMdW * dMdW < 0:
+            self.log(
+                f"WARNING: Requested sign change in dMdW estimate is ignored\n"
+                f"         Was {old_dMdW:.5e}, requested {dMdW:.5e}."
+            )
+        else:
+            self.wfilter.kalman.update(dMdW, R)
 
     def get_dMdW(self) -> float:
         return self.wfilter.kalman.x
@@ -216,6 +272,10 @@ def initialBalanceTDPT(
             return -ctx.exc.Y() / Xexc
         Yb = -C * Xexc
         Ydis = -C * Xdis
+
+        if abs(Yb) > ctx.max_Y or abs(Ydis) > ctx.max_Y:
+            raise RuntimeError(f"Requested Y settings exceed the rails (Yb = {Yb:.5e}, Ydis = {Ydis:.5e})")
+
         ctx.exc.Y(Yb)
         ctx.dis.Y(Ydis)
 
@@ -333,6 +393,15 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
                 ctx.log(f"Requested change in Ydis ({temp_Ydis - pYdis:.5e}) "
                         "exceeded the value allowed for refinements!\n")
 
+        # Check the rails on out Y values
+        if abs(Yb) > ctx.max_Y:
+            ctx.log(f"WARNING: Requested Yb ({Yb:.5e}) exceeds the rails; Truncating...")
+            Yb = min(ctx.max_Y, max(-ctx.max_Y, Yb))
+
+        if abs(Ydis) > ctx.max_Y:
+            ctx.log(f"WARNING: Requested Ydis ({Ydis:.5e}) exceeds the rails; Truncating...")
+            Ydis = min(ctx.max_Y, max(-ctx.max_Y, Ydis))
+
         # Set the expected balance parameters    
         ctx.log(
             f"Moving to predicted balance point:\n"
@@ -356,10 +425,11 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
         ctx.averager.take_curve()
         dQ, RdQ = ctx.Cac_balance()
         M, RM = ctx.W_balance()
+        dMdW_ = ctx.get_dMdW()
 
-        # Update the bracketing on W; We infer which bound needs to be updated  ################### NEED TO FIX THIS / RECONSIDER
-        # based on the sign of dM/dW (inferred from Xdis) and M.                ################### BROADLY THERE ARE SIGN CHANGE REQUESTS THAT I SHOULD NOT RESPECT...
-        if M * Xdis > 0:
+        # Update the bracketing on W; We infer which bound needs to be updated
+        # based on the sign of dM/dW and M.
+        if M * dMdW_ > 0:
             W_high = min(W_high, Wb)
         else:
             W_low = max(W_low, Wb)
@@ -368,16 +438,13 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
 
         # Kalman updates based on the measurement
         ctx.update_Cac(dQ, RdQ, Yb, Xexc)
+
         if itr != 0:
             # If this is not the first iteration, we update dM/dW
             dM = M - pM
             dW = Wb - pWb
             o_dMdW = dM / dW
             R = (RM + pRM) / dW**2 + (ctx.W_res * o_dMdW / dW)**2
-
-            # We warn if there is a sign inconsistent with the sign of Xdis
-            if Xdis * o_dMdW < 0:
-                ctx.log(f"Inconsistent signs of discharge pulse and slope change.") ############## NEED TO FIX THIS / RECONSIDER (DO I NEED TO EXPLICITLY CORRECT FOR THIS??)
 
             ctx.update_dMdW(o_dMdW, R)
 
@@ -391,8 +458,8 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
         #Update the new predicted balance parameters
         Cac = ctx.get_Cac()
         dMdW = ctx.get_dMdW()
-        Yb = Cac * Xexc
-        Ydis = Cac * Xdis
+        Yb = -Cac * Xexc
+        Ydis = -Cac * Xdis
 
         # W undergoes bracketed root finding
         Wb -= M / dMdW
@@ -432,6 +499,7 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
                     RdQ = RdQ,
                     M = M,
                     RM = RM,
+                    R = R,
                 ),
                 prev_parms = TDPTBalanceParms(
                     Cac = pCac,
@@ -443,6 +511,7 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
                     RdQ = pRdQ,
                     M = pM,
                     RM = pRM,
+                    R = pR,
                 ) if itr != 0 else None,
                 filter_parms = ctx.getFilterParms(),
             )
@@ -465,6 +534,7 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
                 RdQ = RdQ,
                 M = M,
                 RM = RM,
+                R = R,
             ),
             prev_parms = TDPTBalanceParms(
                 Cac = pCac,
@@ -476,6 +546,7 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
                 RdQ = pRdQ,
                 M = pM,
                 RM = pRM,
+                R = pR,
             ) if itr != 0 else None,
             filter_parms = ctx.getFilterParms(),
         )
