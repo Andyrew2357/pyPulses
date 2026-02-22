@@ -26,27 +26,34 @@ class WFilter():
         self.order = order
         self.W_hist = deque(maxlen = support)
         
-        self.Q_balance_change = Q_bal_change
-        self.Q_excitation_change = Q_exc_change
+        self.Q_balance_change = np.array([[Q_bal_change]])
+        self.Q_excitation_change = np.array([[Q_exc_change]])
         self.kalman = kalman(
             f_F = self.f_F,
             h_H = self.h_H,
-            x = dMdW,
-            P = P,
+            x = np.array([[dMdW]]),
+            P = np.array([[P]]),
         )
 
     def f_F(self, dMdW: float, balance_change: bool) -> Tuple[float, float, float]:
         Q = self.Q_balance_change if balance_change else self.Q_excitation_change
-        return dMdW, 1, Q
+        return dMdW, np.eye(1), Q
     
     def h_H(self, dMdW) -> Tuple[float, float]:
-        return dMdW, 1 
+        return dMdW, np.eye(1)
 
     def append(self, W: float):
         self.W_hist.append(W)
 
     def extrapolate(self) -> float:
         return extrap(self.W_hist, self.order)
+    
+    def __str__(self):
+        return (
+            f"WFilter:\n"
+            f"  dMdW: {self.kalman.x.item():.5e} ± {np.sqrt(self.kalman.P.item()):.5e}\n"
+            f"  W history: {list(self.W_hist)}\n"
+        )
 
 class CFilter(kalman):
     def __init__(self, Q_bal_change: np.ndarray, Q_exc_change: np.ndarray, G: float, Cac: float, P: np.ndarray):
@@ -57,20 +64,28 @@ class CFilter(kalman):
             P = P,
         )
 
-        self.Q_balance_change = Q_bal_change
-        self.Q_excitation_change = Q_exc_change
+        self.Q_balance_change = np.diag(Q_bal_change)
+        self.Q_excitation_change = np.diag(Q_exc_change)
 
     def f_F(self, X: np.ndarray, dVx: float = 0.0):
-        X[1] += X[2] * dVx
+        X[1, 0] += X[2, 0] * dVx
         F = np.eye(3)
         F[1, 2] += dVx
         Q = self.Q_balance_change if dVx == 0 else self.Q_excitation_change
         return X, F, Q
 
     def h_H(self, X: np.ndarray, VY: float, VX: float):
-        z = X[0] * (VY - X[1] * VX)
-        H = np.array([VY - X[1] * VX, -X[0] * VX, 0]).reshape(1, -1)
+        z = np.array([[X[0, 0] * (VY + X[1, 0] * VX)]])
+        H = np.array([[VY + X[1, 0] * VX, X[0, 0] * VX, 0]])
         return z, H
+    
+    def __str__(self):
+        G, Cac, _ = self.x.flatten()
+        return (
+            f"CFilter:\n"
+            f"  G: {G:.5e} ± {np.sqrt(self.P[0,0]):.5e}\n"
+            f"  Cac: {Cac:.5e} ± {np.sqrt(self.P[1,1]):.5e}\n"
+        )
 
 @dataclass
 class TDPTBalanceParms():
@@ -121,7 +136,7 @@ class TDPTBalanceResult():
 class TDPTContext():
     exc: pulsePair
     dis: pulsePair
-    pulse_height_res: float
+    pulse_height_res: float # TODO FACTOR THIS INTO TERMINATION CONDITION (DO THE SAME WITH DISCHARGE)
 
     averager: wfAverager
     Cac_balance: wfBalance   # Ordinarily wfJump
@@ -169,28 +184,27 @@ class TDPTContext():
     def update_Cac(self, z: float, R: float, VY: float, VX: float):
         # We explicitly prevent any unphysical changes in the sign of Cac or G
         # and warn when they are requested
-        old_Cac = self.cfilter.x[1]
-        old_G = self.cfilter.x[0]
-        self.cfilter.update(z, R, VY, VX)
-        Cac = self.cfilter.x[1]
-        G = self.cfilter.x[0]
-
+        old_Cac = self.cfilter.x[1, 0]
+        old_G = self.cfilter.x[0, 0]
+        self.cfilter.update(np.array([[z]]), np.array([[R]]), VY, VX)
+        Cac = self.cfilter.x[1, 0]
+        G = self.cfilter.x[0, 0]
         if old_Cac * Cac < 0:
             self.log(
                 f"WARNING: Requested sign change in Cac estimate is ignored\n"
                 f"         Was {old_Cac:.5e}, requested {Cac:.5e}."
             )
-            self.cfilter.x[1] = old_Cac
+            self.cfilter.x[1, 0] = old_Cac
 
         if old_G * G < 0:
             self.log(
                 f"WARNING: Requested sign change in G estimate is ignored\n"
                 f"         Was {old_G:.5e}, requested {G:.5e}."
             )
-            self.cfilter.x[0] = old_G
+            self.cfilter.x[0, 0] = old_G
 
     def get_Cac(self) -> float:
-        return self.cfilter.x[1]
+        return self.cfilter.x[1, 0]
 
     def predict_dMdW_balance_change(self):
         self.wfilter.kalman.predict(True)
@@ -200,17 +214,17 @@ class TDPTContext():
 
     def update_dMdW(self, dMdW: float, R: float):
         # If there is a sign change, we ignore this
-        old_dMdW = self.wfilter.kalman.x
+        old_dMdW = self.wfilter.kalman.x.item()
         if old_dMdW * dMdW < 0:
             self.log(
                 f"WARNING: Requested sign change in dMdW estimate is ignored\n"
                 f"         Was {old_dMdW:.5e}, requested {dMdW:.5e}."
             )
         else:
-            self.wfilter.kalman.update(dMdW, R)
+            self.wfilter.kalman.update(np.array([[dMdW]]), np.array([[R]]))
 
     def get_dMdW(self) -> float:
-        return self.wfilter.kalman.x
+        return self.wfilter.kalman.x.item()
 
     def extrapolate_W(self) -> float:
         return self.wfilter.extrapolate()
@@ -247,6 +261,19 @@ class TDPTInitialResult():
     A: np.ndarray
     b: np.ndarray
     x0: np.ndarray
+
+    def __str__(self):
+        return (
+            f"TDPT Initial Balance Result:\n"
+            f"  C_success: {self.C_success}\n"
+            f"  W_success: {self.W_success}\n"
+            f"  bal_success: {self.bal_success}\n"
+            f"  C_err: {self.C_err:.5e}\n"
+            f"  W_err: {self.W_err:.5e}\n"
+            f"  A: {self.A}\n"
+            f"  b: {self.b}\n"
+            f"  x0: {self.x0}\n"
+        )
 
 def initialBalanceTDPT(
     ctx: TDPTContext, 
@@ -315,7 +342,7 @@ def initialBalanceTDPT(
     G = G_s.mean()
     C_stack = np.vstack([G_s - G, C_ac_s - C_ac])
     PCac_small = C_stack @ C_stack.T
-    PCac = np.block([[PCac_small, np.zeros((2,1))], [np.zeros((1,2)), np.inf]]) / reps
+    PCac = np.block([[PCac_small, np.zeros((2,1))], [np.zeros((1,2)), 1e6]]) / reps
 
     dMdW = dMdW_s.mean()
     PdMdW = dMdW_s.std()**2
@@ -328,7 +355,7 @@ def initialBalanceTDPT(
     Cac_err = ctx.Cac_balance()[0]
     Dis_err = ctx.W_balance()[0]
     ctx.add_filters(G, C_ac, PCac, dMdW, PdMdW)
-    return TDPTInitialResult(
+    result = TDPTInitialResult(
         C_success = np.abs(Cac_err) < C_err_thresh,
         W_success = np.abs(Dis_err) < W_err_thresh,
         bal_success = bal.success,
@@ -338,6 +365,20 @@ def initialBalanceTDPT(
         b = b,
         x0 = x0,
     )
+    ctx.log(result)
+    ctx.log(
+        f"Initial estimates:\n"
+        f"{ctx.wfilter}\n"
+        f"{ctx.cfilter}\n"
+    )
+    # Check for sign consistency. We expect that the following is positive
+    if G*dMdW*Xdis < 0:
+        ctx.log(
+            f"WARNING: Estimated parameters suggest that the balance point is unstable!\n"
+            f"         G = {G:.5e}, dMdW = {dMdW:.5e}, Xdis = {Xdis:.5e}\n"
+            f"         Please check the system and adjust the initial balance parameters."
+        )
+    return result
 
 def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
     if ctx.wfilter is None or ctx.cfilter is None:
@@ -405,7 +446,7 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
         # Set the expected balance parameters    
         ctx.log(
             f"Moving to predicted balance point:\n"
-            f"  Cac = {Cac:.5e}, dMdW = {Cac:.5e}\n"
+            f"   Cac = {Cac:.5e}, dMdW = {dMdW:.5e}\n"
             f"  Yexc = {Yb:.5e}\n"
             f"  Ydis = {Ydis:.5e}\n"
             f"     W = {Wb:.5e}"
