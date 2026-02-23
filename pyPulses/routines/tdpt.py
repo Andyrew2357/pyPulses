@@ -106,16 +106,16 @@ class CFilter(kalman):
 
 @dataclass
 class TDPTBalanceParms():
-    Cac: float
-    dMdW: float
-    Yb: float
-    Ydis: float
-    Wb: float
-    dQ: float
-    RdQ: float
-    M: float
-    RM: float
-    R: float
+    Cac : float | None = None
+    dMdW: float | None = None
+    Yb  : float | None = None
+    Ydis: float | None = None
+    Wb  : float | None = None
+    dQ  : float | None = None 
+    RdQ : float | None = None
+    M   : float | None = None
+    RM  : float | None = None
+    R   : float | None = None
 
     def spool(self) -> List[float]:
         return self.Cac, self.dMdW, self.Yb, self.Ydis, self.Wb, \
@@ -125,8 +125,8 @@ class TDPTBalanceParms():
 class TDPTFilterParms():
     Cfilter_x: np.ndarray
     Cfilter_P: np.ndarray
-    Wfilter_x: np.ndarray
-    Wfilter_P: np.ndarray
+    Wfilter_x: float
+    Wfilter_P: float
 
     def spool(self) -> List[float]:
         G, Cac, dCacdVx = self.Cfilter_x
@@ -136,6 +136,7 @@ class TDPTFilterParms():
 @dataclass
 class TDPTBalanceResult():
     status      : bool
+    iterations  : int
     parms       : TDPTBalanceParms
     prev_parms  : TDPTBalanceParms | None
     filter_parms: TDPTFilterParms
@@ -147,7 +148,7 @@ class TDPTBalanceResult():
         else:
             prev_parms = self.prev_parms.spool()
 
-        return int(self.status), *parms, *prev_parms, *self.filter_parms.spool()
+        return int(self.status), self.iterations, *parms, *prev_parms, *self.filter_parms.spool()
 
 @dataclass
 class TDPTContext():
@@ -250,12 +251,12 @@ class TDPTContext():
     def append_W(self, W: float):
         self.wfilter.append(W)
 
-    def getFilterParms(self) -> TDPTFilterParms:
+    def get_filter_parms(self) -> TDPTFilterParms:
         return TDPTFilterParms(
             Cfilter_x = self.cfilter.x.flatten(),
             Cfilter_P = self.cfilter.P,
-            Wfilter_x = self.wfilter.kalman.x,
-            Wfilter_P = self.wfilter.kalman.P,
+            Wfilter_x = np.array([self.wfilter.kalman.x.item()]),
+            Wfilter_P = self.wfilter.kalman.P.item(),
         )
 
     def log(self, *args):
@@ -555,8 +556,8 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
             f" Yexc = {Yb:.5e}\n"
             f" Ydis = {Ydis:.5e}\n"
             f"    W = {Wb:.5e}\n"
-            f"   dQ = {dQ:.5e} ± {RdQ:.5e}\n"
-            f"    M = {M:.5e} ± {RM:.5e}"
+            f"   dQ = {dQ:.5e} ± {np.sqrt(RdQ):.5e}\n"
+            f"    M = {M:.5e} ± {np.sqrt(RM):.5e}"
         )
         exc_sat = abs(dQ) < ctx.C_error_thresh
         dis_sat = abs(M) < ctx.W_error_thresh or (W_high - W_low) < ctx.W_res
@@ -577,6 +578,7 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
 
             return TDPTBalanceResult(
                 status = True,
+                iterations = itr + 1,
                 parms = TDPTBalanceParms(
                     Cac = Cac,
                     dMdW = dMdW,
@@ -600,8 +602,8 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
                     M = pM,
                     RM = pRM,
                     R = pR,
-                ) if itr != 0 else None,
-                filter_parms = ctx.getFilterParms(),
+                ) if itr != 0 else TDPTBalanceParms(),
+                filter_parms = ctx.get_filter_parms(),
             )
         
         pdQ = dQ
@@ -612,6 +614,7 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
     else:
         return TDPTBalanceResult(
             status = False,
+            iterations = ctx.max_tries,
             parms = TDPTBalanceParms(
                 Cac = Cac,
                 dMdW = dMdW,
@@ -636,5 +639,5 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
                 RM = pRM,
                 R = pR,
             ) if itr != 0 else None,
-            filter_parms = ctx.getFilterParms(),
+            filter_parms = ctx.get_filter_parms(),
         )
