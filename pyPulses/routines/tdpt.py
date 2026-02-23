@@ -54,7 +54,14 @@ class WFilter():
             f"  dMdW: {self.kalman.x.item():.5e} ± {np.sqrt(self.kalman.P.item()):.5e}\n"
             f"  W history: {list(self.W_hist)}\n"
         )
-
+    
+    def status_string(self) -> str:
+        return (
+            f"     State: dMdW = {self.kalman.x.item():.5e}\n"
+            f"     Covariance: {self.kalman.P.item():.5e}\n"
+            f"     W history: {list(self.W_hist)}"
+        )
+    
 class CFilter(kalman):
     def __init__(self, Q_bal_change: np.ndarray, Q_exc_change: np.ndarray, G: float, Cac: float, P: np.ndarray):
         super().__init__(
@@ -86,6 +93,16 @@ class CFilter(kalman):
             f"  G: {G:.5e} ± {np.sqrt(self.P[0,0]):.5e}\n"
             f"  Cac: {Cac:.5e} ± {np.sqrt(self.P[1,1]):.5e}\n"
         )
+    
+    def status_string(self) -> str:
+        return (
+            f"     State: G = {self.x[0,0]:.5e}, Cac = {self.x[1,0]:.5e}, dCacdVx = {self.x[2,0]:.5e}\n"
+            f"     Covariance: ┏                                      ┓\n"
+            f"                 ┃ {f"{self.P[0,0]:.5e}":<12}{f"{self.P[0,1]:.5e}":>12}{f"{self.P[0,2]:.5e}":>12} ┃\n"
+            f"                 ┃ {f"{self.P[1,0]:.5e}":<12}{f"{self.P[1,1]:.5e}":>12}{f"{self.P[1,2]:.5e}":>12} ┃\n"
+            f"                 ┃ {f"{self.P[2,0]:.5e}":<12}{f"{self.P[2,1]:.5e}":>12}{f"{self.P[2,2]:.5e}":>12} ┃\n"
+            f"                 ┗                                      ┛"
+        )
 
 @dataclass
 class TDPTBalanceParms():
@@ -108,8 +125,8 @@ class TDPTBalanceParms():
 class TDPTFilterParms():
     Cfilter_x: np.ndarray
     Cfilter_P: np.ndarray
-    Wfilter_x: float
-    Wfilter_P: float
+    Wfilter_x: np.ndarray
+    Wfilter_P: np.ndarray
 
     def spool(self) -> List[float]:
         G, Cac, dCacdVx = self.Cfilter_x
@@ -163,6 +180,7 @@ class TDPTContext():
     order: int = 3
     support: int = 5
     iteration_callback: Callable = None
+    post_iteration_callback: Callable = None
     logger: logging.Logger = None
 
     def __post_init__(self):
@@ -243,6 +261,13 @@ class TDPTContext():
     def log(self, *args):
         if self.logger:
             self.logger.info(*args)
+
+    def log_filter_status(self):
+        self.log("="*80)
+        self.log(self.cfilter.status_string())
+        self.log("-"*80)
+        self.log(self.wfilter.status_string())
+        self.log("="*80)
 
 def _limit_change(v, old_v, max_dv) -> Tuple[float, bool]:
     if v > old_v + max_dv:
@@ -412,8 +437,11 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
 
     for itr in range(ctx.max_tries):
         _checkpoint()
+
         if ctx.iteration_callback:
             ctx.iteration_callback(itr, ctx)
+
+        ctx.log_filter_status()
 
         # Predict excpected balance parameters
         Cac = ctx.get_Cac()
@@ -480,10 +508,10 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
         # Kalman updates based on the measurement
         ctx.update_Cac(dQ, RdQ, Yb, Xexc)
 
-        if itr != 0:
+        dW = Wb - pWb
+        if itr != 0 and abs(dW) > ctx.W_res:
             # If this is not the first iteration, we update dM/dW
             dM = M - pM
-            dW = Wb - pWb
             o_dMdW = dM / dW
             R = (RM + pRM) / dW**2 + (ctx.W_res * o_dMdW / dW)**2
 
@@ -521,8 +549,27 @@ def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
             Wb = W_low
 
         # Check for termination
+        ctx.log(
+            f"Iteration {itr} results:\n"
+            f"  Cac = {Cac:.5e}, dMdW = {dMdW:.5e}\n"
+            f" Yexc = {Yb:.5e}\n"
+            f" Ydis = {Ydis:.5e}\n"
+            f"    W = {Wb:.5e}\n"
+            f"   dQ = {dQ:.5e} ± {RdQ:.5e}\n"
+            f"    M = {M:.5e} ± {RM:.5e}"
+        )
         exc_sat = abs(dQ) < ctx.C_error_thresh
         dis_sat = abs(M) < ctx.W_error_thresh or (W_high - W_low) < ctx.W_res
+        ctx.log(
+            f"  Excitation balance {'satisfied' if exc_sat else 'not satisfied'} "
+            f"(|dQ| = {abs(dQ):.5e} {'<' if exc_sat else '>'} {ctx.C_error_thresh:.5e})\n"
+            f"  Discharge balance {'satisfied' if dis_sat else 'not satisfied'} "
+            f"(|M| = {abs(M):.5e} {'<' if dis_sat else '>'} {ctx.W_error_thresh:.5e}, "
+            f"W bracket = [{W_low:.5e}, {W_high:.5e}])"
+        )
+
+        if ctx.post_iteration_callback:
+            ctx.post_iteration_callback(itr, ctx)
 
         if exc_sat and dis_sat:
             # Append the latest W balance point to the context
