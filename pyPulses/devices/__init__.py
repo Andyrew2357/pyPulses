@@ -10,7 +10,7 @@ from .ad5791 import ad5791
 from .ad9854 import ad9854
 from .cryomagnetics_4G import cryomagnetics4G
 from .dtg import dtg5274
-from .dtg_diff_pair import dtgDifferentialPair
+from .dtg_comp_pair import dtgCompPair
 from .fastflight2 import FastFlight2
 # from .hemt_amp import HEMTCommonSource
 from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel, 
@@ -26,8 +26,7 @@ from .pcm1704 import pcm1704
 from .pid_dcbox import PIDbox
 from .pulse_pair import pulsePair
 from .srs_lockin import (sr830, sr844, sr850, sr860, sr865a)
-from .wfatd import (wfAverager, wfBalance, wfJump, wfJumpMasked, wfSlope, 
-                    wfSlopeMasked)
+
 
 __all__ = [
     "ad5764",
@@ -35,7 +34,7 @@ __all__ = [
     "ad9854",
     "cryomagnetics4G",
     "DeviceRegistry",
-    "dtgDifferentialPair",
+    "dtgCompPair",
     "dtg5274",
     "FastFlight2",
     # "HEMTCommonSource",
@@ -59,12 +58,6 @@ __all__ = [
     "sr850",
     "sr860",
     "sr865a",
-    "wfAverager", 
-    "wfBalance", 
-    "wfJump",
-    "wfJumpMasked",
-    "wfSlope",
-    "wfSlopeMasked",
 ]
 
 visa_dll = 'C:/Windows/System32/visa64.dll'

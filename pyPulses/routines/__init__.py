@@ -9,7 +9,8 @@ from .R_predictor import RPredictor
 from .tdpt import (balanceTDPT, initialBalanceTDPT, TDPTBalanceResult, 
                    TDPTContext, TDPTInitialResult)
 from .test_gates import GateTest
-from .wf_balance import wfBalanceKnob, wfBalance, wfBalanceResult
+from ..routines.wfatd import (wfAverager, wfBalance, wfJump, wfJumpMasked, wfSlope, 
+                    wfSlopeMasked)
 
 __all__ =[
     "balanceCapBridge",
@@ -30,7 +31,10 @@ __all__ =[
     "TDPTContext",
     "TDPTInitialResult",
     "TwoPointCapBalance",
-    "wfBalance",
-    "wfBalanceKnob",
-    "wfBalanceResult",
+    "wfAverager", 
+    "wfBalance", 
+    "wfJump",
+    "wfJumpMasked",
+    "wfSlope",
+    "wfSlopeMasked",
 ]

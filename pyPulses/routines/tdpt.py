@@ -1,102 +1,967 @@
-from .wf_balance import wfBalanceKnob, balance_against_waveform
+from .balance_parameter import balanceKnob
+from .linear_balance import lstsqBalance, bracket1d
+from .wfatd import wfAverager, wfBalance, wfCurveData
+
 from ..utils import kalman
 from ..devices.pulse_pair import pulsePair
-from ..devices.wfatd import wfAverager, wfBalance
 from ..thread_job import _checkpoint
 
-import logging
 from dataclasses import dataclass
-from collections import deque
 import numpy as np
+import logging
+import time
+import json
 
-from typing import Callable, List, Tuple
+from typing import Any, Callable, Tuple
 
-def extrap(x: np.ndarray, order: int) -> float:
-    coeff = np.polyfit(np.arange(len(x)), x, min(order, len(x) - 1))        
-    poly = np.poly1d(coeff)
-    return poly(len(x))
+@dataclass
+class _TDPT_CONF_CLASS():
+    """There are some magic numbers that we wrap in a little config"""
+    HEURISTIC_NOISE_MULT    : float = 1.0e-3
+    DIS_INIT_BAL_UNC        : float = 0.0
+    DIS_INIT_EXC_UNC        : float = 0.0
+    DIS_INIT_P_MULT         : float = 1.0e-4
+    CAP_INIT_BAL_QG_MULT    : float = 1.0e-3
+    CAP_INIT_BAL_QC         : float = 1.0e-3
+    CAP_INIT_BAL_QdC        : float = 1.0e-4
+    CAP_INIT_EXC_QG_MULT    : float = 1.0e-2
+    CAP_INIT_EXC_QC         : float = 1.0e-3
+    CAP_INIT_EXC_QdC        : float = 1.0e-3
+    CAP_INIT_PG_MULT        : float = 0.1
+    CAP_INIT_PC             : float = 1.0e-3
+    CAP_INIT_PdC            : float = 1.0
+    dMdW_R_MULT             : float = 4.0
+    INT_ADJ_LAMBDA          : float = 1.0
+_TDPT_CONF = _TDPT_CONF_CLASS()
 
-class WFilter():
-    def __init__(self, 
-        Q_bal_change: float, Q_exc_change: float, 
-        support: int, order: int, 
-        dMdW: float, P: float
+@dataclass
+class TDPTContext: ...
+
+@dataclass
+class TDPT_control_state: ...
+
+@dataclass
+class TDPT_error_state: ...
+
+@dataclass
+class TDPT_optimal_state: ...
+
+TDPT_POST_CALLBACK = Callable[[TDPTContext, TDPT_control_state, TDPT_error_state, TDPT_optimal_state, wfCurveData], Any]
+TDPT_PRE_CALLBACK = Callable[[TDPTContext, TDPT_control_state, TDPT_error_state, TDPT_optimal_state], Any]
+
+@dataclass
+class TDPTContext():
+
+    averager: wfAverager
+    charge_pair: pulsePair
+    
+    capacitance_error: wfBalance
+    capacitance_error_threshold: float = 1e-3
+    max_pulse_height: float = 50.0e-3
+
+    # If no discharge pulses are needed, these can be None
+    discharge_pair: pulsePair | None = None    
+    discharge_error: wfBalance | None = None
+    discharge_error_threshold: float = 40.0
+    min_pulse_width: float = 1.0e-6
+    max_pulse_width: float = 5.0e-6
+
+    # If no discharge pulses are needed, or integrated errors are not a concern,
+    # these can be None
+    integrated_error: wfBalance | None = None
+    integrated_error_threshold: float = 1.0e-6
+
+    # Maximum discharge pulse width setting beyond which we consider changing
+    # the Y2 amplitude
+    dis_amp_adjustment_threshold: float = 4.0e-9
+
+    # Maximum steps to take in the controls for refinements
+    max_Y1_refinement: float = 2.0e-3
+    max_Y2_refinement: float = 2.0e-3
+    max_Y2_int_refinement: float = 100.0e-3
+    max_W_refinement: float = 5.0e-6
+
+    settle_time: float = 0.2
+    max_refinements: float = 3
+    good_sweep_threshold: int = 1 # Number of consecutive good sweeps needed
+
+    # Various checks to avoid dawdling over discharge conditions
+    bracket_rut_condition: int = 5 # Extra condition to decide that we have amalformed width bracket
+    bracket_min_width: float = 1.0e-8 # If the width bracket gets this small, we should clear one bound
+    max_dis_width_collisions: int = 3 # If the width is railed this many times without satisfaction, discharge balance is probably infeasible
+
+    high_resolution_sweep_multiplier: int = 1
+    dis_extrap_support: int = 7
+    dis_extrap_order: int = 2
+
+    pre_initial_trace_callback: Callable[[TDPTContext, TDPT_control_state], Any] | None = None
+    post_initial_trace_callback: TDPT_POST_CALLBACK |  None = None
+    pre_refinement_callback: TDPT_PRE_CALLBACK | None = None
+    post_refinement_callback: TDPT_POST_CALLBACK |  None = None
+
+    logger: logging.Logger | None = None
+
+    def __post_init__(self):
+        self.dis_filter: DischargeFilter | None = None
+        self.cap_filter: CapacitanceFilter | None = None
+        self._dis_width_bracket: bracket1d | None = None
+        self._previous_result: TDPT_filter_balance_result | None = None
+
+    @classmethod
+    def from_json(self, 
+        path: str, 
+        averager: wfAverager, 
+        charge_pair: pulsePair,
+        discharge_pair: pulsePair,
+        capacitance_error: wfBalance | None = None,
+        discharge_error: wfBalance | None = None,
+        integrated_error: wfBalance | None = None,
     ):
+        conf = json.load(path)
+
+        # MAYBE CONSIDER DOING THIS ANOTHER DAY WAY TOO CONFUSING / TIME CONSUMING
+        # if capacitance_error is None:
+        #     capacitance_error_kwargs = conf.get('capacitance_error_kwargs')
+        #     if capacitance_error_kwargs is None:
+        #         raise RuntimeError(
+        #             '`capacitance_error` is not provided, and the config contains no arguments for it'
+        #         )
+        #     capacitance_error = wfBalance._deserialize(averager, capacitance_error_kwargs)
+        # if discharge_error is None:
+        #     discharge_error_kwargs = conf.get('discharge_error_kwargs')
+        #     if discharge_error_kwargs is not None:
+        #         discharge_error = wfBalance._deserialize(averager, discharge_error_kwargs)
+        # if integrated_error is None:
+        #     integrated_error_kwargs = conf.get('integrated_error_kwargs')
+        #     if integrated_error_kwargs is not None:
+        #         integrated_error = wfBalance._deserialize(averager, integrated_error_kwargs)
+
+        obj = TDPTContext(
+            averager = averager,
+            charge_pair = charge_pair,
+            discharge_pair = discharge_pair,
+            capacitance_error = capacitance_error,
+            discharge_error = discharge_error,
+            integrated_error = integrated_error,
+        )
+        obj._deserialize_state(conf)
+        return obj
+
+    def load_state_json(self, path: str):
+        state = json.load(path)
+        self._deserialize_state(state)
         
-        self.order = order
-        self.W_hist = deque(maxlen = support)
+    def save_state_json(self, path: str):
+        json.dump(self._serialize_state(), path)
+    
+    def _serialize_state(self) -> dict:
+        result = {
+            'TDPTContext_kwargs': dict(
+                capacitance_error_threshold = float(self.capacitance_error_threshold),
+                max_pulse_height = float(self.max_pulse_height),
+                discharge_error_threshold = float(self.discharge_error_threshold),
+                min_pulse_width = float(self.min_pulse_width),
+                max_pulse_width = float(self.max_pulse_width),
+                integrated_error_threshold = float(self.integrated_error_threshold),
+                dis_amp_adjustment_threshold = float(self.dis_amp_adjustment_threshold),
+                max_Y1_refinement = float(self.max_Y1_refinement),
+                max_Y2_refinement = float(self.max_Y2_refinement),
+                max_Y2_int_refinement = float(self.max_Y2_int_refinement),
+                max_W_refinement = float(self.max_W_refinement),
+                settle_time = float(self.settle_time),
+                max_refinements = int(self.max_refinements),
+                good_sweep_threshold = int(self.good_sweep_threshold),
+                bracket_rut_condition = int(self.bracket_rut_condition),
+                bracket_min_width = float(self.bracket_min_width),
+                max_dis_width_collisions = int(self.max_dis_width_collisions),
+                high_resolution_sweep_multiplier = int(self.high_resolution_sweep_multiplier),
+                dis_extrap_support = int(self.dis_extrap_support),
+                dis_extrap_order = int(self.dis_extrap_order),
+            )
+        }
+        if self.cap_filter is not None:
+            result = {**result, **self.cap_filter._serialize_state()}
+        if self.dis_filter is not None:
+            result = {**result, **self.dis_filter._serialize_state()}
+
+        return result
+    
+    def _deserialize_state(self, state: dict):
+        TDPTContext_kwargs = state.get('TDPTContext_kwargs')
+        if TDPTContext_kwargs is None:
+            raise RuntimeError('No arguments are provided to load the state')
+        self = TDPTContext(
+            averager = self.averager,
+            charge_pair = self.charge_pair,
+            discharge_pair = self.discharge_pair,
+            capacitance_error = self.capacitance_error,
+            discharge_error = self.discharge_error,
+            integrated_error = self.integrated_error,
+            **TDPTContext_kwargs
+        )
+        CapacitanceFilter_kwargs = state.get('CapacitanceFilter_kwargs')
+        if CapacitanceFilter_kwargs is not None:
+            self.cap_filter = CapacitanceFilter(self)
+            self.cap_filter._deserialize_state(CapacitanceFilter_kwargs)
+        DischargeFilter_kwargs = state.get('DischargeFilter_kwargs')
+        if DischargeFilter_kwargs is not None:
+            self.dis_filter = DischargeFilter(self)
+            self.dis_filter._deserialize_state(DischargeFilter_kwargs)
+
+    def log(self, *args, **kwargs):
+        if self.logger:
+            self.logger(*args, **kwargs)
+
+    """Filter Actions"""
+
+    def add_discharge_filter(self, filter: DischargeFilter):
+        self.dis_filter = filter
+        filter.ctx = self
+
+    def add_capacitance_filter(self, filter: CapacitanceFilter):
+        self.cap_filter = filter
+        filter.ctx = self
+
+    def initialize_filters(self, 
+        pos_config: TDPT_initial_filter_config, 
+        neg_config: TDPT_initial_filter_config,
+    ):
+        self.initialize_positive_filter(pos_config)
+        self.initialize_negative_filter(neg_config)
+
+    def initialize_positive_filter(self, config: TDPT_initial_filter_config):
+        if self.cap_filter is None:
+            self.cap_filter = CapacitanceFilter(self)
+        self.cap_filter.positive_initialize(**config.cap_filter_init_parms)
+
+        if config.dis_filter_init_parms is not None:
+            if self.dis_filter is None:
+                self.dis_filter = DischargeFilter(self)
+            self.dis_filter.positive_initialize(**config.dis_filter_init_parms)
+
+    def initialize_negative_filter(self, config: TDPT_initial_filter_config):
+        if self.cap_filter is None:
+            self.cap_filter = CapacitanceFilter(self)
+        self.cap_filter.negative_initialize(**config.cap_filter_init_parms)
+
+        if config.dis_filter_init_parms is not None:
+            if self.dis_filter is None:
+                self.dis_filter = DischargeFilter(self)
+            self.dis_filter.negative_initialize(**config.dis_filter_init_parms)
+
+    def reinitialize_positive_filter(self):
+        self.cap_filter.positive_initialize()
+        if self.dis_filter is not None:
+            self.dis_filter.positive_initialize()
+
+    def reinitialize_negative_filter(self):
+        self.cap_filter.negative_initialize()
+        if self.dis_filter is not None:
+            self.dis_filter.negative_initialize()
+
+    def log_capacitance_filter_status(self):
+        self.log(
+            "AC Capacitance Filter Status:\n"
+            f"{self.cap_filter}"
+        )
+
+    def log_discharge_filter_status(self):
+        self.log(
+            "Discharge Filter Status:\n"
+            f"{self.dis_filter}"
+        )
+
+    def cap_process(self, balance_change: bool = True):
+        self.cap_filter.predict(balance_change)
+
+    def dis_process(self, balance_change: bool = True):
+        self.dis_filter.predict(balance_change)
+
+    def cap_update(self, dQ: float, dQ_R: float):
+        self.cap_filter.update(dQ, dQ_R)
+
+    def dis_update(self, o_dMdW: float, o_dMdW_R: float):
+        self.dis_filter.update(o_dMdW, o_dMdW_R)
+
+    def extrapolate_W0(self) -> float:
+        return self.dis_filter.extrapolate_W0()
+
+    """Excitation Parameters"""
+
+    def X1(self, v: float | None = None) -> float:
+        """
+        Amplitude of the X side of the charging pulse pair
+        """
+
+        if v is not None:
+            if not (-self.max_pulse_height <= v <= self.max_pulse_height):
+                tv = min(self.max_pulse_height, max(-self.max_pulse_height, v))
+                self.log(
+                    fR"Requested pulse $X_1$ ({v:.5e}) falls outside the allowed range.\n"
+                    fR"Truncating to {tv:.5e}."
+                )
+                v = tv
+            self.charge_pair.X(v)
+
+        set_v = self.charge_pair.X()
+        if self.cap_filter:
+            self.cap_filter.Xamp = set_v
         
-        self.Q_balance_change = np.array([[Q_bal_change]])
-        self.Q_excitation_change = np.array([[Q_exc_change]])
-        self.kalman = kalman(
-            f_F = self.f_F,
-            h_H = self.h_H,
-            x = np.array([[dMdW]]),
-            P = np.array([[P]]),
+        return set_v
+    
+    def Y1(self, v: float | None = None, v0: float | None = None) -> float:
+        """
+        Amplitude of the Y side of the charging pulse pair
+        """
+        
+        if v is not None:
+            if (v0 is not None) and abs(v - v0) > self.max_Y1_refinement:
+                tv = min(v0 + self.max_Y1_refinement, max(v0 - self.max_Y1_refinement, v))
+                self.log(
+                    fR"Requested change in $Y_1$ from {v0:.5e} to {v:.5e} exceeds the"
+                    fR" maximum allowed refinement ({self.max_Y1_refinement:.5e})\n"
+                    fR"Truncating to {tv:.5e}."
+                )
+                v = tv
+            if not (-self.max_pulse_height <= v <= self.max_pulse_height):
+                tv = min(self.max_pulse_height, max(-self.max_pulse_height, v))
+                self.log(
+                    fR"Requested pulse $Y_1$ ({v:.5e}) falls outside the allowed range.\n"
+                    fR"Truncating to {tv:.5e}."
+                )
+                v = tv
+            self.charge_pair.Y(v)
+
+        set_v = self.charge_pair.Y()
+        if self.cap_filter:
+            self.cap_filter.Yamp = set_v
+        
+        return set_v
+    
+    def X2(self, v: float | None = None) -> float:
+        """
+        Amplitude of the X side of the discharging pulse pair
+        """
+        if self.discharge_pair is None:
+            return
+
+        if v is not None:
+            if not (-self.max_pulse_height <= v <= self.max_pulse_height):
+                tv = min(self.max_pulse_height, max(-self.max_pulse_height, v))
+                self.log(
+                    fR"Requested pulse $X_2$ ({v:.5e}) falls outside the allowed range.\n"
+                    fR"Truncating to {tv:.5e}."
+                )
+                v = tv
+        return self.discharge_pair.X()
+    
+    def Y2(self, v: float | None = None, v0: float | None = None) -> float:
+        """
+        Amplitude of the Y side of the discharging pulse pair
+        """
+        if self.discharge_pair is None:
+            return
+
+        if v is not None:
+            if (v0 is not None) and abs(v - v0) > self.max_Y2_refinement:
+                tv = min(v0 + self.max_Y2_refinement, max(v0 - self.max_Y2_refinement, v))
+                self.log(
+                    fR"Requested change in $Y_2$ from {v0:.5e} to {v:.5e} exceeds the"
+                    fR" maximum allowed refinement ({self.max_Y2_refinement:.5e})\n"
+                    fR"Truncating to {tv:.5e}."
+                )
+                v = tv
+            if not (-self.max_pulse_height <= v <= self.max_pulse_height):
+                tv = min(self.max_pulse_height, max(-self.max_pulse_height, v))
+                self.log(
+                    fR"Requested pulse $Y_2$ ({v:.5e}) falls outside the allowed range.\n"
+                    fR"Truncating to {tv:.5e}."
+                )
+                v = tv
+            self.discharge_pair.Y(v)
+        return self.discharge_pair.Y()
+    
+    def set_Y2_integrated_balance(self, v: float, v0: float):
+        if abs(v - v0) > self.max_Y2_refinement:
+            tv = min(v0 + self.max_Y2_refinement, max(v0 - self.max_Y2_refinement, v))
+            self.log(
+                fR"Requested change in $Y_2$ from {v0:.5e} to {v:.5e} exceeds the"
+                fR" maximum allowed refinement for an integrated balance ({self.max_Y2_int_refinement:.5e})\n"
+                fR"Truncating to {tv:.5e}."
+            )
+            v = tv
+        self.discharge_pair.Y(v)
+        return self.discharge_pair.Y()
+
+    def W(self, w: float | None = None, w0: float | None = None) -> float:
+        """
+        Width of the discharging pulse pair
+        """
+
+        if w is not None:
+            if (w0 is not None) and abs(w - w0) > self.max_W_refinement:
+                tw = min(w0 + self.max_W_refinement, max(w0 - self.max_W_refinement, w))
+                self.log(
+                    fR"Requested change in $W$ from {w0:.5e} to {w:.5e} exceeds the"
+                    fR" maximum allowed refinement ({self.max_W_refinement:.5e})\n"
+                    fR"Truncating to {tw:.5e}."
+                )
+                w = tw
+            if not (self.min_pulse_width <= w <= self.max_pulse_width):
+                tw = min(self.max_pulse_width, max(self.min_pulse_width, v))
+                self.log(
+                    fR"Requested pulse $W$ ({w:.5e}) falls outside the allowed range.\n"
+                    fR"Truncating to {tw:.5e}."
+                )
+                w = tw
+            self.discharge_pair.W(w)
+        
+        return self.discharge_pair.W()
+    
+    """Utilities"""
+
+    def take_sweep(self, high_resolution: bool):
+        self.averager.take_curve( \
+            self.high_resolution_sweep_multiplier if high_resolution else 1)
+        
+    def get_curve_data(self) -> wfCurveData:
+        return self.averager.get_curve_data()
+
+    def predict_filter_change(self, balance_change: bool = True):
+        self.cap_filter.predict(balance_change)
+        if self.is_discharge():
+            self.dis_filter.predict(balance_change)
+
+    def get_G(self) -> float:
+        return self.cap_filter.get_G()
+
+    def get_Cac(self) -> float:
+        return self.cap_filter.get_Cac()
+
+    def get_dMdW(self) -> float:
+        return self.dis_filter.get_dMdW()
+
+    def is_discharge(self) -> bool:
+        return self.discharge_pair is not None
+    
+    def is_integrated(self) -> bool:
+        return self.integrated_error is not None
+    
+    def set_extrap_dis_width(self) -> float:
+        if len(self.dis_filter.W0_history) == 0:
+            return self.W()
+        W0extrap = self.dis_filter.extrapolate_W0()
+        return self.W(W0extrap)
+
+    def clear_dis_width_bracket(self):
+        del self._dis_width_bracket
+        self._dis_width_bracket = bracket1d(
+            self.min_pulse_width, 
+            self.max_pulse_width,
+            padding = 1e-10,
         )
 
-    def f_F(self, dMdW: float, balance_change: bool) -> Tuple[float, float, float]:
-        Q = self.Q_balance_change if balance_change else self.Q_excitation_change
-        return dMdW, np.eye(1), Q
-    
-    def h_H(self, dMdW) -> Tuple[float, float]:
-        return dMdW, np.eye(1)
+    def update_dis_width_bracket(self, W: float, M: float):
+        return self._dis_width_bracket.update(W, M, self.get_dMdW())
 
-    def append(self, W: float):
-        self.W_hist.append(W)
-
-    def extrapolate(self) -> float:
-        return extrap(self.W_hist, self.order)
+    def iterate_dis_width_bracket(self) -> Tuple[float | None, bool]:
+        return self._dis_width_bracket.iterate(self.get_dMdW())
     
-    def __str__(self):
+    def detect_bracket_rut(self, itr: int, good_count: int):
+        if itr - good_count > self.bracket_rut_condition:
+            return True
+        span = self._dis_width_bracket.span()
+        return (span is not None) and (span < self.bracket_min_width)
+    
+    def set_extrap_discharge_Y(self) -> float:
+        if len(self.dis_filter.Y2_history) == 0:
+            return self.Y2(-self.get_Cac() * self.X2())
+        Yextrap = self.dis_filter.extrapolate_Y2()
+        return self.Y2(Yextrap)
+
+def _extrap(x: np.ndarray, order: int) -> float:
+    coeff = np.polyfit(np.arange(len(x)), x, min(order, len(x) - 1))
+    poly = np.poly1d(coeff)
+    return float(poly(len(x)))
+
+class DischargeFilter():
+    """
+    Manages a Kalman Filter for dMdW and keeps track of discharge pulse width
+    history to extrapolate new balance points.
+    """
+
+    def __init__(self,ctx: TDPTContext | None = None):
+        
+        self.ctx = ctx # To which context are we tied
+        
+        # Generally the filters for a positive and negative excitation are distinct
+        self.is_positive_initialized = False
+        self.is_negative_initialized = False
+        self._positive_init_params: dict | None = None
+        self._negative_init_params: dict | None = None
+
+        # How to treat process noise
+        self.use_heuristic_process_noise = True
+        self._previous_dMdW: float | None = None
+
+        # These are unused if we use a heuristic process noise
+        self.balance_change_uncertainty: float | None = None # process noise on a balance change
+        self.excitation_change_uncertainty: float| None = None # process noise on an excitation change
+
+        # Since this filter is trivial, I forgo using my ordinary Kalman
+        # filter class and implement it directly.
+        self.dMdW: float | None = None # state
+        self.P: float | None = None # state uncertainty
+
+        self.W0_history = []
+        self.Y2_history = []
+
+    def add_context(self, ctx: TDPTContext):
+        self.ctx = ctx
+        ctx.dis_filter = self
+
+    def _initialize(self, init_params: dict):
+        self.balance_change_uncertainty = init_params.get('balance_change_uncertainty')
+        self.excitation_change_uncertainty = init_params.get('excitation_change_uncertainty')
+        self.dMdW = init_params.get('dMdW')
+        self._previous_dMdW = self.dMdW
+        self.P = init_params.get('P')
+        self.W0_history = []
+        self.Y2_history = []
+
+    def positive_initialize(self):
+        """
+        Set up the filter parameters to the initial conditions for a positive excitation.
+        """
+
+        if self.is_positive_initialized:
+            return
+        if self._positive_init_params is None:
+            raise RuntimeError(
+                "CapacitanceFilter has no positive initialization parameters to invoke."
+            )
+        self._initialize(self._positive_init_params)
+        self.is_negative_initialized = False
+        self.is_positive_initialized = True
+
+    def negative_initialize(self):
+        """
+        Set up the filter parameters to the initial conditions for a negative excitation.
+        """
+
+        if self.is_negative_initialized:
+            return
+        if self._negative_init_params is None:
+            raise RuntimeError(
+                "CapacitanceFilter has no negative initialization parameters to invoke."
+            )
+        self._initialize(self._negative_init_params)
+        self.is_negative_initialized = True
+        self.is_positive_initialized = False
+
+    def set_positive_init_params(self,
+        bal_change_Q: float, 
+        exc_change_Q: float,
+        dMdW: float,
+        P: float,
+    ):
+        self._positive_init_params = {
+            'balance_change_uncertainty': bal_change_Q,
+            'excitation_change_uncertainty': exc_change_Q,
+            'dMdW': dMdW,
+            'P': P,
+        }
+
+    def set_negative_init_params(self,
+        bal_change_Q: float, 
+        exc_change_Q: float,
+        dMdW: float,
+        P: float,
+    ):
+        self._negative_init_params = {
+            'balance_change_uncertainty': bal_change_Q,
+            'excitation_change_uncertainty': exc_change_Q,
+            'dMdW': dMdW,
+            'P': P,
+        }
+
+    def load_state_json(self, path: str):
+        self._deserialize_state(json.load(path).get('DischargeFilter_kwargs'))
+        
+    def save_state_json(self, path: str):
+        json.dump(self._deserialize_state(), path)
+    
+    def _serialize_state(self) -> dict:
+        return {
+            'DischargeFilter_kwargs': dict(
+                is_positive_initialized = self.is_positive_initialized,
+                is_negative_initialized = self.is_negative_initialized,
+                _positive_init_params = self._positive_init_params,
+                _negative_init_params = self._negative_init_params,
+                use_heuristic_process_noise = self.use_heuristic_process_noise,
+                _previous_dMdW = self._previous_dMdW,
+                balance_change_uncertainty = self.balance_change_uncertainty,
+                excitation_change_uncertainty = self.excitation_change_uncertainty,
+                dMdW = self.dMdW,
+                P = self.P,
+                W0_history = [float(v) for v in self.W0_history],
+                Y2_history = [float(v) for v in self.Y2_history],
+            )
+        }
+    
+    def _deserialize_state(self, state: dict):
+        self._positive_init_params = state.get('_positive_init_params')
+        self._negative_init_params = state.get('_negative_init_params')
+        self.is_positive_initialized = state.get('is_positive_initialized')
+        self.is_negative_initialized = state.get('is_negative_initialized')
+        if self.is_positive_initialized:
+            self.positive_initialize()
+        elif self.is_negative_initialized:
+            self.negative_initialize()
+        self.use_heuristic_process_noise = state.get('use_heuristic_process_noise')
+        self._previous_dMdW = state.get('_previous_dMdW')
+        self.balance_change_uncertainty = state.get('balance_change_uncertainty')
+        self.excitation_change_uncertainty = state.get('excitation_change_uncertainty')
+        self.dMdW = state.get('dMdW')
+        self.P = state.get('P')
+        self.W0_history = list(state.get('W0_history'))
+        self.Y2_history = list(state.get('Y2_history2'))
+
+    """Kalman Filter Functionality"""
+
+    def predict(self, 
+        heuristic_noise: bool | None = None, 
+        balance_change: bool = True
+    ):
+        """
+        Performs the Kalman prediction step. This filter is trivial, so this
+        just adds the process noise to P.
+
+        Parameters
+        ----------
+        heuristic_noise: bool
+            Whether we use the process noise parameter we're initialized with
+            or instead use the heuristic noise inferred from the previous state
+        balance_change : bool
+            Whether this prediction is induced by a balance change
+        """
+        
+        if balance_change:
+            if heuristic_noise is True or \
+                (heuristic_noise is None and self.use_heuristic_process_noise):
+                self.P += _TDPT_CONF.HEURISTIC_NOISE_MULT*((self.dMdW - self._previous_dMdW)**2 + self.dMdW**2)
+            else:
+                self.P += self.balance_change_uncertainty
+        else:
+            self.P += self.excitation_change_uncertainty
+
+    def update(self, o_dMdW: float, R: float):
+        """
+        Performs the Kalman update step. This filter is trivial, so the mixing
+        is very simple.
+
+        Parameters
+        ----------
+        o_dMdW : float
+            Observed change in discharge slope with respect to discharge pulse width
+        R : float
+            Uncertainty in `o_dMdW`
+        """
+
+        self._previous_dMdW = self.dMdW
+        K = self.P / (self.P + R)
+        self.dMdW += K * (o_dMdW - self.dMdW)
+        self.P *= (1 - K)
+
+
+    """Balance Point Extrapolation"""
+
+    def push_W0(self, W0: float):
+        """
+        Add a new discharge width balance point to the history
+        
+        Parameters
+        ----------
+        W0 : float
+            New good discharge pulse width
+        """
+        self.W0_history.append(W0)
+
+    def push_Y2(self, Y2: float):
+        """
+        Add a new discharge Y amplitude point to the history
+        
+        Parameters
+        ----------
+        Y2 : float
+            New discharge Y amplitude
+        """
+        self.Y2_history.append(Y2)
+
+    def extrapolate_W0(self) -> float:
+        """
+        Extrapolate the new discharge balance point from previous balance points
+
+        Returns
+        -------
+        float
+        """
+
+        # Truncate to support
+        self.W0_history = self.W0_history[-self.ctx.dis_extrap_support:]
+        return _extrap(self.W0_history, self.ctx.dis_extrap_order)
+    
+    def extrapolate_Y2(self) -> float:
+        """
+        Extrapolate the new discharge Y amplitude from previous balance points
+
+        Returns
+        -------
+        float
+        """
+
+        # Truncate to support
+        self.Y2_history = self.Y2_history[-self.ctx.dis_extrap_support:]
+        return _extrap(self.Y2_history, self.ctx.dis_extrap_order)
+
+    """Utilities"""
+
+    def get_dMdW(self) -> float:
+        return self.dMdW
+
+    def __str__(self) -> str:
         return (
-            f"WFilter:\n"
-            f"  dMdW: {self.kalman.x.item():.5e} ± {np.sqrt(self.kalman.P.item()):.5e}\n"
-            f"  W history: {list(self.W_hist)}\n"
+            fR"$dM/dW =$ {self.dMdW:.5e} $\pm$ {np.sqrt(self.P):.5e}\n"
+            fR"$W_0$ history: {self.W0_history}\n"
+            fR"$Y_2$ history: {self.Y2_history}\n"
         )
     
-    def status_string(self) -> str:
-        return (
-            f"     State: dMdW = {self.kalman.x.item():.5e}\n"
-            f"     Covariance: {self.kalman.P.item():.5e}\n"
-            f"     W history: {list(self.W_hist)}"
+
+class CapacitanceFilter():
+    """
+    Manages a Kalman Filter for G, Cac, and dCac. Semantically, these are the
+    effective gain from the balance point to the scope, the AC Capacitance ratio,
+    and the change in AC capacitance ratio upon a change in excitation settings.
+    """
+
+    def __init__(self, ctx: TDPTContext | None = None):
+
+        self.ctx = ctx
+
+        # Generally, the filters for positive and negative excitations are distinct
+        self.is_negative_initialized = False
+        self.is_positive_initialized = False
+        self._positive_init_params: dict | None = None
+        self._negative_init_params: dict | None = None
+        self.kfilter: kalman | None = None
+        self.balance_change_Q: np.ndarray | None = None
+        self.excitation_change_Q: np.ndarray | None = None
+
+        # Current state of the relevant excitation parameters
+        self.Xamp: float | None = None
+        self.Yamp: float | None = None
+
+
+    def add_context(self, ctx: TDPTContext):
+        self.ctx = ctx
+        ctx.cap_filter = self
+
+    def _initialize(self, init_params: dict):
+        self.balance_change_Q = init_params.get('balance_change_Q')
+        self.excitation_change_Q = init_params.get('excitation_change_Q')
+        self.kfilter = kalman(
+            f_F = self._f_F,
+            h_H = self._h_H,
+            x = init_params.get('x_init'),
+            P = init_params.get('P_init'),
         )
+
+    def positive_initialize(self):
+        """
+        Set up the filter parameters to the initial conditions for a positive excitation.
+        """
+
+        if self.is_positive_initialized:
+            return
+        if self._positive_init_params is None:
+            raise RuntimeError(
+                "CapacitanceFilter has no positive initialization parameters to invoke."
+            )
+        self._initialize(self._positive_init_params)
+        self.is_negative_initialized = False
+        self.is_positive_initialized = True
+
+    def negative_initialize(self):
+        """
+        Set up the filter parameters to the initial conditions for a negative excitation.
+        """
+
+        if self.is_negative_initialized:
+            return
+        if self._negative_init_params is None:
+            raise RuntimeError(
+                "CapacitanceFilter has no negative initialization parameters to invoke."
+            )
+        self._initialize(self._negative_init_params)
+        self.is_negative_initialized = True
+        self.is_positive_initialized = False
+
+    def set_positive_init_params(self, 
+        bal_change_Q: np.ndarray,
+        exc_change_Q: np.ndarray,
+        x: np.ndarray,
+        P: np.ndarray,
+    ):
+        self._positive_init_params = {
+            'balance_change_Q': bal_change_Q.reshape((3, 3)),
+            'excitation_change_Q': exc_change_Q.reshape((3, 3)),
+            'x_init': x.reshape((3, 1)),
+            'P_init': P.reshape((3, 3))
+        }
+
+    def set_negative_init_params(self, 
+        bal_change_Q: np.ndarray,
+        exc_change_Q: np.ndarray,
+        x: np.ndarray,
+        P: np.ndarray,
+    ):
+        self._negative_init_params = {
+            'balance_change_Q': bal_change_Q.reshape((3, 3)),
+            'excitation_change_Q': exc_change_Q.reshape((3, 3)),
+            'x_init': x.reshape((3, 1)),
+            'P_init': P.reshape((3, 3))
+        }   
     
-class CFilter(kalman):
-    def __init__(self, Q_bal_change: np.ndarray, Q_exc_change: np.ndarray, G: float, Cac: float, P: np.ndarray):
-        super().__init__(
-            f_F = self.f_F,
-            h_H = self.h_H,
-            x = np.array([G, Cac, 0]).reshape(-1, 1),
-            P = P,
-        )
+    def load_state_json(self, path: str):
+        self._deserialize_state(json.load(path).get('CapacitanceFilter_kwargs'))
+        
+    def save_state_json(self, path: str):
+        json.dump(self._serialize_state(), path)
 
-        self.Q_balance_change = np.diag(Q_bal_change)
-        self.Q_excitation_change = np.diag(Q_exc_change)
+    def _serialize_state(self) -> dict:
+        return {
+            'CapacitanceFilter_kwargs': dict(
+                is_negative_initialized = self.is_negative_initialized,
+                is_positive_initialized = self.is_positive_initialized,
+                _positive_init_params = self._positive_init_params,
+                _negative_init_params = self._negative_init_params,
+                balance_change_Q = self.balance_change_Q,
+                excitation_change_Q = self.excitation_change_Q,
+                Xamp = self.Xamp,
+                Yamp = self.Yamp,
+                kfilter_X = self.kfilter.x.tolist(),
+                kfilter_P = self.kfilter.P.tolist(),
+            )
+        }
 
-    def f_F(self, X: np.ndarray, dVx: float = 0.0):
-        X[1, 0] += X[2, 0] * dVx
+    def _deserialize_state(self, state: dict):
+        self.is_negative_initialized = state.get('is_negative_initialized')
+        self.is_positive_initialized = state.get('is_positive_initialized')
+        self._positive_init_params = state.get('_positive_init_params')
+        self._negative_init_params = state.get('_negative_init_params')
+        if self.is_negative_initialized:
+            self.negative_initialize()
+        elif self.is_positive_initialized:
+            self.positive_initialize()
+        self.balance_change_Q = state.get('balance_change_Q')
+        self.excitation_change_Q = state.get('excitation_change_Q')
+        self.Xamp = state.get('Xamp')
+        self.Yamp = state.get('Yamp')
+        if self.is_positive_initialized or self.is_negative_initialized:
+            self.kfilter.x = np.array(state.get('kfilter_X'))
+            self.kfilter.P = np.array(state.get('kfilter_P'))
+
+    """Kalman Filter Functionality"""
+
+    def _f_F(self, X:np.ndarray, balance_change: bool = True):
+        X[1, 0] += X[2, 0] # Cac -> Cac + dCac
         F = np.eye(3)
-        F[1, 2] += dVx
-        Q = self.Q_balance_change if dVx == 0 else self.Q_excitation_change
+        if balance_change:
+            Q = self.balance_change_Q
+        else:
+            Q = self.excitation_change_Q
+            F[1, 2] += 1
         return X, F, Q
 
-    def h_H(self, X: np.ndarray, VY: float, VX: float):
-        z = np.array([[X[0, 0] * (VY + X[1, 0] * VX)]])
-        H = np.array([[VY + X[1, 0] * VX, X[0, 0] * VX, 0]])
+    def _h_H(self, X: np.ndarray, Xamp: float, Yamp: float):
+        G, Cac, dCac = X.flatten()
+        z = np.array([[G * (Yamp + Cac * Xamp)]])
+        H = np.array([[Yamp + Cac * Xamp, G * Xamp, 0]])
         return z, H
-    
-    def __str__(self):
-        G, Cac, _ = self.x.flatten()
+
+    def predict(self, balance_change: bool = True):
+        """
+        Performs the Kalman prediction step.
+
+        Parameters
+        ----------
+        balance_change : bool
+            Whether this prediction is induced by a balance change
+        """
+        self.kfilter.predict(balance_change)
+
+    def update(self, 
+        dQ: float, R: float, 
+        Xamp: float | None = None, 
+        Yamp: float | None = None,
+    ):
+        """
+        Performs the Kalman update step. 
+
+        Parameters
+        ----------
+        dQ : float
+            Observed capacitive jump at the start of the excitation pulse
+        R : float
+            Uncertainty in `dQ`
+        Xamp : float
+            amplitude of the X side of the excitation pulse
+        Yamp: float
+            amplitude of the X side of the excitation pulse
+        """
+        
+        if Xamp is None:
+            Xamp = self.Xamp
+        if Yamp is None:
+            Yamp = self.Yamp
+
+        # We prevent any unphyiscal changes in the sign of G or Cac
+        pG, pCac, _ = self.kfilter.x.flatten()
+        self.kfilter.update(np.ndarray([[dQ]]), np.ndarray([[R]]), Xamp, Yamp)
+        G, Cac, _ = self.kfilter.x.flatten()
+        
+        if pCac * Cac < 0:
+            self.ctx.log(
+                f"WARNING: Requested sign change in Cac estimate is ignored\n"
+                f"         Was {pCac:.5e}, requested {Cac:.5e}."
+            )
+            self.kfilter.x[1, 0] = pCac
+
+        if pG * G < 0:
+            self.ctx.log(
+                f"WARNING: Requested sign change in G estimate is ignored\n"
+                f"         Was {pG:.5e}, requested {G:.5e}."
+            )
+            self.cfilter.x[0, 0] = pG
+
+    """Utilities"""
+
+    def get_state(self) -> Tuple[float, float, float]:
+        return tuple(self.kfilter.x.flatten())
+
+    def get_G(self) -> float:
+        return self.kfilter.x[0]
+
+    def get_Cac(self) -> float:
+        return self.kfilter.x[1]
+
+    def __str__(self) -> str:
+        G, Cac, dCac = self.kfilter.x.flatten()
+        PG, PCac, PdCac = self.kfilter.P.diagonal()
         return (
-            f"CFilter:\n"
-            f"  G: {G:.5e} ± {np.sqrt(self.P[0,0]):.5e}\n"
-            f"  Cac: {Cac:.5e} ± {np.sqrt(self.P[1,1]):.5e}\n"
-        )
-    
-    def status_string(self) -> str:
-        return (
-            f"     State: G = {self.x[0,0]:.5e}, Cac = {self.x[1,0]:.5e}, dCacdVx = {self.x[2,0]:.5e}\n"
+            fR"$G =$ {G:.5e} $\pm$ {np.sqrt(PG):.5e}\n"
+            fR"$C_\text{{AC}} =$ {Cac:.5e} $\pm$ {np.sqrt(PCac):.5e}\n"
+            fR"$dC_\text{{AC}} =$ {dCac:.5e} $\pm$ {np.sqrt(PdCac):.5e}\n"
             f"     Covariance: ┏                                      ┓\n"
             f"                 ┃ {f"{self.P[0,0]:.5e}":<12}{f"{self.P[0,1]:.5e}":>12}{f"{self.P[0,2]:.5e}":>12} ┃\n"
             f"                 ┃ {f"{self.P[1,0]:.5e}":<12}{f"{self.P[1,1]:.5e}":>12}{f"{self.P[1,2]:.5e}":>12} ┃\n"
@@ -105,539 +970,649 @@ class CFilter(kalman):
         )
 
 @dataclass
-class TDPTBalanceParms():
-    Cac : float | None = None
-    dMdW: float | None = None
-    Yb  : float | None = None
-    Ydis: float | None = None
-    Wb  : float | None = None
-    dQ  : float | None = None 
-    RdQ : float | None = None
-    M   : float | None = None
-    RM  : float | None = None
-    R   : float | None = None
-
-    def spool(self) -> List[float]:
-        return self.Cac, self.dMdW, self.Yb, self.Ydis, self.Wb, \
-                self.dQ, self.RdQ, self.M, self.RM, self.R
+class TDPT_initial_filter_metadata():
+    X1: float
+    X2: float
 
 @dataclass
-class TDPTFilterParms():
-    Cfilter_x: np.ndarray
-    Cfilter_P: np.ndarray
-    Wfilter_x: float
-    Wfilter_P: float
+class TDPT_initial_filter_config():
+    status: bool
+    cap_status: bool
+    dis_status: bool
+    positive: bool
 
-    def spool(self) -> List[float]:
-        G, Cac, dCacdVx = self.Cfilter_x
-        RG, RCac, RdCacdVx = np.diagonal(self.Cfilter_P)
-        return G, Cac, dCacdVx, RG, RCac, RdCacdVx, self.Wfilter_x, self.Wfilter_P
+    cap_err: float
+    cap_var: float
+    cap_filter_init_parms: dict
 
-@dataclass
-class TDPTBalanceResult():
-    status      : bool
-    iterations  : int
-    parms       : TDPTBalanceParms
-    prev_parms  : TDPTBalanceParms | None
-    filter_parms: TDPTFilterParms
+    dis_err: float | None
+    dis_var: float | None
+    dis_filter_init_parms: dict | None
 
-    def spool(self) -> list[int | float | None]:
-        parms = self.parms.spool()
-        if self.prev_parms is None:
-            prev_parms = [None]*len(parms)
-        else:
-            prev_parms = self.prev_parms.spool()
+    meta: TDPT_initial_filter_metadata
 
-        return int(self.status), self.iterations, *parms, *prev_parms, *self.filter_parms.spool()
+    def __str__(self) -> str:
+        r = f"Status: {'GOOD' if self.status else 'BAD'}\nCapacitance Status:" \
+            f" {'GOOD' if self.cap_status else 'BAD'} ({self.cap_err:.5e} $\pm$ {np.sqrt(self.cap_var):.5e})" \
+            f"\n    x = {self.cap_filter_init_parms.get('x')} +- {np.sqrt(self.cap_filter_init_parms.get('P'))}" \
+            f"\n    Qbal = {self.cap_filter_init_parms.get('bal_change_Q')}" \
+            f"\n    Qexc = {self.cap_filter_init_parms.get('exc_change_Q')}"
+        if self.dis_err is not None:
+            r+= f"Discharge Status: {'GOOD' if self.dis_status else 'BAD'} " \
+                f"({self.dis_err:.5e} $\pm$ {np.sqrt(self.dis_var):.5e})" \
+                f"\n    dMdW = {self.dis_filter_init_parms.get('dMdW'):.5e} +- " \
+                f"{np.sqrt(self.dis_filter_init_parms.get('P')):.5e}" \
+                f"\n    W0 = {self.dis_filter_init_parms.get('W0'):.5e}"
+        return r
 
-@dataclass
-class TDPTContext():
-    exc: pulsePair
-    dis: pulsePair
-    pulse_height_res: float # TODO FACTOR THIS INTO TERMINATION CONDITION (DO THE SAME WITH DISCHARGE)
-
-    averager: wfAverager
-    Cac_balance: wfBalance   # Ordinarily wfJump
-    max_Y: float
-    C_error_thresh: float
-
-    C_bal_change_Q: np.ndarray
-    C_exc_change_Q: np.ndarray
-
-    W_balance: wfBalance     # Ordinarily wfSlope
-    min_W: float
-    max_W: float
-    W_res: float
-    W_error_thresh: float
-
-    W_bal_change_Q: float
-    W_exc_change_Q: float
-
-    max_refinement_dYexc: float = np.inf
-    max_refinement_dYdis: float = np.inf
-
-    settle_time: float = 0.1
-    max_tries: int = 10
-    order: int = 3
-    support: int = 5
-    iteration_callback: Callable = None
-    post_iteration_callback: Callable = None
-    logger: logging.Logger = None
-
-    def __post_init__(self):
-        self.wfilter: WFilter | None = None
-        self.cfilter: CFilter | None = None
-        self.prev_result: TDPTBalanceResult | None = None
-
-    def add_filters(self, G: float, Cac: float, PCac: np.ndarray, dMdW: float, PdMdW: float):
-        self.wfilter = WFilter(self.support, self.order, self.W_bal_change_Q, self.W_exc_change_Q, dMdW, PdMdW)
-        self.cfilter = CFilter(self.C_bal_change_Q, self.C_exc_change_Q, G, Cac, PCac)
-        
-    def clear_filters(self):
-        self.wfilter = None
-        self.cfilter = None
-
-    def predict_Cac(self, dVx: float = 0.0):
-        self.cfilter.predict(dVx)
-
-    def update_Cac(self, z: float, R: float, VY: float, VX: float):
-        # We explicitly prevent any unphysical changes in the sign of Cac or G
-        # and warn when they are requested
-        old_Cac = self.cfilter.x[1, 0]
-        old_G = self.cfilter.x[0, 0]
-        self.cfilter.update(np.array([[z]]), np.array([[R]]), VY, VX)
-        Cac = self.cfilter.x[1, 0]
-        G = self.cfilter.x[0, 0]
-        if old_Cac * Cac < 0:
-            self.log(
-                f"WARNING: Requested sign change in Cac estimate is ignored\n"
-                f"         Was {old_Cac:.5e}, requested {Cac:.5e}."
-            )
-            self.cfilter.x[1, 0] = old_Cac
-
-        if old_G * G < 0:
-            self.log(
-                f"WARNING: Requested sign change in G estimate is ignored\n"
-                f"         Was {old_G:.5e}, requested {G:.5e}."
-            )
-            self.cfilter.x[0, 0] = old_G
-
-    def get_Cac(self) -> float:
-        return self.cfilter.x[1, 0]
-
-    def predict_dMdW_balance_change(self):
-        self.wfilter.kalman.predict(True)
-
-    def predict_dMdW_excitation_change(self):
-        self.wfilter.kalman.predict(False)
-
-    def update_dMdW(self, dMdW: float, R: float):
-        # If there is a sign change, we ignore this
-        old_dMdW = self.wfilter.kalman.x.item()
-        if old_dMdW * dMdW < 0:
-            self.log(
-                f"WARNING: Requested sign change in dMdW estimate is ignored\n"
-                f"         Was {old_dMdW:.5e}, requested {dMdW:.5e}."
-            )
-        else:
-            self.wfilter.kalman.update(np.array([[dMdW]]), np.array([[R]]))
-
-    def get_dMdW(self) -> float:
-        return self.wfilter.kalman.x.item()
-
-    def extrapolate_W(self) -> float:
-        return self.wfilter.extrapolate()
-
-    def append_W(self, W: float):
-        self.wfilter.append(W)
-
-    def get_filter_parms(self) -> TDPTFilterParms:
-        return TDPTFilterParms(
-            Cfilter_x = self.cfilter.x.flatten(),
-            Cfilter_P = self.cfilter.P,
-            Wfilter_x = np.array([self.wfilter.kalman.x.item()]),
-            Wfilter_P = self.wfilter.kalman.P.item(),
-        )
-
-    def log(self, *args):
-        if self.logger:
-            self.logger.info(*args)
-
-    def log_filter_status(self):
-        self.log("="*80)
-        self.log(self.cfilter.status_string())
-        self.log("-"*80)
-        self.log(self.wfilter.status_string())
-        self.log("="*80)
-
-def _limit_change(v, old_v, max_dv) -> Tuple[float, bool]:
-    if v > old_v + max_dv:
-        return old_v + max_dv, False
-    elif v < old_v - max_dv:
-        return old_v - max_dv, False
-    return v, True
-
-@dataclass
-class TDPTInitialResult():
-    C_success: bool
-    W_success: bool
-    bal_success: bool
-    C_err: float
-    W_err: float
-    A: np.ndarray
-    b: np.ndarray
-    x0: np.ndarray
-
-    def __str__(self):
-        return (
-            f"TDPT Initial Balance Result:\n"
-            f"  C_success: {self.C_success}\n"
-            f"  W_success: {self.W_success}\n"
-            f"  bal_success: {self.bal_success}\n"
-            f"  C_err: {self.C_err:.5e}\n"
-            f"  W_err: {self.W_err:.5e}\n"
-            f"  A: {self.A}\n"
-            f"  b: {self.b}\n"
-            f"  x0: {self.x0}\n"
-        )
-
-def initialBalanceTDPT(
+def TDPT_initialize_filters(self, 
     ctx: TDPTContext, 
-    min_Cac: float = 0.0, 
-    max_Cac: float = 2.0,
-    C_err_thresh: float | None = None,
-    W_err_thresh: float | None = None,
-    settle_time: float | None = None,
-    reps: int = 2,
-    correlated: bool = True,
-) -> bool:
     
-    if C_err_thresh is None:
-        C_err_thresh = ctx.C_error_thresh
-    if W_err_thresh is None:
-        W_err_thresh = ctx.W_error_thresh
+    cap_guess: float | None = None,
+    cap_low_high: Tuple[float, float] = (0.05, 1.5),
+    cap_absolute: bool = False,
+    cap_error_threshold: float | None = None,
 
-    Xexc = ctx.exc.X()
-    Xdis = ctx.dis.X()
+    dis_low_high: Tuple[float, float] = (0.5, 1.0),
+    dis_error_threshold: float | None = None,
 
-    def Cac(C: float | None = None):
-        if C is None:
-            return -ctx.exc.Y() / Xexc
-        Yb = -C * Xexc
-        Ydis = -C * Xdis
+    X1: float | None = None, # -5e-3 is reasonable
+    X2: float | None = None, # 10e-3 is reasonable
+    W: float | None = None, # usually a few us
 
-        if abs(Yb) > ctx.max_Y or abs(Ydis) > ctx.max_Y:
-            raise RuntimeError(f"Requested Y settings exceed the rails (Yb = {Yb:.5e}, Ydis = {Ydis:.5e})")
+    refinements: int | None = None,
+    deviation_samples: int = 3,
+    settle_time: float | None = None,
 
-        ctx.exc.Y(Yb)
-        ctx.dis.Y(Ydis)
+    post_measurement_callback: Callable = lambda: None,
 
-    Cac_knob = wfBalanceKnob(min_Cac, max_Cac, Cac)
-    W_knob = wfBalanceKnob(ctx.min_W, ctx.max_W, ctx.dis.W)
+) -> Tuple[TDPT_initial_filter_config, TDPT_initial_filter_config]:
+    
+    if cap_guess is None:
+        if ctx.cap_filter is None:
+            raise RuntimeError(
+                "User must provide a capacitance guess is `ctx` has no existing CapacitanceFilter."
+            )
+        else:
+            cap_guess = ctx.get_Cac()
 
-    C_ac_s = []
-    G_s = []
-    dMdW_s = []
-    A_s = []
-    b_s = []
-    x0_s = []
-    for i in range(reps):
-        bal = balance_against_waveform(
-            knobs = [Cac_knob, W_knob], 
-            balances = [ctx.Cac_balance, ctx.W_balance],
-            averager = ctx.averager,
-            settle_time = settle_time or ctx.settle_time,
-            correlated = correlated,
-        )
-        A_s.append(bal.A)
-        b_s.append(bal.b)
-        x0_s.append(bal.x0)
-        C_ac_s.append(bal.x0[0])
-        G_s.append(-bal.A[0, 0] / Xexc)
-        dMdW_s.append(bal.A[1, 1])
+    if settle_time is None:
+        settle_time = ctx.settle_time
 
-    A = np.array(A_s).mean(0)
-    b = np.array(b_s).mean(0)
-    x0 = np.array(x0_s).mean(0)
-    C_ac_s = np.array(C_ac_s)
-    G_s = np.array(G_s)
-    dMdW_s = np.array(dMdW_s)
+    if refinements is None:
+        refinements = ctx.max_refinements
 
-    C_ac = C_ac_s.mean()
-    W = x0[1]
-    G = G_s.mean()
-    C_stack = np.vstack([G_s - G, C_ac_s - C_ac])
-    PCac_small = C_stack @ C_stack.T
-    PCac = np.block([[PCac_small, np.zeros((2,1))], [np.zeros((1,2)), 1e6]]) / reps
+    if cap_error_threshold is None:
+        cap_error_threshold = ctx.capacitance_error_threshold
 
-    dMdW = dMdW_s.mean()
-    PdMdW = dMdW_s.std()**2
+    if dis_error_threshold is None:
+        dis_error_threshold = ctx.discharge_error_threshold
 
-    if min_Cac <= C_ac <= max_Cac:
-        Cac(C_ac)
-    if ctx.min_W <= W <= ctx.max_W:
-        ctx.dis.W(W)
-    ctx.averager.take_curve()
-    Cac_err = ctx.Cac_balance()[0]
-    Dis_err = ctx.W_balance()[0]
-    ctx.add_filters(G, C_ac, PCac, dMdW, PdMdW)
-    result = TDPTInitialResult(
-        C_success = np.abs(Cac_err) < C_err_thresh,
-        W_success = np.abs(Dis_err) < W_err_thresh,
-        bal_success = bal.success,
-        C_err = Cac_err,
-        W_err = Dis_err,
-        A = A,
-        b = b,
-        x0 = x0,
-    )
-    ctx.log(result)
+    X1 = ctx.X1(X1)
+    X2 = ctx.X2(X2)
+    Y1 = ctx.Y2(-cap_guess * X1)
+    Y2 = ctx.Y2(-cap_guess * X2)
+    W = ctx.W(W)
+
     ctx.log(
-        f"Initial estimates:\n"
-        f"{ctx.wfilter}\n"
-        f"{ctx.cfilter}\n"
+        f"Starting test to initialize a the Kalman filters for a "
+        f"{'posi' if X1 > 0 else 'nega'}tive charging pulse...\n"
+        f"Initial Parameters: X1={X1:.5e}, Y2={Y1:.5e}",
+        ("" if X2 is None else f"X2={X2:.5e}, Y2={Y2:.5e}")
     )
-    # Check for sign consistency. We expect that the following is positive
-    if G*dMdW*Xdis < 0:
-        ctx.log(
-            f"WARNING: Estimated parameters suggest that the balance point is unstable!\n"
-            f"         G = {G:.5e}, dMdW = {dMdW:.5e}, Xdis = {Xdis:.5e}\n"
-            f"         Please check the system and adjust the initial balance parameters."
-        )
-    return result
 
-def balanceTDPT(ctx: TDPTContext) -> TDPTBalanceResult:
-    if ctx.wfilter is None or ctx.cfilter is None:
+    controls = []
+    errors = []
+
+    # Y2 follows along with Y1 to respect Cac
+    def Y1_Y2(v: float | None = None):
+        if v is None:
+            return ctx.Y1()
+        nonlocal X1, X2
+        ctx.Y1(v)
+        ctx.Y2(v * (X2 / X1))
+
+    controls.append(
+        balanceKnob(
+            bounds = (-ctx.max_pulse_height, ctx.max_pulse_height),
+            guess = -cap_guess * X1,
+            l = cap_low_high[0],
+            h = cap_low_high[1],
+            f = Y1_Y2,
+            absolute = cap_absolute,
+        )
+    )
+
+    errors.append(ctx.capacitance_error)
+
+    # If we are also initializing a discharge
+    if ctx.discharge_pair is not None:
+        controls.append(
+            balanceKnob(
+                bounds = (ctx.min_pulse_width, ctx.max_pulse_width),
+                guess = W,
+                l = dis_low_high[0],
+                h = dis_low_high[1],
+                f = ctx.W,
+                guess_independent = True, 
+            )
+        )
+
+        errors.append(ctx.discharge_error)
+
+    linear_balance = lstsqBalance(
+        controls = controls,
+        error_parms = errors,
+        pre_measurement_callback = ctx.averager.take_curve,
+        post_measurement_callback = post_measurement_callback,
+        settle_time = settle_time,    
+    )
+
+    # Positive Balance
+    positive_result = _TDPT_initialize_filter_pass(
+        linear_balance, 
+        ctx.averager, 
+        refinements, 
+        cap_error_threshold,
+        dis_error_threshold,
+        deviation_samples, 
+        X1, X2,
+    )
+
+    ctx.log(
+        f"Obtained a {'posi' if X1 > 0 else 'nega'}tive result:\n{positive_result}"
+    )
+
+    # Negative Balance
+    X1 = ctx.X1(-X1)
+    X2 = ctx.X2(-X2)
+    Y1 = ctx.Y2(-cap_guess * X1)
+    Y2 = ctx.Y2(-cap_guess * X2)
+    linear_balance.controls[0].guess = -cap_guess * X1
+
+    ctx.log(
+        f"Starting test to initialize a the Kalman filters for a "
+        f"{'posi' if X1 > 0 else 'nega'}tive charging pulse...\n"
+        f"Initial Parameters: X1={X1:.5e}, Y2={Y1:.5e}",
+        ("" if X2 is None else f"X2={X2:.5e}, Y2={Y2:.5e}")
+    )
+
+    negative_result = _TDPT_initialize_filter_pass(
+        linear_balance, 
+        ctx.averager, 
+        refinements, 
+        cap_error_threshold,
+        dis_error_threshold,
+        deviation_samples, 
+        X1, X2,
+    )
+
+    ctx.log(
+        f"Obtained a {'posi' if X1 > 0 else 'nega'}tive result:\n{negative_result}"
+    )
+
+    # If we got the signs mixed up, just swap them
+    if positive_result.meta.X1 < 0:
+        positive_result, negative_result = negative_result, positive_result
+
+    return positive_result, negative_result
+
+def _TDPT_initialize_filter_pass(
+    linear_balance: lstsqBalance,
+    averager: wfAverager,
+    refinements: int,
+    cap_error_threshold: float,
+    dis_error_threshold: float | None,
+    deviation_samples: int,
+    X1: float, X2: float,
+):
+    Cac, (dQ, dQvar), (M, Mvar) = _TDPT_initialize_filter_inner_balance(
+        linear_balance, 
+        averager, 
+        refinements, 
+        cap_error_threshold,
+        dis_error_threshold,
+        deviation_samples, 
+        X1
+    )
+
+    cap_status = abs(dQ) < cap_error_threshold
+    dis_status = abs(M) < dis_error_threshold
+    G = linear_balance._A.item(0)
+    if linear_balance.M == 2:
+        dMdW = linear_balance._A[1, 1]
+        dis_filter_init_parms = {
+            'balance_change_uncertainty': _TDPT_CONF.DIS_INIT_BAL_UNC**2,
+            'excitation_change_uncertainty': _TDPT_CONF.DIS_INIT_EXC_UNC**2,
+            'dMdW': dMdW,
+            'P': _TDPT_CONF.DIS_INIT_P_MULT*(dMdW)**2,
+            'W0': linear_balance.controls[1].get_val()
+        },
+    else:
+        dis_filter_init_parms = None
+
+    return TDPT_initial_filter_config(
+        status = cap_status and dis_status,
+        cap_status = cap_status,
+        dis_status = dis_status,
+        positive = X1 > 0.0,
+        cap_err = dQ,
+        cap_var = dQvar,
+        cap_filter_init_parms = {
+            'bal_change_Q': np.diag([_TDPT_CONF.CAP_INIT_BAL_QG_MULT*G, _TDPT_CONF.CAP_INIT_BAL_QC, _TDPT_CONF.CAP_INIT_BAL_QdC])**2,
+            'exc_change_Q': np.diag([_TDPT_CONF.CAP_INIT_EXC_QG_MULT*G, _TDPT_CONF.CAP_INIT_EXC_QC, _TDPT_CONF.CAP_INIT_EXC_QdC])**2,
+            'x': np.array([Cac, G, 0.0]),
+            'P': np.array([_TDPT_CONF.CAP_INIT_PG_MULT*G, _TDPT_CONF.CAP_INIT_PC, _TDPT_CONF.CAP_INIT_PdC])**2,
+        },
+        dis_err = M,
+        dis_var = Mvar,
+        dis_filter_init_parms = dis_filter_init_parms,
+        meta = TDPT_initial_filter_metadata(X1, X2)
+    )
+
+def _TDPT_initialize_filter_inner_balance(
+    linear_balance: lstsqBalance,
+    averager: wfAverager,
+    refinements: int,
+    cap_error_threshold: float,
+    dis_error_threshold: float | None,
+    deviation_samples: int,
+    X1: float,
+) -> Tuple[float, Tuple[float, float], Tuple[float | None, float | None]]:
+
+    """rebalances linear_balance and returns Cac, error parameters, and deviations."""
+
+    # Reset
+    linear_balance.reset()
+    linear_balance.balance()
+
+    # Perform refinements to the balance
+    for i in range(refinements):
+        _checkpoint()
+        
+        # If the error thresholds are met, mark the balance as good so it stays
+        # close to and extrapolates from the balance point
+        if linear_balance.M == 2:
+            dQ = linear_balance.error_parms[0].get_error()
+            M = linear_balance.error_parms[1].get_error()
+            good_balance = abs(dQ) < cap_error_threshold and \
+                            abs(M) < dis_error_threshold
+        else:
+            dQ = linear_balance.error_parms[0].get_error()
+            good_balance = abs(dQ) < cap_error_threshold
+        linear_balance.set_good(good_balance)
+
+        linear_balance.refine()
+
+    if linear_balance.M == 2:
+        # Check the deviation in the error parameters at the balance point
+        dQ = linear_balance.error_parms[0].get_error()
+        dQsq = dQ*dQ
+        M = linear_balance.error_parms[1].get_error()
+        Msq = M * M
+
+        for _ in range(deviation_samples):
+            averager.take_curve()
+
+            dQ_, _ = linear_balance.error_parms[0]()
+            dQ += dQ_
+            dQsq += dQ_*dQ_
+
+            M_, _ = linear_balance.error_parms[1]()
+            M += M_
+            Msq += M_*M_
+
+        dQ /= (deviation_samples + 1)
+        dQsq /= (deviation_samples + 1)
+        M /= (deviation_samples + 1)
+        Msq /= (deviation_samples + 1)
+        if deviation_samples == 0:
+            dQvar = dQ
+            Mvar = M
+        else:
+            dQvar = dQsq - dQ*dQ
+            Mvar = Msq - M * M
+
+        return -linear_balance._x0[0] / X1, (dQ, dQvar), (M, Mvar)
+    
+    else:
+        # Check the deviation in the error parameters at the balance point
+        dQ = linear_balance.error_parms[0].get_error()
+        dQsq = dQ*dQ
+
+        for _ in range(deviation_samples):
+            averager.take_curve()
+
+            dQ_, _ = linear_balance.error_parms[0]()
+            dQ += dQ_
+            dQsq += dQ_*dQ_
+
+        dQ /= (deviation_samples + 1)
+        dQsq /= (deviation_samples + 1)
+        if deviation_samples == 0:
+            dQvar = dQ
+        else:
+            dQvar = dQsq - dQ*dQ
+
+        return -linear_balance._x0[0] / X1, (dQ, dQvar), (None, None)
+    
+@dataclass
+class TDPT_control_state():
+    X1: float
+    Y1: float
+    X2: float | None
+    Y2: float | None
+    W: float | None
+
+    def __str__(self) -> str:
+        r = f"X1 = {self.X1:.5e}, Y1 = {self.Y1:.5e}"
+        if self.X2 is not None:
+            r += f", X2 = {self.X2:.5e}, Y2 = {self.Y2:.5e}, W = {self.W:.5e}"
+        return r
+    
+@dataclass
+class TDPT_optimal_state():
+    Cac: float
+    W0: float | None = None
+    good_width_prediction: bool | None = None
+    discharge_ratio: float | None = None
+
+    def __str__(self) -> str:
+        r = f"Cac = {self.Cac:.5e}"
+        if self.W0 is not None:
+            r += f", W0 = {self.W0:.5e} ({'GOOD' if self.good_width_prediction else 'BAD'})"
+        if self.discharge_ratio is not None:
+            r += f", Y2/X2 = {self.discharge_ratio:.5e}"
+        return r
+
+@dataclass
+class TDPT_error_state():
+    # Termination Status
+    good: bool
+    good_sweep_count: int
+    # dQ: Capacitive jump in the charge signal at the start of the charging pulse
+    dQ_satisfied: bool
+    dQ: float
+    dQ_var: float
+    dQ_R: float
+    # M: Slope of the charge signal after discharge pulses
+    M_satisfied: bool | None = None
+    M: float | None = None
+    M_var: float | None = None
+    # I: Integrated charge signal over the measurement window
+    Y2_adjusted: bool | None = None
+    I_satisfied: bool | None = None
+    I: float | None = None
+    I_var: float | None = None
+
+    def __str__(self) -> str:
+        r = f"Termination Status: {'GOOD' if self.good else 'BAD'} (streak = {self.good_sweep_count})"
+        r += f"\n  dQ ({'GOOD' if self.dQ_satisfied else 'BAD'}) = {self.dQ:.5e} +- {np.sqrt(self.dQ_var):.5e}"
+        if self.M is not None:
+            r += f"\n   M ({'GOOD' if self.M_satisfied else 'BAD'}) = {self.M:.5e} +- {np.sqrt(self.M_var):.5e}"
+        if self.I is not None:
+            r += f"\n   I ({'GOOD' if self.I_satisfied else 'BAD'}) = {self.I:.5e} +- {np.sqrt(self.I_var):.5e}"
+            r += "\n(Y2 was adjusted.)" if self.Y2_adjusted else "\n(Y2 was not adjusted.)"
+        return r
+
+@dataclass
+class TDPT_filter_balance_result():
+    status: bool
+    iterations: int
+    controls: TDPT_control_state
+    errors: TDPT_error_state
+    optimal: TDPT_optimal_state
+    curve: wfCurveData
+
+    def __str__(self) -> str:
+        line = "="*80
+        return (
+            line + 
+            f"\nBALANCE on iteration {self.iterations} was {'' if self.status else 'UN'}SUCCESSFUL" \
+            f"\nCONTROLS:\n{self.controls}\nERRORS:\n{self.errors}\nOPTIMAL_SETTINGS:\n{self.optimal}\n" + \
+            line
+        )
+
+def TDPT_filter_balance(ctx: TDPTContext) -> TDPT_filter_balance_result:
+    ctx.log("Initiating Balance...")
+
+    # Set these up ahead of time so that they're defined
+    X1 = Y1 = X2 = Y2 = W = None
+    dQ = dQ_var = dQ_R = None
+    M = M_var = None
+    I = I_var = None
+
+    # Check that the context filters have been initialized
+    if ctx.cap_filter is None:
         raise RuntimeError(
-            "TDPTContext must be initialized before it is used to balance"
+            "Cannot perform `TDPT_balance` if context filters are uninitialized"
         )
 
-    # Fixed Pulse Heights
-    Xexc = ctx.exc.X()
-    Xdis = ctx.dis.X()
+    # Check if the Kalman initialization matches the sign of the charging pulse
+    X1 = ctx.X1()
+    if ctx.cap_filter.is_positive_initialized != (X1 >= 0):
+        ctx.log("Filter initialization polarity did not match X1; Reinitializing...")
+        if X1 >= 0:
+            ctx.reinitialize_positive_filter()
+        else:
+            ctx.reinitialize_negative_filter()
+    
+    # Induce a kalman prediction step on the filters to reflect an excitation change
+    ctx.predict_filter_change(balance_change = False)
+    ctx.log("INITIAL FILTER STATE:")
+    ctx.log_capacitance_filter_status()
+    if ctx.is_discharge():
+        ctx.log_discharge_filter_status()
+    Y1 = ctx.Y1(-KF_Cac * X1) # Balance away dQ
 
-    # Previous Settings
-    pYb = ctx.exc.Y()
-    pYdis = ctx.dis.Y()
-    pWb = ctx.dis.W()
-    Wb = pWb
+    # If we are also using discharge pulses, we have to clear the stale bracket. 
+    # We also extrapolate the discharge pulse width and retrieve X2.
+    if ctx.is_discharge():
+        ctx.clear_dis_width_bracket()
+        W = ctx.set_extrap_dis_width()
+        prev_W = W
+        prev_M = None
+        X2 = ctx.X2()        
 
-    # Previous Measurements
-    pdQ = None
-    pRdQ = None
-    pM = None
-    pRM = None
+    # If we are performing an integrated balance, extrapolate the discharge Y
+    # amplitude from previous measurements.
+    if ctx.is_integrated():
+        Y2 = ctx.set_extrap_discharge_Y()
+    else:
+        Y2 = ctx.Y2(-ctx.get_Cac() * X1)
 
-    # Measurement Uncertainties
-    pR = np.inf
-    R = None
-
-    # Discharge Pulse Width Bracketing
-    W_low = ctx.min_W
-    W_high = ctx.max_W
-
-    for itr in range(ctx.max_tries):
+    # Perform refinements until we converge on a balance or terminate unhappily
+    dQ_satisfied = False
+    M_satisfied = not ctx.is_discharge()
+    I_satisfied = not ctx.is_integrated()
+    Y2_adjusted = False
+    success = False
+    good_sweep_count = 0
+    W_low_collisions = 0
+    W_high_collisions = 0
+    for itr in range(ctx.max_refinements + 1):
         _checkpoint()
 
-        if ctx.iteration_callback:
-            ctx.iteration_callback(itr, ctx)
-
-        ctx.log_filter_status()
-
-        # Predict excpected balance parameters
-        Cac = ctx.get_Cac()
-        dMdW = ctx.get_dMdW()
-        Yb = -Cac * Xexc
-        Ydis = -Cac * Xdis
-
+        # Set ourselves to the new predicted optimal control point
+        KF_Cac = ctx.get_Cac()
         if itr != 0:
-            # For refinements, we want to limit the changes
-            temp_Yb = Yb
-            temp_Ydis = Ydis
-            Yb, Yb_change_success = _limit_change(Yb, pYb, ctx.max_refinement_dYexc)
-            Ydis, Ydis_change_success = _limit_change(Ydis, pYdis, ctx.max_refinement_dYdis)
-            if not Yb_change_success:
-                ctx.log(f"Requested change in Yb ({temp_Yb - pYb:.5e}) "
-                        "exceeded the value allowed for refinements!\n")
-            if not Ydis_change_success:
-                ctx.log(f"Requested change in Ydis ({temp_Ydis - pYdis:.5e}) "
-                        "exceeded the value allowed for refinements!\n")
+            Y1 = ctx.Y1(-KF_Cac * X1, Y1)        
+            if not ctx.is_integrated():
+                # If not integrated, the ratios Yi/Xi should be the same
+                Y2 = ctx.Y2(-KF_Cac * X2, Y2)
 
-        # Check the rails on out Y values
-        if abs(Yb) > ctx.max_Y:
-            ctx.log(f"WARNING: Requested Yb ({Yb:.5e}) exceeds the rails; Truncating...")
-            Yb = min(ctx.max_Y, max(-ctx.max_Y, Yb))
-
-        if abs(Ydis) > ctx.max_Y:
-            ctx.log(f"WARNING: Requested Ydis ({Ydis:.5e}) exceeds the rails; Truncating...")
-            Ydis = min(ctx.max_Y, max(-ctx.max_Y, Ydis))
-
-        # Set the expected balance parameters    
-        ctx.log(
-            f"Moving to predicted balance point:\n"
-            f"   Cac = {Cac:.5e}, dMdW = {dMdW:.5e}\n"
-            f"  Yexc = {Yb:.5e}\n"
-            f"  Ydis = {Ydis:.5e}\n"
-            f"     W = {Wb:.5e}"
-        )
-        ctx.exc.Y(Yb)
-        ctx.dis.Y(Ydis)
-        ctx.dis.W(Wb)
-        Yb = ctx.exc.Y()
-        Ydis = ctx.dis.Y()
-        Wb = ctx.dis.W()
-
-        # Filters acknowledge the change in balance parameters
-        ctx.predict_dMdW_balance_change()
-        ctx.predict_Cac()
-
-        # Take time domain curves
-        ctx.averager.take_curve()
-        dQ, RdQ = ctx.Cac_balance()
-        M, RM = ctx.W_balance()
-        dMdW_ = ctx.get_dMdW()
-
-        # Update the bracketing on W; We infer which bound needs to be updated
-        # based on the sign of dM/dW and M.
-        if M * dMdW_ > 0:
-            W_high = min(W_high, Wb)
+        # Use the bracket and some slope information to predict the optimal 
+        # discharge pulse width. On the first iteration, this is never a 
+        # "good_width_prediction"
+        W0, good_width_prediction = ctx.iterate_dis_width_bracket()
+        if good_width_prediction:
+            W = ctx.W(W0, W)
         else:
-            W_low = max(W_low, Wb)
-
-        ctx.log(f"New W bracketing: [{W_low:.5e}, {W_high:.5e}]")
-
-        # Kalman updates based on the measurement
-        ctx.update_Cac(dQ, RdQ, Yb, Xexc)
-
-        dW = Wb - pWb
-        if itr != 0 and abs(dW) > ctx.W_res:
-            # If this is not the first iteration, we update dM/dW
-            dM = M - pM
-            o_dMdW = dM / dW
-            R = (RM + pRM) / dW**2 + (ctx.W_res * o_dMdW / dW)**2
-
-            ctx.update_dMdW(o_dMdW, R)
-
-        # Store the old parameters
-        pCac = Cac
-        pdMdW = dMdW
-        pYb = Yb
-        pYdis = Ydis
-        pWb = Wb
-
-        #Update the new predicted balance parameters
-        Cac = ctx.get_Cac()
-        dMdW = ctx.get_dMdW()
-        Yb = -Cac * Xexc
-        Ydis = -Cac * Xdis
-
-        # W undergoes bracketed root finding
-        Wb -= M / dMdW
-
-        # We limit changes based on bracketing
-        if Wb > W_high:
-            ctx.log(
-                f"Extrapolated discharge balance point (W = {Wb:.5e}) "
-                "is too long; Truncating..."
-            )
-            Wb = W_high
-
-        if Wb < W_low:
-            ctx.log(
-                f"Extrapolated discharge balance point (W = {Wb:.5e}) "
-                "is too short; Truncating..."
-            )
-            Wb = W_low
-
-        # Check for termination
-        ctx.log(
-            f"Iteration {itr} results:\n"
-            f"  Cac = {Cac:.5e}, dMdW = {dMdW:.5e}\n"
-            f" Yexc = {Yb:.5e}\n"
-            f" Ydis = {Ydis:.5e}\n"
-            f"    W = {Wb:.5e}\n"
-            f"   dQ = {dQ:.5e} ± {np.sqrt(RdQ):.5e}\n"
-            f"    M = {M:.5e} ± {np.sqrt(RM):.5e}"
-        )
-        exc_sat = abs(dQ) < ctx.C_error_thresh
-        dis_sat = abs(M) < ctx.W_error_thresh or (W_high - W_low) < ctx.W_res
-        ctx.log(
-            f"  Excitation balance {'satisfied' if exc_sat else 'not satisfied'} "
-            f"(|dQ| = {abs(dQ):.5e} {'<' if exc_sat else '>'} {ctx.C_error_thresh:.5e})\n"
-            f"  Discharge balance {'satisfied' if dis_sat else 'not satisfied'} "
-            f"(|M| = {abs(M):.5e} {'<' if dis_sat else '>'} {ctx.W_error_thresh:.5e}, "
-            f"W bracket = [{W_low:.5e}, {W_high:.5e}])"
-        )
-
-        if ctx.post_iteration_callback:
-            ctx.post_iteration_callback(itr, ctx)
-
-        if exc_sat and dis_sat:
-            # Append the latest W balance point to the context
-            ctx.append_W(Wb)
-
-            return TDPTBalanceResult(
-                status = True,
-                iterations = itr + 1,
-                parms = TDPTBalanceParms(
-                    Cac = Cac,
-                    dMdW = dMdW,
-                    Yb = Yb,
-                    Ydis = Ydis,
-                    Wb = Wb,
-                    dQ = dQ,
-                    RdQ = RdQ,
-                    M = M,
-                    RM = RM,
-                    R = R,
-                ),
-                prev_parms = TDPTBalanceParms(
-                    Cac = pCac,
-                    dMdW = pdMdW,
-                    Yb = pYb,
-                    Ydis = pYdis,
-                    Wb = pWb,
-                    dQ = pdQ,
-                    RdQ = pRdQ,
-                    M = pM,
-                    RM = pRM,
-                    R = pR,
-                ) if itr != 0 else TDPTBalanceParms(),
-                filter_parms = ctx.get_filter_parms(),
-            )
+            W0 = W
         
-        pdQ = dQ
-        pM = M
-        pRdQ = RdQ
-        pRM = RM
-        pR = R
-    else:
-        return TDPTBalanceResult(
-            status = False,
-            iterations = ctx.max_tries,
-            parms = TDPTBalanceParms(
-                Cac = Cac,
-                dMdW = dMdW,
-                Yb = Yb,
-                Ydis = Ydis,
-                Wb = Wb,
-                dQ = dQ,
-                RdQ = RdQ,
-                M = M,
-                RM = RM,
-                R = R,
-            ),
-            prev_parms = TDPTBalanceParms(
-                Cac = pCac,
-                dMdW = pdMdW,
-                Yb = pYb,
-                Ydis = pYdis,
-                Wb = pWb,
-                dQ = pdQ,
-                RdQ = pRdQ,
-                M = pM,
-                RM = pRM,
-                R = pR,
-            ) if itr != 0 else None,
-            filter_parms = ctx.get_filter_parms(),
+        # THERE IS SOME TERMINATION CHECKING STUFF HERE IF WE'RE HITTING THE EDGE OF THE BRACKET IN THE ORIGINAL
+        # THINK ABOUT IF WE WANT TO REPLICATE THIS
+
+        # We induce a kalman prediction to reflect the balance change
+        ctx.predict_filter_change(balance_change = True)
+
+        # Now we actually take the sweep
+        current_controls = TDPT_control_state(X1, Y1, X2, Y2, W)
+        if itr == 0:
+            if ctx.pre_initial_trace_callback is not None:
+                ctx.pre_initial_trace_callback(ctx, current_controls)
+        else:
+            if ctx.pre_refinement_callback is not None:
+                ctx.pre_refinement_callback(
+                    ctx,
+                    current_controls, 
+                    error_state, 
+                    optimal_state,
+                )
+
+        ctx.log(f"ITERATION {itr + 1}; Taking a sweep at:\n{current_controls}")
+        time.sleep(ctx.settle_time)
+        # Conditions for a higher resolution sweep measurement
+        took_high_resolution = (good_sweep_count > 0) or (ctx.good_sweep_threshold <= 1)
+        ctx.take_sweep(took_high_resolution)
+        curve_data = ctx.get_curve_data()
+
+        # Retrieve the relevant error parameters and update the models accordingly
+        dQ, dQ_var = ctx.capacitance_error()
+        dQ_R = dQ_var
+        ctx.cap_update(dQ, dQ_R)
+        
+        if ctx.is_discharge():
+            M, M_var = ctx.discharge_error()
+            
+            if itr != 0:
+                dW = W - prev_W
+                o_dMdW = (M - prev_M) / dW
+                dMdW_R = _TDPT_CONF.dMdW_R_MULT * ctx.discharge_error_threshold**2 / dW * dW
+                ctx.dis_update(o_dMdW, dMdW_R)
+
+            ctx.update_dis_width_bracket(W, M)
+            prev_W = W
+            prev_M = M
+
+            if ctx.is_integrated():
+                I, I_var = ctx.integrated_error()
+                Y2_adjusted = W > ctx.dis_amp_adjustment_threshold
+                if Y2_adjusted:
+                    # Step to an adjusted Y2
+                    dY2 = -I / (_TDPT_CONF.INT_ADJ_LAMBDA * ctx.get_G() * W)
+                    Y2 = ctx.set_Y2_integrated_balance(Y2 + dY2, Y2)
+
+        # Check termination conditions
+        dQ_satisfied = abs(dQ) < ctx.capacitance_error_threshold
+        if ctx.is_discharge():
+            M_satisfied = abs(M) < ctx.discharge_error_threshold
+            if ctx.is_integrated():
+                I_satisfied = abs(I) < ctx.integrated_error_threshold
+
+        good = dQ_satisfied and M_satisfied and (I_satisfied or not Y2_adjusted)
+
+        # We require a certain streak of good sweeps to terminate successfully
+        if good:
+            good_sweep_count+=1
+        else:
+            good_sweep_count = 0
+
+        error_state = TDPT_error_state(
+            good, good_sweep_count,
+            dQ_satisfied, dQ, dQ_var, dQ_R, 
+            M_satisfied, M, M_var, 
+            Y2_adjusted, I_satisfied, I, I_var
         )
+
+        if ctx.is_discharge():
+            W0, good_width_prediction = ctx.iterate_dis_width_bracket()
+            if ctx.is_integrated():
+                optimal_state = TDPT_optimal_state(
+                    ctx.get_Cac(), W0, good_width_prediction, Y2/X2)
+            else:
+                optimal_state = TDPT_optimal_state(
+                    ctx.get_Cac(), W0, good_width_prediction)
+        else:
+            optimal_state = TDPT_optimal_state(ctx.get_Cac())
+
+        ctx.log(
+            "SWEEP COMPLETE; Updating internal models based on last measurement..."
+            f"\nERRORS:\n{error_state}\nOPTIMAL SETTINGS:\n{optimal_state}"
+            f"\nGOOD COUNT: {good_sweep_count} ( / {ctx.good_sweep_threshold})."    
+        )
+
+        if took_high_resolution and (good_sweep_count >= ctx.good_sweep_threshold):
+            success = True
+            break
+
+        if itr == 0:
+            if ctx.post_initial_trace_callback is not None:
+                ctx.post_initial_trace_callback(
+                    ctx,
+                    current_controls, 
+                    error_state, 
+                    optimal_state,
+                    curve_data,
+                )
+        else:
+            if ctx.post_refinement_callback is not None:
+                ctx.post_refinement_callback(
+                    ctx,
+                    current_controls,
+                    error_state,
+                    optimal_state,
+                    curve_data,
+                )
+
+        # We want to avoid dawdling when the discharg error bounds are infeasible
+        # given the allowed discharge pulse widths range. For this, we keep track
+        # of consecutive runs where the width is railed while the discharge is still
+        # bad and terminate if we accumulate too many
+        if ctx._dis_width_bracket.hitting_min_rail:
+            ctx.log("Discharge pulse width is hitting the lower rail.")
+            W_low_collisions += 1
+        else:
+            W_low_collisions = 0
+
+        if ctx._dis_width_bracket.hitting_max_rail:
+            ctx.log("Discharge pulse width is hitting the upper rail.")
+            W_high_collisions += 1
+        else:
+            W_high_collisions = 0
+
+        if not (M_satisfied and (I_satisfied or not Y2_adjusted)) and \
+            (W_low_collisions > ctx.max_dis_width_collisions or \
+             W_high_collisions > ctx.max_dis_width_collisions):
+            ctx.log(
+                "Discharge errors are not satisfied despite repeatedly hitting rails."
+                "\nLikely infeasible to discharge; Terminating unsuccessfully."    
+            )
+            success = False
+            break
+
+        # Check if we have hit a rut (likely due to a malformed discharge width bracket)
+        if (not M_satisfied) and ctx.detect_bracket_rut(itr, good_sweep_count):
+            # We clear whichever is likely to be the problematic bound
+            if M > 0:
+                ctx._dis_width_bracket.low.clear()
+            elif M < 0:
+                ctx._dis_width_bracket.high.clear()
+    
+    if success and ctx.is_discharge():
+        ctx.dis_filter.push_W0(optimal_state.W0)
+        if ctx.is_integrated():
+            ctx.dis_filter.push_Y2(Y2)
+
+    # RETURNS
+    result = TDPT_filter_balance_result(
+        status = success,
+        iterations = itr + 1,
+        controls = current_controls,
+        errors = error_state,
+        optimal = optimal_state,
+        curve = curve_data,
+    )
+    ctx._previous_result = result
+    ctx.log(result)
+    return result

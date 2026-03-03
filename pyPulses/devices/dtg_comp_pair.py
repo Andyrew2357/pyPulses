@@ -6,8 +6,8 @@ DTG channels in software to make them behave in the appropriate manner
 from .dtg import DTG
 from .dtg_utils import Channel
 
-class dtgDifferentialPair():
-    """Differential pair for use with Oliver's pulse shaper box"""
+class dtgCompPair():
+    """Complementary pair for use with Oliver's pulse shaper box"""
     def __init__(self, dtg: DTG, chx: str | Channel, chy: str | Channel):
         """
         Parameters
@@ -96,13 +96,18 @@ class dtgDifferentialPair():
         self.chy.width(width + dw)
 
     # Polarity
-    def polarity(self, pos: bool | None = None) -> bool | None:
-        """polarity of `chx`; `chy` is opposite"""
+    def xpolarity(self, pos: bool | None = None) -> bool | None:
+        """polarity of `chx`"""
         if pos is None:
             return self.chx.polarity()
         self.chx.polarity(pos)
-        self.chy.polarity(not pos)
-    
+
+    def ypolarity(self, pos: bool | None = None) -> bool | None:
+        """polarity of `chy`"""
+        if pos is None:
+            return self.chy.polarity()
+        self.chy.polarity(pos)
+
     # X Levels
     def Xlow(self, V: float | None = None) -> float | None:
         """logical low level of `chx`"""

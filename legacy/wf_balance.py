@@ -1,5 +1,5 @@
-from ..devices.wfatd import wfAverager, wfBalance
-from ..utils.getsetter import getSetter
+from ..pyPulses.routines.wfatd import wfAverager, wfBalance
+from ..pyPulses.utils.getsetter import getSetter
 
 import time
 import numpy as np
