@@ -30,8 +30,7 @@ class dtgCompPair():
         self.chy.lhold('LDEL')
         self.chx.thold('TDEL')
         self.chy.thold('TDEL')
-        self.polarity(self.chx.polarity())
-
+        
     # Enabled
     def enable(self, on: bool | None = None) -> bool | None:
         """

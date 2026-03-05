@@ -80,7 +80,7 @@ class mso44(pyvisaDevice):
         """
         return int(self.query("DATa:SOUrce?")[2:])
     
-    def get_waveform(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_waveform(self) -> np.ndarray:
         """
         Pull a time-domain waveform off the scope.
         
@@ -91,13 +91,13 @@ class mso44(pyvisaDevice):
         data = np.fromstring(self.query("CURVe?"), 
                              dtype = float, sep = ',')
         v = (data - self.YOF) * self.YMU + self.YZE
-        t = np.arange(v.size) * self.XIN + self.XZE
-        return t, v
+        return v
     
     def get_waveform_parameters(self):
         """
         Update the parameters used to convert from raw waveform data to voltage.
         """
+        self.HPOS = 1e-2 *float(self.query("HORizontal:POSition?"))
         self.XZE = float(self.query("WFMP:XZE?"))
         self.XIN = float(self.query("WFMP:XIN?"))
         self.YZE = float(self.query("WFMP:YZE?"))
@@ -105,6 +105,7 @@ class mso44(pyvisaDevice):
         self.YOF = float(self.query("WFMP:YOF?"))
 
         self.info("MSO44: Updating waveform parameters...")
+        self.info(f"    HPOS = {self.HPOS}")
         self.info(f"    XZE = {self.XZE}")
         self.info(f"    XIN = {self.XIN}")
         self.info(f"    YZE = {self.YZE}")

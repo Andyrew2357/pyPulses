@@ -1,5 +1,7 @@
+from pyvisa import logger
 from ..utils import getSetter
 
+import logging
 from abc import abstractmethod
 from typing import Any, Callable, Tuple
 
@@ -14,8 +16,12 @@ class balanceKnob():
         set: Callable[[float], Any] | None = None,
         absolute: bool = True,
         guess_independent: bool = False,
+        logger: logging.Logger | None = None,
+        name: str = "Balance Knob",
     ):
-      
+        self.name = name
+        self.logger = logger
+    
         self.guess = guess
         self.l = l
         self.h = h
@@ -30,9 +36,15 @@ class balanceKnob():
         else:
             self.f = getSetter(f, set)
 
+    def log(self, *args, **kwargs):
+        if self.logger is not None:
+            self.logger.info(*args, **kwargs)
+
     def set_val(self, v: float):
         if v < self.min or v > self.max:
-            raise ValueError(f"Value {v} out of bounds [{self.l}, {self.h}]")
+            self.log(f"{self.name} Value {v} out of bounds [{self.min}, {self.max}]")
+            self.log(f"Clamping value to bounds...")
+            v = max(min(v, self.max), self.min)
         return self.f(v)
 
     def get_val(self) -> float:
@@ -40,21 +52,21 @@ class balanceKnob():
     
     def set_low(self):
         if self.guess_independent:
-            self.f(self.l)
+            self.set_val(self.l)
         else:
             if self.absolute:
-                self.f(self.guess + self.l)
+                self.set_val(self.guess + self.l)
             else:
-                self.f(self.guess * self.l)
+                self.set_val(self.guess * self.l)
 
     def set_high(self):
         if self.guess_independent:
-            self.f(self.h)
+            self.set_val(self.h)
         else:
             if self.absolute:
-                self.f(self.guess + self.h)
+                self.set_val(self.guess + self.h)
             else:
-                self.f(self.guess * self.h)
+                self.set_val(self.guess * self.h)
 
     def set_bool(self, high: bool):
         if high:
@@ -78,3 +90,6 @@ class balanceError():
     
     def get_variance(self) -> float | None:
         return self.error_variance
+    
+    def __del__(self):
+        pass

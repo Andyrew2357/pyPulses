@@ -46,6 +46,13 @@ class TDPT_error_state: ...
 @dataclass
 class TDPT_optimal_state: ...
 
+@dataclass
+class TDPT_initial_filter_config(): ...
+
+class DischargeFilter(): ...
+
+class CapacitanceFilter(): ...
+
 TDPT_POST_CALLBACK = Callable[[TDPTContext, TDPT_control_state, TDPT_error_state, TDPT_optimal_state, wfCurveData], Any]
 TDPT_PRE_CALLBACK = Callable[[TDPTContext, TDPT_control_state, TDPT_error_state, TDPT_optimal_state], Any]
 
@@ -210,7 +217,7 @@ class TDPTContext():
 
     def log(self, *args, **kwargs):
         if self.logger:
-            self.logger(*args, **kwargs)
+            self.logger.info(*args, **kwargs)
 
     """Filter Actions"""
 
@@ -297,8 +304,8 @@ class TDPTContext():
             if not (-self.max_pulse_height <= v <= self.max_pulse_height):
                 tv = min(self.max_pulse_height, max(-self.max_pulse_height, v))
                 self.log(
-                    fR"Requested pulse $X_1$ ({v:.5e}) falls outside the allowed range.\n"
-                    fR"Truncating to {tv:.5e}."
+                    f"Requested pulse X1 ({v:.5e}) falls outside the allowed range.\n"
+                    f"Truncating to {tv:.5e}."
                 )
                 v = tv
             self.charge_pair.X(v)
@@ -318,16 +325,16 @@ class TDPTContext():
             if (v0 is not None) and abs(v - v0) > self.max_Y1_refinement:
                 tv = min(v0 + self.max_Y1_refinement, max(v0 - self.max_Y1_refinement, v))
                 self.log(
-                    fR"Requested change in $Y_1$ from {v0:.5e} to {v:.5e} exceeds the"
-                    fR" maximum allowed refinement ({self.max_Y1_refinement:.5e})\n"
-                    fR"Truncating to {tv:.5e}."
+                    f"Requested change in Y1 from {v0:.5e} to {v:.5e} exceeds the"
+                    f" maximum allowed refinement ({self.max_Y1_refinement:.5e})\n"
+                    f"Truncating to {tv:.5e}."
                 )
                 v = tv
             if not (-self.max_pulse_height <= v <= self.max_pulse_height):
                 tv = min(self.max_pulse_height, max(-self.max_pulse_height, v))
                 self.log(
-                    fR"Requested pulse $Y_1$ ({v:.5e}) falls outside the allowed range.\n"
-                    fR"Truncating to {tv:.5e}."
+                    f"Requested pulse Y1 ({v:.5e}) falls outside the allowed range.\n"
+                    f"Truncating to {tv:.5e}."
                 )
                 v = tv
             self.charge_pair.Y(v)
@@ -349,8 +356,8 @@ class TDPTContext():
             if not (-self.max_pulse_height <= v <= self.max_pulse_height):
                 tv = min(self.max_pulse_height, max(-self.max_pulse_height, v))
                 self.log(
-                    fR"Requested pulse $X_2$ ({v:.5e}) falls outside the allowed range.\n"
-                    fR"Truncating to {tv:.5e}."
+                    f"Requested pulse X2 ({v:.5e}) falls outside the allowed range.\n"
+                    f"Truncating to {tv:.5e}."
                 )
                 v = tv
         return self.discharge_pair.X()
@@ -366,16 +373,16 @@ class TDPTContext():
             if (v0 is not None) and abs(v - v0) > self.max_Y2_refinement:
                 tv = min(v0 + self.max_Y2_refinement, max(v0 - self.max_Y2_refinement, v))
                 self.log(
-                    fR"Requested change in $Y_2$ from {v0:.5e} to {v:.5e} exceeds the"
-                    fR" maximum allowed refinement ({self.max_Y2_refinement:.5e})\n"
-                    fR"Truncating to {tv:.5e}."
+                    f"Requested change in Y2 from {v0:.5e} to {v:.5e} exceeds the"
+                    f" maximum allowed refinement ({self.max_Y2_refinement:.5e})\n"
+                    f"Truncating to {tv:.5e}."
                 )
                 v = tv
             if not (-self.max_pulse_height <= v <= self.max_pulse_height):
                 tv = min(self.max_pulse_height, max(-self.max_pulse_height, v))
                 self.log(
-                    fR"Requested pulse $Y_2$ ({v:.5e}) falls outside the allowed range.\n"
-                    fR"Truncating to {tv:.5e}."
+                    f"Requested pulse Y2 ({v:.5e}) falls outside the allowed range.\n"
+                    f"Truncating to {tv:.5e}."
                 )
                 v = tv
             self.discharge_pair.Y(v)
@@ -385,9 +392,9 @@ class TDPTContext():
         if abs(v - v0) > self.max_Y2_refinement:
             tv = min(v0 + self.max_Y2_refinement, max(v0 - self.max_Y2_refinement, v))
             self.log(
-                fR"Requested change in $Y_2$ from {v0:.5e} to {v:.5e} exceeds the"
-                fR" maximum allowed refinement for an integrated balance ({self.max_Y2_int_refinement:.5e})\n"
-                fR"Truncating to {tv:.5e}."
+                f"Requested change in Y2 from {v0:.5e} to {v:.5e} exceeds the"
+                f" maximum allowed refinement for an integrated balance ({self.max_Y2_int_refinement:.5e})\n"
+                f"Truncating to {tv:.5e}."
             )
             v = tv
         self.discharge_pair.Y(v)
@@ -402,16 +409,16 @@ class TDPTContext():
             if (w0 is not None) and abs(w - w0) > self.max_W_refinement:
                 tw = min(w0 + self.max_W_refinement, max(w0 - self.max_W_refinement, w))
                 self.log(
-                    fR"Requested change in $W$ from {w0:.5e} to {w:.5e} exceeds the"
-                    fR" maximum allowed refinement ({self.max_W_refinement:.5e})\n"
-                    fR"Truncating to {tw:.5e}."
+                    f"Requested change in W from {w0:.5e} to {w:.5e} exceeds the"
+                    f" maximum allowed refinement ({self.max_W_refinement:.5e})\n"
+                    f"Truncating to {tw:.5e}."
                 )
                 w = tw
             if not (self.min_pulse_width <= w <= self.max_pulse_width):
-                tw = min(self.max_pulse_width, max(self.min_pulse_width, v))
+                tw = min(self.max_pulse_width, max(self.min_pulse_width, w))
                 self.log(
-                    fR"Requested pulse $W$ ({w:.5e}) falls outside the allowed range.\n"
-                    fR"Truncating to {tw:.5e}."
+                    f"Requested pulse W ({w:.5e}) falls outside the allowed range.\n"
+                    f"Truncating to {tw:.5e}."
                 )
                 w = tw
             self.discharge_pair.W(w)
@@ -731,9 +738,9 @@ class DischargeFilter():
 
     def __str__(self) -> str:
         return (
-            fR"$dM/dW =$ {self.dMdW:.5e} $\pm$ {np.sqrt(self.P):.5e}\n"
-            fR"$W_0$ history: {self.W0_history}\n"
-            fR"$Y_2$ history: {self.Y2_history}\n"
+            f"dM/dW = {self.dMdW:.5e} +- {np.sqrt(self.P):.5e}\n"
+            f"W0 history: {self.W0_history}\n"
+            f"Y2 history: {self.Y2_history}\n"
         )
     
 
@@ -959,9 +966,9 @@ class CapacitanceFilter():
         G, Cac, dCac = self.kfilter.x.flatten()
         PG, PCac, PdCac = self.kfilter.P.diagonal()
         return (
-            fR"$G =$ {G:.5e} $\pm$ {np.sqrt(PG):.5e}\n"
-            fR"$C_\text{{AC}} =$ {Cac:.5e} $\pm$ {np.sqrt(PCac):.5e}\n"
-            fR"$dC_\text{{AC}} =$ {dCac:.5e} $\pm$ {np.sqrt(PdCac):.5e}\n"
+            f"G = {G:.5e} +- {np.sqrt(PG):.5e}\n"
+            f"Cac = {Cac:.5e} +- {np.sqrt(PCac):.5e}\n"
+            f"dCac = {dCac:.5e} +- {np.sqrt(PdCac):.5e}\n"
             f"     Covariance: ┏                                      ┓\n"
             f"                 ┃ {f"{self.P[0,0]:.5e}":<12}{f"{self.P[0,1]:.5e}":>12}{f"{self.P[0,2]:.5e}":>12} ┃\n"
             f"                 ┃ {f"{self.P[1,0]:.5e}":<12}{f"{self.P[1,1]:.5e}":>12}{f"{self.P[1,2]:.5e}":>12} ┃\n"
@@ -993,19 +1000,19 @@ class TDPT_initial_filter_config():
 
     def __str__(self) -> str:
         r = f"Status: {'GOOD' if self.status else 'BAD'}\nCapacitance Status:" \
-            f" {'GOOD' if self.cap_status else 'BAD'} ({self.cap_err:.5e} $\pm$ {np.sqrt(self.cap_var):.5e})" \
+            f" {'GOOD' if self.cap_status else 'BAD'} ({self.cap_err:.5e} +- {np.sqrt(self.cap_var):.5e})" \
             f"\n    x = {self.cap_filter_init_parms.get('x')} +- {np.sqrt(self.cap_filter_init_parms.get('P'))}" \
-            f"\n    Qbal = {self.cap_filter_init_parms.get('bal_change_Q')}" \
-            f"\n    Qexc = {self.cap_filter_init_parms.get('exc_change_Q')}"
+            f"\n    Qbal =\n{self.cap_filter_init_parms.get('bal_change_Q')}" \
+            f"\n    Qexc =\n{self.cap_filter_init_parms.get('exc_change_Q')}"
         if self.dis_err is not None:
-            r+= f"Discharge Status: {'GOOD' if self.dis_status else 'BAD'} " \
-                f"({self.dis_err:.5e} $\pm$ {np.sqrt(self.dis_var):.5e})" \
+            r+= f"\nDischarge Status: {'GOOD' if self.dis_status else 'BAD'} " \
+                f"({self.dis_err:.5e} +- {np.sqrt(self.dis_var):.5e})" \
                 f"\n    dMdW = {self.dis_filter_init_parms.get('dMdW'):.5e} +- " \
                 f"{np.sqrt(self.dis_filter_init_parms.get('P')):.5e}" \
                 f"\n    W0 = {self.dis_filter_init_parms.get('W0'):.5e}"
         return r
 
-def TDPT_initialize_filters(self, 
+def TDPT_initialize_filters(
     ctx: TDPTContext, 
     
     cap_guess: float | None = None,
@@ -1054,12 +1061,12 @@ def TDPT_initialize_filters(self,
     Y2 = ctx.Y2(-cap_guess * X2)
     W = ctx.W(W)
 
-    ctx.log(
-        f"Starting test to initialize a the Kalman filters for a "
-        f"{'posi' if X1 > 0 else 'nega'}tive charging pulse...\n"
-        f"Initial Parameters: X1={X1:.5e}, Y2={Y1:.5e}",
-        ("" if X2 is None else f"X2={X2:.5e}, Y2={Y2:.5e}")
-    )
+    msg = "Starting test to initialize a the Kalman filters for a " \
+         f"{'posi' if X1 > 0 else 'nega'}tive charging pulse..." \
+         f"\nInitial Parameters: X1={X1:.5e}, Y2={Y1:.5e}"
+    if X2 is not None:
+        msg += f", X2={X2:.5e}, Y2={Y2:.5e}"
+    ctx.log(msg)
 
     controls = []
     errors = []
@@ -1080,6 +1087,8 @@ def TDPT_initialize_filters(self,
             h = cap_low_high[1],
             f = Y1_Y2,
             absolute = cap_absolute,
+            logger = ctx.logger,
+            name = "Y",
         )
     )
 
@@ -1094,7 +1103,9 @@ def TDPT_initialize_filters(self,
                 l = dis_low_high[0],
                 h = dis_low_high[1],
                 f = ctx.W,
-                guess_independent = True, 
+                absolute = False,
+                logger = ctx.logger,
+                name = "W",
             )
         )
 
@@ -1103,9 +1114,10 @@ def TDPT_initialize_filters(self,
     linear_balance = lstsqBalance(
         controls = controls,
         error_parms = errors,
-        pre_measurement_callback = ctx.averager.take_curve,
-        post_measurement_callback = post_measurement_callback,
-        settle_time = settle_time,    
+        pre_measurement_callback = lambda *args, **kwargs: ctx.averager.take_curve(),
+        post_measurement_callback = None,
+        settle_time = settle_time,
+        logger = ctx.logger,
     )
 
     # Positive Balance
@@ -1130,12 +1142,12 @@ def TDPT_initialize_filters(self,
     Y2 = ctx.Y2(-cap_guess * X2)
     linear_balance.controls[0].guess = -cap_guess * X1
 
-    ctx.log(
-        f"Starting test to initialize a the Kalman filters for a "
-        f"{'posi' if X1 > 0 else 'nega'}tive charging pulse...\n"
-        f"Initial Parameters: X1={X1:.5e}, Y2={Y1:.5e}",
-        ("" if X2 is None else f"X2={X2:.5e}, Y2={Y2:.5e}")
-    )
+    msg = "Starting test to initialize a the Kalman filters for a " \
+         f"{'posi' if X1 > 0 else 'nega'}tive charging pulse..." \
+         f"\nInitial Parameters: X1={X1:.5e}, Y2={Y1:.5e}"
+    if X2 is not None:
+        msg += f", X2={X2:.5e}, Y2={Y2:.5e}"
+    ctx.log(msg)
 
     negative_result = _TDPT_initialize_filter_pass(
         linear_balance, 
@@ -1187,7 +1199,7 @@ def _TDPT_initialize_filter_pass(
             'dMdW': dMdW,
             'P': _TDPT_CONF.DIS_INIT_P_MULT*(dMdW)**2,
             'W0': linear_balance.controls[1].get_val()
-        },
+        }
     else:
         dis_filter_init_parms = None
 
@@ -1201,7 +1213,7 @@ def _TDPT_initialize_filter_pass(
         cap_filter_init_parms = {
             'bal_change_Q': np.diag([_TDPT_CONF.CAP_INIT_BAL_QG_MULT*G, _TDPT_CONF.CAP_INIT_BAL_QC, _TDPT_CONF.CAP_INIT_BAL_QdC])**2,
             'exc_change_Q': np.diag([_TDPT_CONF.CAP_INIT_EXC_QG_MULT*G, _TDPT_CONF.CAP_INIT_EXC_QC, _TDPT_CONF.CAP_INIT_EXC_QdC])**2,
-            'x': np.array([Cac, G, 0.0]),
+            'x': np.array([G, Cac, 0.0]),
             'P': np.array([_TDPT_CONF.CAP_INIT_PG_MULT*G, _TDPT_CONF.CAP_INIT_PC, _TDPT_CONF.CAP_INIT_PdC])**2,
         },
         dis_err = M,

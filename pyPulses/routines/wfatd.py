@@ -14,6 +14,11 @@ from typing import Callable, List, Tuple
 import numpy as np
 import warnings
 
+class wfAveragerView(): ...
+
+@dataclass
+class wfCurveData(): ...
+
 class wfPostProcess():
     """Post-processing step applied to time domain data after waveform averaging"""
     def __init__(self): ...
@@ -43,7 +48,8 @@ class wfAverager():
         self._views.append(view)
 
     def remove_view(self, view: wfAveragerView):
-        self._views.remove(view)
+        if view in self._views:
+            self._views.remove(view)
 
     def add_post_process(self, process: wfPostProcess):
         self._post_processes.append(process)
@@ -59,7 +65,7 @@ class wfAverager():
                 self._unprocessed_curve += self.scope_call()[0]
 
         self._N = self._unprocessed_curve.size
-        self._curve = self._unprocessed_curve.copt()
+        self._curve = self._unprocessed_curve.copy()
         self._t = self._t0 + self._dt * np.arange(self._N)
 
         for view in self._views:
@@ -131,6 +137,9 @@ class wfAveragerView():
     ):
         
         self._averager = averager
+        if not self in self._averager._views:
+            self._averager.add_view(self)
+        
         if isinstance(range, wfRange):
             self._ranges = [range]
         else:
@@ -155,11 +164,11 @@ class wfAveragerView():
         }
 
     def _new_curve(self):
+        self._offset = self._static_offset + self._dynamic_offset()
         for k, v in self._state.items():
             self._state[k] = None
 
     def _msk(self) -> np.ndarray:
-        self._offset = self._static_offset + self._dynamic_offset()
         if self._state['msk'] is None:
             for i, rng in enumerate(self._ranges):
                 if i == 0:
@@ -200,11 +209,12 @@ class wfAveragerView():
     def _vsqm(self) -> float:
         if self._state['vsqm'] is None:
             self._state['vsqm'] = np.nanmean(self._curve()**2)
-        return self._statr['vsqm']
+        return self._state['vsqm']
     
     def _tvsq(self) -> float:
         if self._state['tvsq'] is None:
             self._state['tvsq'] = np.nanmean(self._t()*self._curve())
+        return self._state['tvsq']
 
     def mean(self) -> Tuple[float, float]:
         return self._vmean(), self._vsqm() - self._vmean()**2
@@ -251,7 +261,12 @@ class wfAveragerView():
         (m, c), _ = self.lin_fit()
         ax.plot(self._averager._t, m*self._averager._t + c, color=color, linestyle='dashed')
         for rng in self._ranges:
-            ax.plot([rng.ta, rng.tb], [m*rng.ta + c, m*rng.tb + c], color=color, alpha=0.4, linewidth=8)
+            ta, tb = rng.ta + self._offset, rng.tb + self._offset
+            ax.plot([ta, tb], [m*ta + c, m*tb + c], color=color, alpha=0.4, linewidth=8)
+
+    def __del__(self):
+        self._averager.remove_view(self)
+        super().__del__()
 
 """wfBalance Classes; each represents various values against which we can balance"""
 
@@ -279,7 +294,8 @@ class wfSlope(wfBalance):
     def __init__(self, region: wfAveragerView):
         super().__init__()
         self._region = region
-        self._region._averager._supported_balances.append(self)
+        if not self in self._region._averager._supported_balances:
+            self._region._averager._supported_balances.append(self)
         self._plot_color = 'r'
 
     def __call__(self) -> Tuple[float, float]:
@@ -298,7 +314,8 @@ class wfSlope(wfBalance):
         return m, c
     
     def __del__(self):
-        self._region._averager._supported_balances.remove(self)
+        if self in self._region._averager._supported_balances:
+            self._region._averager._supported_balances.remove(self)
         super().__del__()
 
 class wfJump(wfBalance):
@@ -306,6 +323,10 @@ class wfJump(wfBalance):
         super().__init__()
         self._left = left
         self._right = right
+        if not self in self._left._averager._supported_balances:
+            self._left._averager._supported_balances.append(self)
+        if not self in self._right._averager._supported_balances:
+            self._right._averager._supported_balances.append(self)
         self._t0 = t0
         self._plot_color = 'g'
 
@@ -327,14 +348,15 @@ class wfJump(wfBalance):
         ymax = mr*self._t0 + cr
         if ymin > ymax:
             ymin, ymax = ymax, ymin
-        ax.axvline(self._t0, [ymin, ymax], alpha=0.4, linewidth=8, color=self._plot_color)
+        ax.vlines(self._t0, ymin=ymin, ymax=ymax, 
+                  alpha=0.4, linewidth=8, color=self._plot_color)
     
     def get_left_fit(self) -> Tuple[float, float]:
-        (ml, cl), (_, _) = self._left.lin_fit()
+        (ml, cl), _ = self._left.lin_fit()
         return ml, cl
     
     def get_right_fit(self) -> Tuple[float, float]:
-        (mr, cr), (_, _) = self._right.lin_fit()
+        (mr, cr), _ = self._right.lin_fit()
         return mr, cr
 
     def get_left_slope(self) -> float:
@@ -343,11 +365,22 @@ class wfJump(wfBalance):
     def get_right_slope(self) -> float:
         return self.get_right_fit()[0]
     
+    def __del__(self):
+        if self in self._left._averager._supported_balances:
+            self._left._averager._supported_balances.remove(self)
+        if self in self._right._averager._supported_balances:
+            self._right._averager._supported_balances.remove(self)
+        super().__del__()
+    
 class wfIntegral(wfBalance):
     def __init__(self, zero_region: wfAveragerView, int_region: wfAveragerView):
         super().__init__()
         self._zero_region = zero_region
         self._int_region = int_region
+        if not self in self._zero_region._averager._supported_balances:
+            self._zero_region._averager._supported_balances.append(self)
+        if not self in self._int_region._averager._supported_balances:
+            self._int_region._averager._supported_balances.append(self)
         self._plot_color = 'b'
 
     def __call__(self) -> Tuple[float, float]:
@@ -358,8 +391,15 @@ class wfIntegral(wfBalance):
         self.var = Ivar + R * Zvar
         return self.error, self.var
     
-    def plot_annotations(ax: Axes):
+    def plot_annotations(self, ax: Axes):
         pass # TODO implement this nicely
+
+    def __del__(self):
+        if self in self._zero_region._averager._supported_balances:
+            self._zero_region._averager._supported_balances.remove(self)
+        if self in self._int_region._averager._supported_balances:
+            self._int_region._averager._supported_balances.remove(self)
+        super().__del__()
     
 """wfPostProcess Classes; each is a post-processing step we can take after the curve is acquired"""
 

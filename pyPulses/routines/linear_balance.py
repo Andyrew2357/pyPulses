@@ -3,6 +3,7 @@ from .balance_parameter import balanceError, balanceKnob
 from ..thread_job import _checkpoint
 
 import time
+import logging
 import numpy as np
 from typing import Callable, List, Tuple
 
@@ -10,12 +11,16 @@ class lstsqBalance():
     def __init__(self, 
         controls: List[balanceKnob], 
         error_parms: List[balanceError],
-        pre_measurement_callback: Callable = lambda: None,
-        post_measurement_callback: Callable = lambda: None,
+        pre_measurement_callback: Callable | None = None,
+        post_measurement_callback: Callable | None = None,
         settle_time: float = 0.0,
         v0: float = 0.0,
+        logger: logging.Logger | None = None
     ):
         
+        self.controls = controls
+        self.error_parms = error_parms
+
         self.v0 = v0
         
         self.P = len(controls)
@@ -24,11 +29,15 @@ class lstsqBalance():
         self.controls = controls
         self.error_parms = error_parms
 
-        def callback():
+        self._pre_measurement_callback = pre_measurement_callback
+        def callback(*args, **kwargs):
             time.sleep(settle_time)
-            pre_measurement_callback
+            if self._pre_measurement_callback is not None:
+                self._pre_measurement_callback(*args, **kwargs)
+
         self.pre_callback = callback
         self.post_callback = post_measurement_callback
+        self.logger = logger
 
         self.N = 0
         self._X = []
@@ -43,6 +52,10 @@ class lstsqBalance():
 
         self.test_points = []
         self.good = False
+
+    def log(self, *args, **kwargs):
+        if self.logger is not None:
+            self.logger.info(*args, **kwargs)
 
     def reset(self):
         self.N = 0
@@ -62,6 +75,7 @@ class lstsqBalance():
 
         self.N+=1
         yv, yd = zip(*y)
+        print(yv, yd)
         self._X.append(x)
         self._Y.append(yv)
         self._Ydev.append(yd)
@@ -95,7 +109,10 @@ class lstsqBalance():
                 p[i - 2] = True
                 self.test_points.append(p)
 
+        self.log(f"Prepared test points:\n{self.test_points}")
+
     def set_test_point(self, point: np.ndarray):
+        self.log(f"Setting test point: {point}")
         for x, p in zip(self.controls, point):
             x.set_bool(p)
 
@@ -104,8 +121,14 @@ class lstsqBalance():
 
     def measure_error_parms(self) -> np.ndarray:
         _checkpoint()
-        self.pre_callback()
-        return [P() for P in self.error_parms]
+
+        self.log(f"Measuring error parameters...")
+        self.pre_callback(self)
+        res = [P() for P in self.error_parms]
+        self.log(f"Measured error parameters: {res}")
+        if self.post_callback is not None:
+            self.post_callback(self, res)
+        return res
 
     def measure_test_points(self):
         for point in self.test_points:
@@ -113,8 +136,13 @@ class lstsqBalance():
             self.push(self.get_control_vals(), self.measure_error_parms())
 
     def calculate_response_matrix(self, rcond: float = 1e-12):
+        self.log("Calculating response matrix...")
+
         Xhist = np.asarray(self._X)
         Yhist = np.asarray(self._Y)
+
+        self.log(f"X history:\n{Xhist}\nY history:\n{Yhist}\nWeights:\n{self._W}")
+
         Xaug = np.hstack([Xhist, np.ones((self.N, 1))])
         Wsqrt = np.sqrt(self._W)[:, None]
 
@@ -124,14 +152,25 @@ class lstsqBalance():
         self._A = coeffs[:-1, :].T
         self._b = coeffs[-1, :]
 
+        self.log(f"Response matrix:\nA:\n{self._A}\nb:\n{self._b}")
+
     def calculate_balance_point(self, rcond: float = 1e-12):
         x_balance, *_ = np.linalg.lstsq(self._A, -self._b, rcond=rcond)
         if self.good and self._yerr is not None:
-            dx, *_ = np.linalg.lstsq(self.A, -self._yerr)
+            dx, *_ = np.linalg.lstsq(self._A, -self._yerr)
             self._x0 = self._x0_set + dx
+            self.log(
+                f"Balance is 'good', refining...\n   Set point = {self._x0_set}"
+                f"\n    Error = {self._yerr}\n  Balance point = {self._x0}"
+            )
         else:
             x_balance, *_ = np.linalg.lstsq(self._A, -self._b, rcond=rcond)
             self._x0 = x_balance
+            self.log(
+                "Balance is not 'good', using raw balance point calculation..."
+            )
+
+        self.log(f"Calculated balance point: {self._x0}")
 
     def get_current_balance_point(self) -> np.ndarray | None:
         return self._x0.copy()
@@ -143,12 +182,20 @@ class lstsqBalance():
         self._yerr = None
 
     def step_to_balance(self):
+
+        self.log(f"Stepping to balance point: {self._x0}")
+
         for x, p in zip(self.controls, self._x0):
             x.set_val(p)
             x.update_guess(p)
         self._x0_set = self.get_control_vals()
 
+        self.log(f"Stepped to balance point: {self._x0_set}")
+
     def balance(self):
+
+        self.log("Starting balance procedure...")
+        
         if len(self.test_points) == 0:
             self.prepare_test_points()
 
@@ -158,6 +205,9 @@ class lstsqBalance():
         self.step_to_balance()
 
     def refine(self):
+        
+        self.log("Refining balance point...")
+
         self.step_to_balance()
         y = self.measure_error_parms()
         self._yerr = np.array([v for v, _ in y], dtype=float)
