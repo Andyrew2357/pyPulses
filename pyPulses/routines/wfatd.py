@@ -63,7 +63,7 @@ class wfAverager():
                 self._unprocessed_curve, self._dt, self._t0 = self.scope_call()
             else:
                 self._unprocessed_curve += self.scope_call()[0]
-
+        self._unprocessed_curve /= sweep_multiplier
         self._N = self._unprocessed_curve.size
         self._curve = self._unprocessed_curve.copy()
         self._t = self._t0 + self._dt * np.arange(self._N)
@@ -96,7 +96,7 @@ class wfAverager():
                 self.get_unprocessed_curve_binary(),
             N = self._N,
             dt = self._dt,
-            toff = self._t0
+            t0 = self._t0
         )
     
     def plot_curve(self, ax: Axes, *args, **kwargs):
@@ -266,7 +266,6 @@ class wfAveragerView():
 
     def __del__(self):
         self._averager.remove_view(self)
-        super().__del__()
 
 """wfBalance Classes; each represents various values against which we can balance"""
 

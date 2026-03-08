@@ -14,7 +14,7 @@ class lstsqBalance():
         pre_measurement_callback: Callable | None = None,
         post_measurement_callback: Callable | None = None,
         settle_time: float = 0.0,
-        v0: float = 0.0,
+        v0: float = 0.5,
         logger: logging.Logger | None = None
     ):
         
@@ -83,7 +83,7 @@ class lstsqBalance():
         if self.good and self._x0 is not None:
             dx = x - self._x0
             dr = np.dot(dx, dx)
-            w = self.v0 + dr
+            w = self.v0 #+ dr
         else:
             w = 1.0
 

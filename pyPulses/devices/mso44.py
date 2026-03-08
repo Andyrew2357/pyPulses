@@ -31,7 +31,7 @@ class mso44(pyvisaDevice):
         super().__init__(self.pyvisa_config, logger, instrument_id)
 
         # Right now, I've only implemented this for pulling data using ASCII
-        self.write("DATA:WIDTh 4")
+        self.write("DATA:WIDTh 2")
         self.write("DATA:ENCdg ASCII")
 
         self.set_channel(1)
@@ -88,8 +88,14 @@ class mso44(pyvisaDevice):
         -------
         t, v : np.ndarray
         """
-        data = np.fromstring(self.query("CURVe?"), 
-                             dtype = float, sep = ',')
+        try:
+            data = np.fromstring(self.query("CURVe?"), dtype=float, sep=',')
+        except Exception as e:
+            self.warn(f"MSO44: CURVe? failed ({e}), flushing and retrying...")
+            self.write("*CLS")
+            self.query("*OPC?")
+            data = np.fromstring(self.query("CURVe?"), dtype=float, sep=',')
+        
         v = (data - self.YOF) * self.YMU + self.YZE
         return v
     

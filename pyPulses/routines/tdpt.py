@@ -70,8 +70,10 @@ class TDPTContext():
     discharge_pair: pulsePair | None = None    
     discharge_error: wfBalance | None = None
     discharge_error_threshold: float = 40.0
+    discharge_X_ratio: float | None = None
     min_pulse_width: float = 1.0e-6
     max_pulse_width: float = 5.0e-6
+    pulse_width_resolution: float = 2.7e-10
 
     # If no discharge pulses are needed, or integrated errors are not a concern,
     # these can be None
@@ -85,7 +87,7 @@ class TDPTContext():
     # Maximum steps to take in the controls for refinements
     max_Y1_refinement: float = 2.0e-3
     max_Y2_refinement: float = 2.0e-3
-    max_Y2_int_refinement: float = 100.0e-3
+    max_Y2_int_refinement: float = 1.0e-3
     max_W_refinement: float = 5.0e-6
 
     settle_time: float = 0.2
@@ -100,6 +102,7 @@ class TDPTContext():
     high_resolution_sweep_multiplier: int = 1
     dis_extrap_support: int = 7
     dis_extrap_order: int = 2
+    dis_eta: int = -1 # Relative sign difference between charge and discharge pulse height conventions
 
     pre_initial_trace_callback: Callable[[TDPTContext, TDPT_control_state], Any] | None = None
     post_initial_trace_callback: TDPT_POST_CALLBACK |  None = None
@@ -167,8 +170,11 @@ class TDPTContext():
                 capacitance_error_threshold = float(self.capacitance_error_threshold),
                 max_pulse_height = float(self.max_pulse_height),
                 discharge_error_threshold = float(self.discharge_error_threshold),
+                discharge_X_ratio = float(self.discharge_X_ratio) \
+                    if self.discharge_X_ratio is not None else None,
                 min_pulse_width = float(self.min_pulse_width),
                 max_pulse_width = float(self.max_pulse_width),
+                pulse_width_resolution = float(self.pulse_width_resolution),
                 integrated_error_threshold = float(self.integrated_error_threshold),
                 dis_amp_adjustment_threshold = float(self.dis_amp_adjustment_threshold),
                 max_Y1_refinement = float(self.max_Y1_refinement),
@@ -239,22 +245,22 @@ class TDPTContext():
     def initialize_positive_filter(self, config: TDPT_initial_filter_config):
         if self.cap_filter is None:
             self.cap_filter = CapacitanceFilter(self)
-        self.cap_filter.positive_initialize(**config.cap_filter_init_parms)
+        self.cap_filter.set_positive_init_params(**config.cap_filter_init_parms)
 
         if config.dis_filter_init_parms is not None:
             if self.dis_filter is None:
                 self.dis_filter = DischargeFilter(self)
-            self.dis_filter.positive_initialize(**config.dis_filter_init_parms)
+            self.dis_filter.set_positive_init_params(**config.dis_filter_init_parms)
 
     def initialize_negative_filter(self, config: TDPT_initial_filter_config):
         if self.cap_filter is None:
             self.cap_filter = CapacitanceFilter(self)
-        self.cap_filter.negative_initialize(**config.cap_filter_init_parms)
+        self.cap_filter.set_negative_init_params(**config.cap_filter_init_parms)
 
         if config.dis_filter_init_parms is not None:
             if self.dis_filter is None:
                 self.dis_filter = DischargeFilter(self)
-            self.dis_filter.negative_initialize(**config.dis_filter_init_parms)
+            self.dis_filter.set_negative_init_params(**config.dis_filter_init_parms)
 
     def reinitialize_positive_filter(self):
         self.cap_filter.positive_initialize()
@@ -360,6 +366,7 @@ class TDPTContext():
                     f"Truncating to {tv:.5e}."
                 )
                 v = tv
+            self.discharge_pair.X(v)
         return self.discharge_pair.X()
     
     def Y2(self, v: float | None = None, v0: float | None = None) -> float:
@@ -390,7 +397,7 @@ class TDPTContext():
     
     def set_Y2_integrated_balance(self, v: float, v0: float):
         if abs(v - v0) > self.max_Y2_refinement:
-            tv = min(v0 + self.max_Y2_refinement, max(v0 - self.max_Y2_refinement, v))
+            tv = min(v0 + self.max_Y2_int_refinement, max(v0 - self.max_Y2_int_refinement, v))
             self.log(
                 f"Requested change in Y2 from {v0:.5e} to {v:.5e} exceeds the"
                 f" maximum allowed refinement for an integrated balance ({self.max_Y2_int_refinement:.5e})\n"
@@ -459,13 +466,18 @@ class TDPTContext():
             return self.W()
         W0extrap = self.dis_filter.extrapolate_W0()
         return self.W(W0extrap)
+    
+    def mean_dis_width(self) -> float:
+        if len(self.dis_filter.W0_history) == 0:
+            return self.W()
+        return float(np.mean(self.dis_filter.W0_history))
 
     def clear_dis_width_bracket(self):
         del self._dis_width_bracket
         self._dis_width_bracket = bracket1d(
             self.min_pulse_width, 
             self.max_pulse_width,
-            padding = 1e-10,
+            padding = self.pulse_width_resolution,
         )
 
     def update_dis_width_bracket(self, W: float, M: float):
@@ -484,7 +496,7 @@ class TDPTContext():
         if len(self.dis_filter.Y2_history) == 0:
             return self.Y2(-self.get_Cac() * self.X2())
         Yextrap = self.dis_filter.extrapolate_Y2()
-        return self.Y2(Yextrap)
+        return self.set_Y2_integrated_balance(Yextrap, self.dis_filter.Y2_history[-1])
 
 def _extrap(x: np.ndarray, order: int) -> float:
     coeff = np.polyfit(np.arange(len(x)), x, min(order, len(x) - 1))
@@ -534,6 +546,8 @@ class DischargeFilter():
         self._previous_dMdW = self.dMdW
         self.P = init_params.get('P')
         self.W0_history = []
+        if 'W0' in init_params:
+            self.W0_history.append(init_params.get('W0'))
         self.Y2_history = []
 
     def positive_initialize(self):
@@ -571,12 +585,14 @@ class DischargeFilter():
         exc_change_Q: float,
         dMdW: float,
         P: float,
+        W0: float,
     ):
         self._positive_init_params = {
             'balance_change_uncertainty': bal_change_Q,
             'excitation_change_uncertainty': exc_change_Q,
             'dMdW': dMdW,
             'P': P,
+            'W0': W0,
         }
 
     def set_negative_init_params(self,
@@ -584,12 +600,14 @@ class DischargeFilter():
         exc_change_Q: float,
         dMdW: float,
         P: float,
+        W0: float,
     ):
         self._negative_init_params = {
             'balance_change_uncertainty': bal_change_Q,
             'excitation_change_uncertainty': exc_change_Q,
             'dMdW': dMdW,
             'P': P,
+            'W0': W0,
         }
 
     def load_state_json(self, path: str):
@@ -692,7 +710,7 @@ class DischargeFilter():
         W0 : float
             New good discharge pulse width
         """
-        self.W0_history.append(W0)
+        self.W0_history.append(float(W0))
 
     def push_Y2(self, Y2: float):
         """
@@ -703,7 +721,7 @@ class DischargeFilter():
         Y2 : float
             New discharge Y amplitude
         """
-        self.Y2_history.append(Y2)
+        self.Y2_history.append(float(Y2))
 
     def extrapolate_W0(self) -> float:
         """
@@ -823,7 +841,7 @@ class CapacitanceFilter():
             'balance_change_Q': bal_change_Q.reshape((3, 3)),
             'excitation_change_Q': exc_change_Q.reshape((3, 3)),
             'x_init': x.reshape((3, 1)),
-            'P_init': P.reshape((3, 3))
+            'P_init': np.diag(P.flatten()).reshape((3, 3)),
         }
 
     def set_negative_init_params(self, 
@@ -836,7 +854,7 @@ class CapacitanceFilter():
             'balance_change_Q': bal_change_Q.reshape((3, 3)),
             'excitation_change_Q': exc_change_Q.reshape((3, 3)),
             'x_init': x.reshape((3, 1)),
-            'P_init': P.reshape((3, 3))
+            'P_init': np.diag(P.flatten()).reshape((3, 3)),
         }   
     
     def load_state_json(self, path: str):
@@ -934,7 +952,7 @@ class CapacitanceFilter():
 
         # We prevent any unphyiscal changes in the sign of G or Cac
         pG, pCac, _ = self.kfilter.x.flatten()
-        self.kfilter.update(np.ndarray([[dQ]]), np.ndarray([[R]]), Xamp, Yamp)
+        self.kfilter.update(np.array([[dQ]]), np.array([[R]]), Xamp, Yamp)
         G, Cac, _ = self.kfilter.x.flatten()
         
         if pCac * Cac < 0:
@@ -957,22 +975,23 @@ class CapacitanceFilter():
         return tuple(self.kfilter.x.flatten())
 
     def get_G(self) -> float:
-        return self.kfilter.x[0]
+        return self.kfilter.x[0, 0]
 
     def get_Cac(self) -> float:
-        return self.kfilter.x[1]
+        return self.kfilter.x[1, 0]
 
     def __str__(self) -> str:
         G, Cac, dCac = self.kfilter.x.flatten()
         PG, PCac, PdCac = self.kfilter.P.diagonal()
+        P = self.kfilter.P
         return (
             f"G = {G:.5e} +- {np.sqrt(PG):.5e}\n"
             f"Cac = {Cac:.5e} +- {np.sqrt(PCac):.5e}\n"
             f"dCac = {dCac:.5e} +- {np.sqrt(PdCac):.5e}\n"
             f"     Covariance: ┏                                      ┓\n"
-            f"                 ┃ {f"{self.P[0,0]:.5e}":<12}{f"{self.P[0,1]:.5e}":>12}{f"{self.P[0,2]:.5e}":>12} ┃\n"
-            f"                 ┃ {f"{self.P[1,0]:.5e}":<12}{f"{self.P[1,1]:.5e}":>12}{f"{self.P[1,2]:.5e}":>12} ┃\n"
-            f"                 ┃ {f"{self.P[2,0]:.5e}":<12}{f"{self.P[2,1]:.5e}":>12}{f"{self.P[2,2]:.5e}":>12} ┃\n"
+            f"                 ┃ {f"{P[0,0]:.5e}":<12}{f"{P[0,1]:.5e}":>12}{f"{P[0,2]:.5e}":>12} ┃\n"
+            f"                 ┃ {f"{P[1,0]:.5e}":<12}{f"{P[1,1]:.5e}":>12}{f"{P[1,2]:.5e}":>12} ┃\n"
+            f"                 ┃ {f"{P[2,0]:.5e}":<12}{f"{P[2,1]:.5e}":>12}{f"{P[2,2]:.5e}":>12} ┃\n"
             f"                 ┗                                      ┛"
         )
 
@@ -1016,32 +1035,34 @@ def TDPT_initialize_filters(
     ctx: TDPTContext, 
     
     cap_guess: float | None = None,
-    cap_low_high: Tuple[float, float] = (0.05, 1.5),
+    cap_low_high: Tuple[float, float] = (0.05, 2.0),
     cap_absolute: bool = False,
     cap_error_threshold: float | None = None,
 
-    dis_low_high: Tuple[float, float] = (0.5, 1.0),
+    dis_low_high: Tuple[float, float] = (0.5, 2.0),
     dis_error_threshold: float | None = None,
 
-    X1: float | None = None, # -5e-3 is reasonable
-    X2: float | None = None, # 10e-3 is reasonable
+    X1: float | None = None, # 10s of mV is reasonable
+    X2: float | None = None, # 10s of mV is reasonable
     W: float | None = None, # usually a few us
+    reguess: bool = True,
 
     refinements: int | None = None,
     deviation_samples: int = 3,
     settle_time: float | None = None,
 
-    post_measurement_callback: Callable = lambda: None,
+    post_measurement_callback: Callable | None = None,
 
 ) -> Tuple[TDPT_initial_filter_config, TDPT_initial_filter_config]:
     
     if cap_guess is None:
-        if ctx.cap_filter is None:
-            raise RuntimeError(
-                "User must provide a capacitance guess is `ctx` has no existing CapacitanceFilter."
-            )
+        if ctx.cap_filter is not None:
+            try:
+                cap_guess = ctx.get_Cac()
+            except:
+                cap_guess = -ctx.Y1()/ctx.X1()
         else:
-            cap_guess = ctx.get_Cac()
+            cap_guess = -ctx.Y1()/ctx.X1()
 
     if settle_time is None:
         settle_time = ctx.settle_time
@@ -1114,8 +1135,9 @@ def TDPT_initialize_filters(
     linear_balance = lstsqBalance(
         controls = controls,
         error_parms = errors,
-        pre_measurement_callback = lambda *args, **kwargs: ctx.averager.take_curve(),
-        post_measurement_callback = None,
+        pre_measurement_callback = lambda *args, **kwargs: \
+            ctx.averager.take_curve(ctx.high_resolution_sweep_multiplier),
+        post_measurement_callback = post_measurement_callback,
         settle_time = settle_time,
         logger = ctx.logger,
     )
@@ -1129,6 +1151,7 @@ def TDPT_initialize_filters(
         dis_error_threshold,
         deviation_samples, 
         X1, X2,
+        reguess,
     )
 
     ctx.log(
@@ -1138,7 +1161,7 @@ def TDPT_initialize_filters(
     # Negative Balance
     X1 = ctx.X1(-X1)
     X2 = ctx.X2(-X2)
-    Y1 = ctx.Y2(-cap_guess * X1)
+    Y1 = ctx.Y1(-cap_guess * X1)
     Y2 = ctx.Y2(-cap_guess * X2)
     linear_balance.controls[0].guess = -cap_guess * X1
 
@@ -1157,6 +1180,7 @@ def TDPT_initialize_filters(
         dis_error_threshold,
         deviation_samples, 
         X1, X2,
+        reguess,
     )
 
     ctx.log(
@@ -1177,15 +1201,15 @@ def _TDPT_initialize_filter_pass(
     dis_error_threshold: float | None,
     deviation_samples: int,
     X1: float, X2: float,
+    reguess: bool,
 ):
     Cac, (dQ, dQvar), (M, Mvar) = _TDPT_initialize_filter_inner_balance(
         linear_balance, 
         averager, 
-        refinements, 
-        cap_error_threshold,
-        dis_error_threshold,
+        refinements,
         deviation_samples, 
-        X1
+        X1,
+        reguess,
     )
 
     cap_status = abs(dQ) < cap_error_threshold
@@ -1194,8 +1218,8 @@ def _TDPT_initialize_filter_pass(
     if linear_balance.M == 2:
         dMdW = linear_balance._A[1, 1]
         dis_filter_init_parms = {
-            'balance_change_uncertainty': _TDPT_CONF.DIS_INIT_BAL_UNC**2,
-            'excitation_change_uncertainty': _TDPT_CONF.DIS_INIT_EXC_UNC**2,
+            'bal_change_Q': _TDPT_CONF.DIS_INIT_BAL_UNC**2,
+            'exc_change_Q': _TDPT_CONF.DIS_INIT_EXC_UNC**2,
             'dMdW': dMdW,
             'P': _TDPT_CONF.DIS_INIT_P_MULT*(dMdW)**2,
             'W0': linear_balance.controls[1].get_val()
@@ -1226,10 +1250,9 @@ def _TDPT_initialize_filter_inner_balance(
     linear_balance: lstsqBalance,
     averager: wfAverager,
     refinements: int,
-    cap_error_threshold: float,
-    dis_error_threshold: float | None,
     deviation_samples: int,
     X1: float,
+    reguess: bool,
 ) -> Tuple[float, Tuple[float, float], Tuple[float | None, float | None]]:
 
     """rebalances linear_balance and returns Cac, error parameters, and deviations."""
@@ -1237,8 +1260,14 @@ def _TDPT_initialize_filter_inner_balance(
     # Reset
     linear_balance.reset()
     linear_balance.balance()
+    if reguess:
+        linear_balance.set_good(True)
+        linear_balance.refine()
+        linear_balance.reset()
+        linear_balance.balance()
 
     # Perform refinements to the balance
+    linear_balance.set_good(True)
     for i in range(refinements):
         _checkpoint()
         
@@ -1247,12 +1276,12 @@ def _TDPT_initialize_filter_inner_balance(
         if linear_balance.M == 2:
             dQ = linear_balance.error_parms[0].get_error()
             M = linear_balance.error_parms[1].get_error()
-            good_balance = abs(dQ) < cap_error_threshold and \
-                            abs(M) < dis_error_threshold
+            # good_balance = abs(dQ) < cap_error_threshold and \
+            #                 abs(M) < dis_error_threshold
         else:
             dQ = linear_balance.error_parms[0].get_error()
-            good_balance = abs(dQ) < cap_error_threshold
-        linear_balance.set_good(good_balance)
+            # good_balance = abs(dQ) < cap_error_threshold
+        # linear_balance.set_good(good_balance)
 
         linear_balance.refine()
 
@@ -1327,12 +1356,16 @@ class TDPT_optimal_state():
     Cac: float
     W0: float | None = None
     good_width_prediction: bool | None = None
+    rail_intervention: bool | None = None
+    low_collision: bool | None = None
+    high_collision: bool | None = None
     discharge_ratio: float | None = None
 
     def __str__(self) -> str:
         r = f"Cac = {self.Cac:.5e}"
         if self.W0 is not None:
-            r += f", W0 = {self.W0:.5e} ({'GOOD' if self.good_width_prediction else 'BAD'})"
+            r += f", W0 = {self.W0:.5e} ({'GOOD' if self.good_width_prediction else 'BAD'})" \
+                 f"\n    (Collisions: {'LOW' if self.low_collision else 'HIGH' if self.high_collision else 'NONE'})"
         if self.discharge_ratio is not None:
             r += f", Y2/X2 = {self.discharge_ratio:.5e}"
         return r
@@ -1402,7 +1435,8 @@ def TDPT_filter_balance(ctx: TDPTContext) -> TDPT_filter_balance_result:
 
     # Check if the Kalman initialization matches the sign of the charging pulse
     X1 = ctx.X1()
-    if ctx.cap_filter.is_positive_initialized != (X1 >= 0):
+    if (X1 >= 0 and not ctx.cap_filter.is_positive_initialized) or \
+       (X1 < 0 and not ctx.cap_filter.is_negative_initialized):
         ctx.log("Filter initialization polarity did not match X1; Reinitializing...")
         if X1 >= 0:
             ctx.reinitialize_positive_filter()
@@ -1415,7 +1449,7 @@ def TDPT_filter_balance(ctx: TDPTContext) -> TDPT_filter_balance_result:
     ctx.log_capacitance_filter_status()
     if ctx.is_discharge():
         ctx.log_discharge_filter_status()
-    Y1 = ctx.Y1(-KF_Cac * X1) # Balance away dQ
+    Y1 = ctx.Y1(-ctx.get_Cac() * X1) # Balance away dQ
 
     # If we are also using discharge pulses, we have to clear the stale bracket. 
     # We also extrapolate the discharge pulse width and retrieve X2.
@@ -1424,7 +1458,10 @@ def TDPT_filter_balance(ctx: TDPTContext) -> TDPT_filter_balance_result:
         W = ctx.set_extrap_dis_width()
         prev_W = W
         prev_M = None
-        X2 = ctx.X2()        
+        if ctx.discharge_X_ratio is None:
+            X2 = ctx.X2()
+        else:
+            X2 = ctx.X2(-ctx.dis_eta * ctx.discharge_X_ratio * X1)
 
     # If we are performing an integrated balance, extrapolate the discharge Y
     # amplitude from previous measurements.
@@ -1453,14 +1490,12 @@ def TDPT_filter_balance(ctx: TDPTContext) -> TDPT_filter_balance_result:
                 # If not integrated, the ratios Yi/Xi should be the same
                 Y2 = ctx.Y2(-KF_Cac * X2, Y2)
 
-        # Use the bracket and some slope information to predict the optimal 
-        # discharge pulse width. On the first iteration, this is never a 
-        # "good_width_prediction"
-        W0, good_width_prediction = ctx.iterate_dis_width_bracket()
-        if good_width_prediction:
-            W = ctx.W(W0, W)
-        else:
-            W0 = W
+        if ctx.is_discharge():
+            if itr == 0:
+                # On the first iteration, we haven't doen this yet
+                W0, good_width_prediction = ctx.iterate_dis_width_bracket()
+            if good_width_prediction:
+                W = ctx.W(W0, W)
         
         # THERE IS SOME TERMINATION CHECKING STUFF HERE IF WE'RE HITTING THE EDGE OF THE BRACKET IN THE ORIGINAL
         # THINK ABOUT IF WE WANT TO REPLICATE THIS
@@ -1499,21 +1534,57 @@ def TDPT_filter_balance(ctx: TDPTContext) -> TDPT_filter_balance_result:
             
             if itr != 0:
                 dW = W - prev_W
-                o_dMdW = (M - prev_M) / dW
-                dMdW_R = _TDPT_CONF.dMdW_R_MULT * ctx.discharge_error_threshold**2 / dW * dW
-                ctx.dis_update(o_dMdW, dMdW_R)
+                if abs(dW) > ctx.pulse_width_resolution:
+                    o_dMdW = (M - prev_M) / dW
+                    dMdW_R = _TDPT_CONF.dMdW_R_MULT * ctx.discharge_error_threshold**2 / dW * dW
+                    ctx.dis_update(o_dMdW, dMdW_R)
 
             ctx.update_dis_width_bracket(W, M)
             prev_W = W
             prev_M = M
 
+            # Use the bracket and some slope information to predict the optimal 
+            # discharge pulse width. On the first iteration, this is never a 
+            # "good_width_prediction"
+            W0, good_width_prediction = ctx.iterate_dis_width_bracket()
+
+            # We perform some sanity checks on to avoid getting stuck at the rails
+            rail_intervention = False
+            if ctx._dis_width_bracket.hitting_min_rail \
+                and (W <= ctx.min_pulse_width + ctx.pulse_width_resolution):
+            
+                W0 = ctx.mean_dis_width()
+                rail_intervention = True
+                ctx.log(
+                    "Warning: Discharge pulse width is hitting the lower rail."
+                    "\nThis may indicate that the optimal width is below the allowed range."
+                    f"\nReverting to a middling value {W0:.5e} to avoid getting stuck at the rail."
+                )
+                
+            if ctx._dis_width_bracket.hitting_max_rail \
+                and (W >= ctx.max_pulse_width - ctx.pulse_width_resolution):
+                
+                W0 = ctx.mean_dis_width()
+                rail_intervention = True
+                ctx.log(
+                    "Warning: Discharge pulse width is hitting the upper rail."
+                    "\nThis may indicate that the optimal width is above the allowed range."
+                    f"\nReverting to a middling value {W0:.5e} to avoid getting stuck at the rail."
+                )
+                
             if ctx.is_integrated():
                 I, I_var = ctx.integrated_error()
                 Y2_adjusted = W > ctx.dis_amp_adjustment_threshold
                 if Y2_adjusted:
-                    # Step to an adjusted Y2
-                    dY2 = -I / (_TDPT_CONF.INT_ADJ_LAMBDA * ctx.get_G() * W)
+                    # Step to an adjusted Y2. dis_eta accounts for a sign difference
+                    # between the charge and discharge pulse height conventions
+                    dY2 = -ctx.dis_eta * I / (_TDPT_CONF.INT_ADJ_LAMBDA * ctx.get_G() * W)
+                    ctx.log(
+                        f"Adjusting the integrated balance Y2 by {dY2:.5e} to "
+                        f"account for integrated error of {I:.5e}."
+                    )
                     Y2 = ctx.set_Y2_integrated_balance(Y2 + dY2, Y2)
+                    ctx.predict_filter_change(balance_change = True)
 
         # Check termination conditions
         dQ_satisfied = abs(dQ) < ctx.capacitance_error_threshold
@@ -1538,13 +1609,21 @@ def TDPT_filter_balance(ctx: TDPTContext) -> TDPT_filter_balance_result:
         )
 
         if ctx.is_discharge():
-            W0, good_width_prediction = ctx.iterate_dis_width_bracket()
             if ctx.is_integrated():
                 optimal_state = TDPT_optimal_state(
-                    ctx.get_Cac(), W0, good_width_prediction, Y2/X2)
+                    ctx.get_Cac(), 
+                    W0, good_width_prediction, rail_intervention,
+                    ctx._dis_width_bracket.hitting_min_rail,
+                    ctx._dis_width_bracket.hitting_max_rail,
+                    Y2/X2,
+                )
             else:
                 optimal_state = TDPT_optimal_state(
-                    ctx.get_Cac(), W0, good_width_prediction)
+                    ctx.get_Cac(), 
+                    W0, good_width_prediction, rail_intervention,
+                    ctx._dis_width_bracket.hitting_min_rail,
+                    ctx._dis_width_bracket.hitting_max_rail,
+                )
         else:
             optimal_state = TDPT_optimal_state(ctx.get_Cac())
 
@@ -1576,6 +1655,9 @@ def TDPT_filter_balance(ctx: TDPTContext) -> TDPT_filter_balance_result:
                     optimal_state,
                     curve_data,
                 )
+
+        if not ctx.is_discharge():
+            continue
 
         # We want to avoid dawdling when the discharg error bounds are infeasible
         # given the allowed discharge pulse widths range. For this, we keep track
@@ -1612,9 +1694,12 @@ def TDPT_filter_balance(ctx: TDPTContext) -> TDPT_filter_balance_result:
                 ctx._dis_width_bracket.high.clear()
     
     if success and ctx.is_discharge():
-        ctx.dis_filter.push_W0(optimal_state.W0)
-        if ctx.is_integrated():
-            ctx.dis_filter.push_Y2(Y2)
+        if optimal_state.good_width_prediction and \
+            not (optimal_state.low_collision or optimal_state.high_collision):
+            ctx.dis_filter.push_W0(optimal_state.W0)
+
+    if ctx.is_integrated():
+        ctx.dis_filter.push_Y2(Y2)
 
     # RETURNS
     result = TDPT_filter_balance_result(
