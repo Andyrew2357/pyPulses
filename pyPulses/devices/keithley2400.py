@@ -1,45 +1,48 @@
-"""
-This class is an interface for communicating with the Keithley 2400 SMU.
-"""
-
 from .pyvisa_device import pyvisaDevice
-from math import ceil
+from .registry import register_hardware_class
+
 import numpy as np
 import time
+from math import ceil
+from logging import Logger
 
+@register_hardware_class("keithley2400")
 class keithley2400(pyvisaDevice):
-    """Class interface for controlling the Keithley 2400."""
-    def __init__(self, logger = None, max_step: float = 0.05, 
-                 wait: float = 0.1, instrument_id: str = None):
+    """Class representation of the Keithley 2400 SMU"""
+
+    max_step = 0.05
+    wait = 0.1
+
+    DEFAULT_PYVISA_CONFIG = {
+        'output_buffer_size': 512,
+        'gpib_eos_mode': False,
+        'gpib_eos_char': ord('\n'),
+        'gpib_eoi_mode': True,
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.05,
+    }
+    
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        max_step : float, default=0.05
-            maximum voltage step to take when sweeping.
-        wait : float, default=0.1
-            time to wait between setting voltages while sweeping.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
-        self.pyvisa_config = {
-            "resource_name" : "GPIB0::24::INSTR",
 
-            "output_buffer_size" : 512,
-            "gpib_eos_mode"     : False,
-            "gpib_eos_char"     : ord('\n'),
-            "gpib_eoi_mode"     : True,
-
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.05
-        }
-
-        super().__init__(self.pyvisa_config, logger, instrument_id)
-
-        self.max_step = max_step
-        self.wait = wait
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
     def sweep_V(self, V, max_step = None, wait = None):
         """

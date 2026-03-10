@@ -1,35 +1,43 @@
-"""
-This class is an interface for communicating with the Keithley 2700 multimeter
-"""
-
 from .pyvisa_device import pyvisaDevice
+from .registry import register_hardware_class
 
+from logging import Logger
+
+@register_hardware_class("keithley2700")
 class keithley2700(pyvisaDevice):
-    """Class interface for controlling the Keithley 2700."""
-    def __init__(self, logger: str = None, instrument_id: str = None):
+    """Class representation of the Keithley 2700 digital multimeter."""
+
+    DEFAULT_PYVISA_CONFIG = {
+        'output_buffer_size': 512,
+        'gpib_eos_mode': False,
+        'gpib_eos_char': ord('\n'),
+        'gpib_eoi_mode': True,
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.05,
+    }
+    
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
-        self.pyvisa_config = {
-            "resource_name" : "GPIB0::17::INSTR",
 
-            "output_buffer_size" : 512,
-            "gpib_eos_mode"     : False,
-            "gpib_eos_char"     : ord('\n'),
-            "gpib_eoi_mode"     : True,
-
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.05
-        }
-
-        super().__init__(self.pyvisa_config, logger, instrument_id)
-
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
+    
     def get_V(self) -> float:
         """
         Query the voltage.

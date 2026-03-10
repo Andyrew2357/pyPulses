@@ -1,59 +1,66 @@
-"""
-This class is an interface for communicating with the AD5984 AC box. The
-instrument in question has an Arduino Uno connected to two Analog Devices 9854
-evaluation boards that takes serial bus input to set AC outputs on 2 channels,
-each of which consist of an X and Y output 90 degrees out of phase. The channel
-phases can be controlled independently. The amplitude range is 0 to 120 mV with
-12 bit resolution, the phase resolution is 14 bits, and the frequency range is
-up to ~ 50 MHz with 48 bit resolution. 
-"""
-
 from .pyvisa_device import pyvisaDevice
-import pyvisa.constants
-from math import floor
-import time
+from .channel_adapter import ScalarChannelAdapter
+from .registry import register_hardware_class
 
+import pyvisa.constants
+import time
+from math import floor
+from logging import Logger
+from typing import Any, Dict
+
+@register_hardware_class("ad9854")
 class ad9854(pyvisaDevice):
-    """Class interface for communicating with the AD5984 AC box."""
-    def __init__(self, logger=None, instrument_id: str = None):
+    """
+    Class representation of the Arduino-AD5984 AC box.
+    
+    The instrument in question has an Arduino Uno connected to two Analog 
+    Devices 9854 evaluation boards that takes serial bus input to set AC outputs 
+    on 2 channels, each of which consist of an X and Y output 90 degrees out of 
+    phase. The channel phases can be controlled independently. The amplitude range
+    is 0 to 120 mV with 12 bit resolution, the phase resolution is 14 bits, and 
+    the frequency range is up to ~ 50 MHz with 48 bit resolution.
+    """
+
+    DEFAULT_PYVISA_CONFIG = {
+        'baud_rate': 19200,
+        'data_bits': 8,
+        'parity': pyvisa.constants.Parity.none,
+        'stop_bits': pyvisa.constants.StopBits.two,
+        'flow_control': pyvisa.constants.VI_ASRL_FLOW_NONE,
+        'write_buffer_size': 512,
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.05
+    }
+
+    # Device parameters
+    vmax = 0.120   # Maximum amplitude [V]
+    refclk = 25    # Reference clock [MHz]
+    sysclk = 4 * refclk * 1e6  # System clock [Hz]
+    Nfreq = 48     # Frequency resolution bits
+    Nphase = 14    # Phase resolution bits
+    Namp = 12      # Amplitude resolution bits
+
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,  
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
 
-        self.pyvisa_config = {
-            "resource_name": "ASRL3::INSTR",
-            "baud_rate": 19200,
-            "data_bits": 8,
-            "parity": pyvisa.constants.Parity.none,
-            "stop_bits": pyvisa.constants.StopBits.two,
-            "flow_control": pyvisa.constants.VI_ASRL_FLOW_NONE,
-            "write_buffer_size": 512,
-
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.05
-        }
-            
-        super().__init__(self.pyvisa_config, logger, instrument_id)
-        
-        self.reset_arduino()
-        time.sleep(2.0)
-        self.master_reset()
-        time.sleep(1.0)
-        self.configure_control_register()
-
-        # Device parameters
-        self.vmax = 0.120   # Maximum amplitude [V]
-        self.refclk = 25    # Reference clock [MHz]
-        self.sysclk = 4 * self.refclk * 1e6  # System clock [Hz]
-        self.Nfreq = 48     # Frequency resolution bits
-        self.Nphase = 14    # Phase resolution bits
-        self.Namp = 12      # Amplitude resolution bits
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
         self.amplitudes = {
             (1, 'X'): 0,
@@ -63,6 +70,86 @@ class ad9854(pyvisaDevice):
         }
         self.phase = 0
         self.freq = 0
+
+        if not skip_connect:
+            self.reset_arduino()
+            time.sleep(2.0)
+            self.master_reset()
+            time.sleep(1.0)
+            self.configure_control_register()
+
+    def _serialize_state(self) -> Dict[str, Any]:
+        """
+        Serialize all state needed to reconstruct and restore this device.
+        """
+
+        config = super()._serialize_state()
+        
+        config.update({
+            'freq': self.freq,
+            'phase': self.phase,
+            'amplitudes': self.amplitudes,
+        })
+        
+        return config
+
+    def _deserialize_state(self, state: Dict[str, Any]) -> None:
+        """
+        Restore device state from serialized config.
+        
+        Called when device already exists and we want to apply saved settings.
+        """
+
+        super()._deserialize_state(state)
+        
+        if 'freq' in state:
+            self.set_frequency(state['freq'])
+        if 'phase' in state:
+            self.set_phase(state['phase'])
+        if 'amplitudes' in state:
+            for k, v in state['amplitudes'].items():
+                self.set_amplitude(*k, v)
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'ad9854':
+        """
+        Construct from serialized config.
+        
+        Parameters
+        ----------
+        config : dict
+            Output from _serialize_state(), plus 'registry_id'.
+        """
+
+        # Extract required fields
+        registry_id = config.pop('registry_id')
+        resource_name = config.pop('resource_name')
+    
+        # Construct instance
+        instance = cls(
+            resource_name=resource_name,
+            registry_id=registry_id,
+            skip_connect=False,
+            **config  # Remaining kwargs go to pyvisaDevice
+        )
+        instance._deserialize_state(config)
+
+        return instance
+    
+    def resolve(self, accessor: str) -> ScalarChannelAdapter:
+        if accessor == 'X1':
+            return ad9854_amplitude_channel(self, 'X1', 1, 'X')
+        if accessor == 'Y1':
+            return ad9854_amplitude_channel(self, 'Y1', 1, 'Y')
+        if accessor == 'X2':
+            return ad9854_amplitude_channel(self, 'X2', 2, 'X')
+        if accessor == 'Y2':
+            return ad9854_amplitude_channel(self, 'Y2', 2, 'Y')
+        if accessor == 'phase':
+            return ad9854_phase_channel(self)
+        if accessor == 'freq':
+            return ad9854_frequency_channel(self)
+        return None
 
     def set_frequency(self, f: float):
         """
@@ -247,3 +334,35 @@ class ad9854(pyvisaDevice):
             self.info("Arduino reset via DTR toggle.")
         except Exception as e:
             self.warn(f"Failed to reset Arduino via DTR: {e}")
+
+class ad9854_amplitude_channel(ScalarChannelAdapter): 
+    def __init__(self, parent: ad9854, accessor: str, chip: int, chan: str):
+        super().__init__(parent, accessor)
+        self.chip = chip
+        self.chan = chan
+
+    def get_output(self) -> float:
+        return self._parent.get_amplitude(self.chip, self.chan)
+
+    def set_output(self, value: float):
+        self._parent.set_amplitude(self.chip, self.chan, value)
+
+class ad9854_phase_channel(ScalarChannelAdapter):
+    def __init__(self, parent: ad9854):
+        super().__init__(parent, "phase")
+
+    def get_output(self) -> float:
+        return self._parent.get_phase()
+    
+    def set_output(self, value: float):
+        self._parent.set_phase(value)
+
+class ad9854_frequency_channel(ScalarChannelAdapter):
+    def __init__(self, parent: ad9854):
+        super().__init__(parent, "freq")
+
+    def get_output(self) -> float:
+        return self._parent.get_frequency()
+    
+    def set_output(self, value: float):
+        self._parent.set_frequency(value)

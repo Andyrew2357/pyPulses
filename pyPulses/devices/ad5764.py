@@ -1,59 +1,66 @@
-"""
-This class is an interface for communicating with the AD5764 DC box. The
-instrument in question has an Arduino Uno connected to the Analog Devices DAC
-that takes serial bus input to set 16-bit unipolar DC outputs on 8 channels.
-"""
-
 from .pyvisa_device import pyvisaDevice
+from .channel_adapter import ScalarChannelAdapter
+from .registry import register_hardware_class
+
 import pyvisa.constants
 import numpy as np
-from math import ceil
 import time
+from math import ceil
+from logging import Logger
+from typing import Any, Dict, Tuple
 
-from typing import Tuple
-
+@register_hardware_class("ad5764")
 class ad5764(pyvisaDevice):
-    """Class interface for communicating with the AD5764 DC box."""
-    def __init__(self, logger = None, max_step: float = 0.05, 
-                 wait: float = 0.1, instrument_id: str = None):
+    """
+    Class representation of the Arduino-AD5764 DC box.
+    
+    The instrument in question has an Arduino Uno connected to the Analog Devices 
+    DAC that takes serial bus input to set 16-bit bipolar DC outputs on 8 channels.
+    """
+
+    DEFAULT_PYVISA_CONFIG = {
+        'baud_rate': 115200,
+        'data_bits': 8,
+        'parity': pyvisa.constants.Parity.none,
+        'stop_bits': pyvisa.constants.StopBits.two,
+        'flow_control': pyvisa.constants.VI_ASRL_FLOW_NONE,
+        'write_buffer_size': 512,
+        'max_retries': 1,
+        'min_interval': 0.05
+    }
+
+    hard_max_V = 10.
+    hard_min_V = -10.
+
+    def __init__(self, 
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,
+    ):
+        
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        max_step : float, default=0.05
-            maximum voltage step to take when sweeping.
-        wait : float, default=0.1
-            time to wait between setting voltages while sweeping.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
 
-        # configurations for pyvisa resource manager
-        self.pyvisa_config = {
-            "resource_name" : "ASRL5::INSTR",
-            "baud_rate"     : 115200,
-            "data_bits"     : 8,
-            "parity"        : pyvisa.constants.Parity.none,
-            "stop_bits"     : pyvisa.constants.StopBits.two,
-            "flow_control"  : pyvisa.constants.VI_ASRL_FLOW_NONE,
-            "write_buffer_size" : 512,
-
-            'max_retries': 1,
-            'min_interval': 0.05
-        }
-
-        super().__init__(self.pyvisa_config, logger, instrument_id)
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
         # maximum bounds on channel values
-        self.hard_max_V = 10.
-        self.hard_min_V = -10.
         self.max_V = {i: self.hard_max_V for i in range(8)}
         self.min_V = {i: self.hard_min_V for i in range(8)}
 
         # sweep parameters
-        self.max_step   = max_step
-        self.wait       = wait
+        self.max_step = 0.05
+        self.wait = 0.1
         
         # mapping for controlling the instrument channels via serial bus
         self.channel_map = {
@@ -67,12 +74,75 @@ class ad5764(pyvisaDevice):
             7: (0, 16),
         }
 
-        # perform true queries during initialization to maintain consistency
-        # with the Arduino. These are slow, so we prefer to do them only when
-        # the class is initialized.
-        self.V = [0] * 8
-        time.sleep(3.0) # wait a little; otherwise the first query may fail
-        self._true_query_state()
+        self.V = [None] * 8
+
+        if not skip_connect:
+            time.sleep(3.0) # wait a little; otherwise the first query may fail
+
+    def _serailize_state(self) -> Dict[str, Any]:
+        """
+        Serialize all state needed to reconstruct and restore this device.
+        """
+
+        config = super()._serialize_state()
+        config.update({
+            'max_V': self.max_V,
+            'min_V': self.min_V,
+            'max_step': self.max_step,
+            'step_wait': self.wait,
+        })
+
+    def _deserialize_state(self, state: Dict[str, Any]):
+        """
+        Restore device state from serialized config.
+        
+        Called when device already exists and we want to apply saved settings.
+        """
+
+        super()._deserialize_state()
+        if 'max_V' in state:
+            self.max_V = state['max_V']
+        if 'min_V' in state:
+            self.min_V = state['max_V']
+        if 'max_step' in state:
+            self.max_step = state['max_step']
+        if 'step_wait' in state:
+            self.wait = state['step_wait']
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'ad5764':
+        """
+        Construct from serialized config.
+        
+        Parameters
+        ----------
+        config : dict
+            Output from _serialize_state(), plus 'registry_id'.
+        """
+
+        # Extract required fields
+        registry_id = config.pop('registry_id')
+        resource_name = config.pop('resource_name')
+        
+        # Construct instance
+        instance = cls(
+            resource_name=resource_name,
+            registry_id=registry_id,
+            skip_connect=False,
+            **config  # Remaining kwargs go to pyvisaDevice
+        )        
+        instance._deserialize_state(config)
+
+        return instance
+
+    def resolve(self, accessor: str) -> 'ad5764_channel':
+        try:
+            assert accessor.startswith('ch')
+            ch = int(accessor[2:])
+            assert 0 <= ch <= 7
+        except:
+            return None
+        return ad5764_channel(self, accessor, ch)
 
     def sweep_V(self, ch: int, V: float, 
                 max_step: float = None, wait: float = None):
@@ -137,6 +207,9 @@ class ad5764(pyvisaDevice):
         if ch not in self.channel_map:
             self.error(f"AD5764 does not have a channel {ch}.")
             return None
+        
+        if self.V[ch] is None:
+            return self._true_query(ch)
         
         return self.V[ch]
 
@@ -248,8 +321,8 @@ class ad5764(pyvisaDevice):
 
         vh = min(self.hard_max_V, vh)
         vl = max(self.hard_min_V, vl)
-        self.max_V[ch] = vh
-        self.min_V[ch] = vl
+        self.max_V[ch] = float(vh)
+        self.min_V[ch] = float(vl)
         
         self.info(f"Set hard channel {ch} limits to [{vl}, {vh}] V")
 
@@ -343,3 +416,14 @@ class ad5764(pyvisaDevice):
             v = self._true_query(ch)
             if v is None:
                 self.error(f"Failed to query channel {ch} voltage.")
+
+class ad5764_channel(ScalarChannelAdapter):
+    def __init__(self, parent: ad5764, accessor: str, ch: int):
+        super().__init__(parent, accessor)
+        self.ch = ch
+
+    def get_output(self) -> float:
+        return self._parent.get_V(self.ch)
+
+    def set_output(self, value: float):
+        self._parent.set_V(self.ch, value, chatty=False)

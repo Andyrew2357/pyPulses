@@ -3,40 +3,59 @@ Instrument control for 5000 series Tektronix data timing generators.
 """
 
 from .pyvisa_device import pyvisaDevice
+from .registry import register_hardware_class
 from .dtg_utils import *
 
-import json
 import base64
 import numpy as np
 import matplotlib.pyplot as plt
+from logging import Logger
 from bitarray import bitarray
-from typing import Callable, Dict, List
+from typing import Any, Callable, Dict, List
 
 """Base DTG class"""
 
 class DTG(pyvisaDevice):
     """Base DTG control class for the 5000 series data timing generators"""
-    def __init__(self, logger = None, instrument_id: str = None):
-        
-        assert hasattr(self, 'pyvisa_config')
-        assert hasattr(self, 'MODULES')
-        assert hasattr(self, 'mainframes')
-        assert hasattr(self, 'slots')
 
-        super().__init__(self.pyvisa_config, logger, instrument_id)
+    MODULES: Dict[int, Dict[str, float]]
+    mainframes: List[int]
+    slots: List[str]
 
-        self.modules    : Dict[str, int]     = {}
-        self.channels   : Dict[str, Channel] = {}
-        self.groups     : Dict[str, Group]   = {}
-        self.blocks     : Dict[str, Block]   = {}
-        self.sequence   : List[str]          = []
-        self.mode           : str   = None
-        self._frequency     : float = None
-        self._time_offset   : float = None
-        self._burst_count   : int   = None
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
+        """
+        Parameters
+        ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
+        logger : Logger, optional
+            logger used by abstractDevice.
+        **kwargs
+        """
 
-        self._get_installed_modules()
-        self.operation_mode()
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
+
+        self.modules: Dict[str, int] = {}
+        self.channels: Dict[str, dtgChannel] = {}
+        self.groups: Dict[str, Group]   = {}
+        self.blocks: Dict[str, Block]   = {}
+        self.sequence: List[str]          = []
+        self.mode: str   = None
+        self._frequency: float = None
+        self._time_offset: float = None
+        self._burst_count: int   = None
+
+        if not skip_connect:
+            self._get_installed_modules()
+            self.operation_mode()
     
     def _mode_required(*allowed_modes) -> Callable:
         """Check to see if we are in the right mode to call this function."""
@@ -62,7 +81,7 @@ class DTG(pyvisaDevice):
                 self.modules[(slot, mf)] = module_id
                 if module_id != -1:
                     for ch in range(1, self.MODULES[module_id]['n_ch'] + 1):
-                        self.channels[f"{mf}{slot}{ch}"] = Channel(
+                        self.channels[f"{mf}{slot}{ch}"] = dtgChannel(
                             name        = f"{mf}{slot}{ch}",
                             ch          = ch,
                             slot        = slot,
@@ -77,7 +96,7 @@ class DTG(pyvisaDevice):
 
         return self.modules
     
-    def get_channel(self, ch: str | Channel) -> Channel | None:
+    def get_channel(self, ch: str | dtgChannel) -> dtgChannel | None:
         """
         Get a channel by its string id (if it exists).
 
@@ -90,7 +109,7 @@ class DTG(pyvisaDevice):
         -------
         channel : Channel
         """
-        if isinstance(ch, Channel):
+        if isinstance(ch, dtgChannel):
             return ch
         
         if not ch in self.channels:
@@ -433,13 +452,13 @@ class DTG(pyvisaDevice):
     # --------------------- Pulse Generator Mode Specific ----------------------
 
     @_mode_required("PULS")
-    def prate(self, ch: str | Channel, prate: float = None) -> float | None:
+    def prate(self, ch: str | dtgChannel, prate: float = None) -> float | None:
         """
         Set or query the relative rate of a channel, rounded appropriately
         
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         prate : float, optional
             rate of the channel relative to the internal clock frequency
@@ -453,13 +472,13 @@ class DTG(pyvisaDevice):
         return self.get_channel(ch).prate(prate)
 
     @_mode_required("PULS")
-    def polarity(self, ch: str | Channel, pos: bool = None) -> bool | None:
+    def polarity(self, ch: str | dtgChannel, pos: bool = None) -> bool | None:
         """
         Set or query the polarity of a channel.
 
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         pos : bool, optional
             true = positive, false = negative.
@@ -473,13 +492,13 @@ class DTG(pyvisaDevice):
         return self.get_channel(ch).polarity(pos)
     
     @_mode_required("PULS")
-    def lead_hold(self, ch: str | Channel, mode: str | None = None) -> str | None:
+    def lead_hold(self, ch: str | dtgChannel, mode: str | None = None) -> str | None:
         """
         Set or query the lead hold parameter of a channel.
 
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         mode : str, optional
             One of `LDEL` or `PHAS`.
@@ -491,13 +510,13 @@ class DTG(pyvisaDevice):
         return self.get_channel(ch).lhold(mode)
     
     @_mode_required("PULS")
-    def trail_hold(self, ch: str | Channel, mode: str | None = None) -> str | None:
+    def trail_hold(self, ch: str | dtgChannel, mode: str | None = None) -> str | None:
         """
         Set or query the trail hold parameter of a channel.
 
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         mode : str, optional
             One of `TDEL`, `DCYC`, or `WIDT`.
@@ -509,13 +528,13 @@ class DTG(pyvisaDevice):
         return self.get_channel(ch).thold(mode)
 
     @_mode_required("PULS")
-    def pulse_width(self, ch: str | Channel, W: float = None) -> float | None:
+    def pulse_width(self, ch: str | dtgChannel, W: float = None) -> float | None:
         """
         Set or query the pulse width of a channel.
 
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         W : float, optional
             pulse width in s.
@@ -528,13 +547,13 @@ class DTG(pyvisaDevice):
         return self.get_channel(ch).width(W)
 
     @_mode_required("PULS")
-    def lead_delay(self, ch: str | Channel, l: float = None) -> float | None:
+    def lead_delay(self, ch: str | dtgChannel, l: float = None) -> float | None:
         """
         Set or query the lead delay of a channel.
 
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         l : float, optional
             lead delay in s.
@@ -547,13 +566,13 @@ class DTG(pyvisaDevice):
         return self.get_channel(ch).ldelay(l)
     
     @_mode_required("PULS")
-    def trail_delay(self, ch: str | Channel, t: float = None) -> float | None:
+    def trail_delay(self, ch: str | dtgChannel, t: float = None) -> float | None:
         """
         Set or query the trail delay of a channel.
 
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         t : float, optional
             trail delay in s.
@@ -567,13 +586,13 @@ class DTG(pyvisaDevice):
 
     # --------------------------------------------------------------------------
 
-    def low_level(self, ch: str | Channel, V: float = None) -> float | None:
+    def low_level(self, ch: str | dtgChannel, V: float = None) -> float | None:
         """
         Set or query the logical low level of a channel.
 
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel
         V : float, optional
             logical low level in volts.
@@ -585,13 +604,13 @@ class DTG(pyvisaDevice):
 
         return self.get_channel(ch).low(V)
 
-    def high_level(self, ch: str | Channel, V: float = None) -> float | None:
+    def high_level(self, ch: str | dtgChannel, V: float = None) -> float | None:
         """
         Set or query the logical high level of a channel.
 
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         V : float, optional
             logical high level in volts.
@@ -603,13 +622,13 @@ class DTG(pyvisaDevice):
 
         return self.get_channel(ch).high(V)
     
-    def chan_output(self, ch: str | Channel, on: bool = None) -> bool | None:
+    def chan_output(self, ch: str | dtgChannel, on: bool = None) -> bool | None:
         """
         Set or query the output state of the channel.
         
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         on : bool, optional
             true = enabled, false = disabled.
@@ -628,7 +647,7 @@ class DTG(pyvisaDevice):
         
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         Z : float, optional
             impedence in Ohms (rounded to 1 kOhm or 50 Ohms).
@@ -646,7 +665,7 @@ class DTG(pyvisaDevice):
         
         Parameters
         ----------
-        ch : str or Channel
+        ch : str or dtgChannel
             target channel.
         V : float, optional
             termination voltage.
@@ -663,7 +682,7 @@ class DTG(pyvisaDevice):
     # ---------------------------- Handling Groups ----------------------------
 
     @_mode_required('DATA')
-    def new_group(self, name: str, channels: int | List[None | str | Channel]):
+    def new_group(self, name: str, channels: int | List[None | str | dtgChannel]):
         """
         Define a new group.
         
@@ -690,7 +709,7 @@ class DTG(pyvisaDevice):
 
     @_mode_required('DATA')
     def assign_signals(self, group_name: str, 
-                       channels: List[None | str | Channel]):
+                       channels: List[None | str | dtgChannel]):
         """
         Assign physical channels to a group.
         
@@ -715,7 +734,7 @@ class DTG(pyvisaDevice):
             self.assign_signal(group_name, i, ch)
 
     @_mode_required('DATA')
-    def assign_signal(self, group_name: str, idx: int, ch: str | Channel):
+    def assign_signal(self, group_name: str, idx: int, ch: str | dtgChannel):
         """
         Assign a physical channel to a group slot.
         
@@ -724,7 +743,7 @@ class DTG(pyvisaDevice):
         group_name : str
         idx : int
             index at which to assign the channel.
-        ch : str or Channel
+        ch : str or dtgChannel
             channel to assign.
         """
 
@@ -1092,9 +1111,11 @@ class DTG(pyvisaDevice):
         """
         super().load_state_json(path)
 
-    def _serialize_state(self) -> dict:
-        state = {
-            'version'       : 1,
+    def _serialize_state(self) -> Dict[str, Any]:
+
+        state = super()._serialize_state()
+        state.update({
+            'dtg_config_version': 1,
             'mode'          : self.mode,
             'frequency'     : self._frequency,
             'time_offset'   : self._time_offset,
@@ -1116,7 +1137,7 @@ class DTG(pyvisaDevice):
                 }
                 for name, ch in self.channels.items()
             }
-        }
+        })
 
         if self.mode == 'DATA':
             # Serialize groups
@@ -1159,6 +1180,13 @@ class DTG(pyvisaDevice):
         return state
 
     def _deserialize_state(self, state: dict):
+
+        super()._deserialize_state(state)
+
+        if state.get('dtg_config_version') != 1:
+            self.error("Unrecognized dtg config while deserializing")
+            return
+
         self.operation_mode(state['mode'] == 'PULS')
         self.frequency(state['frequency'])
         self.time_offset(state['time_offset'])
@@ -1215,10 +1243,61 @@ class DTG(pyvisaDevice):
                 fields = eval(entry['line']) # assumes safe inputs
                 self.set_sequence_line(idx, *fields)
 
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'dtg5274':
+        """
+        Construct from serialized config.
+        
+        Parameters
+        ----------
+        config : dict
+            Output from _serialize_state(), plus 'registry_id'.
+        """
+
+        # Extract required fields
+        registry_id = config.pop('registry_id')
+        resource_name = config.pop('resource_name')
+    
+        # Construct instance
+        instance = cls(
+            resource_name=resource_name,
+            registry_id=registry_id,
+            skip_connect=False,
+            **config  # Remaining kwargs go to pyvisaDevice
+        )
+        instance._deserialize_state(config)
+
+        return instance
+    
+    def resolve(self, accessor: str) -> dtgChannel:
+        try:
+            return self.get_channel(accessor)
+        except:
+            return None
+
 """DTG5274 instrument class"""
 
+@register_hardware_class("dtg5274")
 class dtg5274(DTG):
-    """Class interface for controlling the DTG5274"""
+    """Class representation of the DTG5274"""
+
+    DEFAULT_PYVISA_CONFIG = {
+        'output_buffer_size': 512,
+        'gpib_eos_mode': False,
+        'gpib_eos_char': ord('\n'),
+        'gpib_eoi_mode': True,
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.05
+    }
+
+    MODULES = {
+        2: {'n_ch': 2, 'min_V': -1.0, 'max_V': 2.5, 'min_V_diff': 0.1, 'min_width': 2.9e-10, 'rise_time': 340e-12}, # DTGM20
+        4: {'n_ch': 2, 'min_V': -1.0, 'max_V': 2.7, 'min_V_diff': 0.1, 'min_width': 2.9e-10, 'rise_time': 350e-12}, # DTGM21
+    }
+    mainframes = [1,]
+    slots      = ['A', 'B', 'C', 'D']
+
     def __init__(self, logger = None, instrument_id: str = None):
         """
         Parameters
@@ -1228,23 +1307,5 @@ class dtg5274(DTG):
         instrument_id : str, optional
             VISA resource name.
         """
-
-        self.pyvisa_config = {
-            "resource_name"     : "GPIB0::27::INSTR",
-            "output_buffer_size": 512,
-            "gpib_eos_mode"     : False,
-            "gpib_eos_char"     : ord('\n'),
-            "gpib_eoi_mode"     : True,
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.05
-        }
-
-        self.MODULES = {
-            2: {'n_ch': 2, 'min_V': -1.0, 'max_V': 2.5, 'min_V_diff': 0.1, 'min_width': 2.9e-10, 'rise_time': 340e-12}, # DTGM20
-            4: {'n_ch': 2, 'min_V': -1.0, 'max_V': 2.7, 'min_V_diff': 0.1, 'min_width': 2.9e-10, 'rise_time': 350e-12}, # DTGM21
-        }
-        self.mainframes = [1,]
-        self.slots      = ['A', 'B', 'C', 'D']
-
+        
         super().__init__(logger, instrument_id)

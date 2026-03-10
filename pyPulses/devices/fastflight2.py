@@ -8,14 +8,16 @@ I have made efforts to reduce the overhead from this arrangement.
 from .fastflight2_utils import FastFlight64
 from .fastflight_scopeview import FFScopeView
 from .abstract_device import abstractDevice
-from ._registry import DeviceRegistry
+from .registry import register_hardware_class, HardwareRegistry
 
 import numpy as np
+from logging import Logger
 from typing import Any, Tuple
 
+@register_hardware_class("FastFlight2")
 class FastFlight2(abstractDevice):
-    """Class interface for controlling the FastFlight-2"""
-    def __init__(self, logger = None):
+    """Class representation of the FastFlight-2"""
+    def __init__(self, registry_id: str | None = None, logger: Logger | None = None):
         """
         Parameters
         ----------
@@ -25,7 +27,7 @@ class FastFlight2(abstractDevice):
 
         super().__init__(logger)
         self.ff2 = FastFlight64()
-        DeviceRegistry.register_device('FASTFLIGHT2', self)
+        HardwareRegistry.register_device(self, registry_id)
 
         self.voltage_scale_factor = 1.0
 
@@ -732,3 +734,10 @@ class FastFlight2(abstractDevice):
         if state['dither_ready']:
             self.prep_dither(state['dither_length'])
         self._sync_machine_settings()
+
+    @classmethod
+    def from_config(cls, config) -> 'FastFlight2':
+        registry_id = config.pop('registry_id')
+        instance = cls(registry_id=registry_id)
+        instance._deserialize_state(config)
+        return instance

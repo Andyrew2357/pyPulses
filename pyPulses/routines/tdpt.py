@@ -1,9 +1,10 @@
 from .balance_parameter import balanceKnob
 from .linear_balance import lstsqBalance, bracket1d
-from .wfatd import wfAverager, wfBalance, wfCurveData
 
-from ..utils import kalman
+from ..devices.registry import resolve_reference, format_reference
+from ..devices.wfatd import wfAverager, wfBalance, wfCurveData
 from ..devices.pulse_pair import pulsePair
+from ..utils import kalman
 from ..thread_job import _checkpoint
 
 from dataclasses import dataclass
@@ -12,10 +13,9 @@ import logging
 import time
 import json
 
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Dict, Tuple
 
-@dataclass
-class _TDPT_CONF_CLASS():
+class _TDPT_CONF():
     """There are some magic numbers that we wrap in a little config"""
     HEURISTIC_NOISE_MULT    : float = 1.0e-3
     DIS_INIT_BAL_UNC        : float = 0.0
@@ -32,7 +32,6 @@ class _TDPT_CONF_CLASS():
     CAP_INIT_PdC            : float = 1.0
     dMdW_R_MULT             : float = 4.0
     INT_ADJ_LAMBDA          : float = 1.0
-_TDPT_CONF = _TDPT_CONF_CLASS()
 
 @dataclass
 class TDPTContext: ...
@@ -118,52 +117,61 @@ class TDPTContext():
         self._previous_result: TDPT_filter_balance_result | None = None
 
     @classmethod
-    def from_json(self, 
-        path: str, 
-        averager: wfAverager, 
-        charge_pair: pulsePair,
-        discharge_pair: pulsePair,
-        capacitance_error: wfBalance | None = None,
-        discharge_error: wfBalance | None = None,
-        integrated_error: wfBalance | None = None,
-    ):
-        conf = json.load(path)
+    def from_json(cls, path: str) -> 'TDPTContext':
+        with open(path, 'r') as f:
+            conf = json.load(f)
+        return cls.from_config(conf)
 
-        # MAYBE CONSIDER DOING THIS ANOTHER DAY WAY TOO CONFUSING / TIME CONSUMING
-        # if capacitance_error is None:
-        #     capacitance_error_kwargs = conf.get('capacitance_error_kwargs')
-        #     if capacitance_error_kwargs is None:
-        #         raise RuntimeError(
-        #             '`capacitance_error` is not provided, and the config contains no arguments for it'
-        #         )
-        #     capacitance_error = wfBalance._deserialize(averager, capacitance_error_kwargs)
-        # if discharge_error is None:
-        #     discharge_error_kwargs = conf.get('discharge_error_kwargs')
-        #     if discharge_error_kwargs is not None:
-        #         discharge_error = wfBalance._deserialize(averager, discharge_error_kwargs)
-        # if integrated_error is None:
-        #     integrated_error_kwargs = conf.get('integrated_error_kwargs')
-        #     if integrated_error_kwargs is not None:
-        #         integrated_error = wfBalance._deserialize(averager, integrated_error_kwargs)
-
-        obj = TDPTContext(
-            averager = averager,
-            charge_pair = charge_pair,
-            discharge_pair = discharge_pair,
-            capacitance_error = capacitance_error,
-            discharge_error = discharge_error,
-            integrated_error = integrated_error,
-        )
-        obj._deserialize_state(conf)
-        return obj
-
-    def load_state_json(self, path: str):
-        state = json.load(path)
-        self._deserialize_state(state)
+    @classmethod
+    def from_config(cls, conf: Dict[str, Any]) -> 'TDPTContext':
+                
+        device_refs = conf.get('device_refs', {})
         
-    def save_state_json(self, path: str):
-        json.dump(self._serialize_state(), path)
+        # Resolve device references from registries
+        averager = resolve_reference(device_refs['averager'])
+        charge_pair = resolve_reference(device_refs['charge_pair'])
+        
+        discharge_pair = None
+        if device_refs.get('discharge_pair'):
+            discharge_pair = resolve_reference(device_refs['discharge_pair'])
+        
+        capacitance_error = resolve_reference(device_refs['capacitance_error'])
+        
+        discharge_error = None
+        if device_refs.get('discharge_error'):
+            discharge_error = resolve_reference(device_refs['discharge_error'])
+        
+        integrated_error = None
+        if device_refs.get('integrated_error'):
+            integrated_error = resolve_reference(device_refs['integrated_error'])
+
+        # Get kwargs, using defaults from dataclass if not present
+        kwargs = conf.get('TDPTContext_kwargs', {})
+
+        obj = cls(
+            averager=averager,
+            charge_pair=charge_pair,
+            discharge_pair=discharge_pair,
+            capacitance_error=capacitance_error,
+            discharge_error=discharge_error,
+            integrated_error=integrated_error,
+            **kwargs,
+        )
+        
+        # Restore filter states
+        obj._deserialize_state(conf)
+        
+        return obj
     
+    def load_state_json(self, path: str):
+        with open(path, 'r') as f:
+            state = json.load(f)
+        self._deserialize_state(state)
+    
+    def save_state_json(self, path: str):
+        with open(path, 'w') as f:
+            json.dump(self._serialize_state(), f, indent=2)
+
     def _serialize_state(self) -> dict:
         result = {
             'TDPTContext_kwargs': dict(
@@ -190,35 +198,44 @@ class TDPTContext():
                 high_resolution_sweep_multiplier = int(self.high_resolution_sweep_multiplier),
                 dis_extrap_support = int(self.dis_extrap_support),
                 dis_extrap_order = int(self.dis_extrap_order),
-            )
+                dis_eta = int(self.dis_eta),
+            ),
+            'device_refs': dict(
+                averager = format_reference(self.averager),
+                charge_pair = format_reference(self.charge_pair),
+                discharge_pair = format_reference(self.discharge_pair) \
+                    if self.discharge_pair else None,
+                capacitance_error = format_reference(self.capacitance_error),
+                discharge_error = format_reference(self.discharge_error) \
+                    if self.discharge_error else None,
+                integrated_error = format_reference(self.integrated_error) \
+                    if self.integrated_error else None,
+            ),
         }
         if self.cap_filter is not None:
-            result = {**result, **self.cap_filter._serialize_state()}
+            result.update(self.cap_filter._serialize_state())
         if self.dis_filter is not None:
-            result = {**result, **self.dis_filter._serialize_state()}
+            result.update(self.dis_filter._serialize_state())
 
         return result
     
     def _deserialize_state(self, state: dict):
         TDPTContext_kwargs = state.get('TDPTContext_kwargs')
-        if TDPTContext_kwargs is None:
-            raise RuntimeError('No arguments are provided to load the state')
-        self = TDPTContext(
-            averager = self.averager,
-            charge_pair = self.charge_pair,
-            discharge_pair = self.discharge_pair,
-            capacitance_error = self.capacitance_error,
-            discharge_error = self.discharge_error,
-            integrated_error = self.integrated_error,
-            **TDPTContext_kwargs
-        )
+        if TDPTContext_kwargs is not None:
+            for key, value in TDPTContext_kwargs.items():
+                if hasattr(self, key):
+                    setattr(self, key, value)
+        
         CapacitanceFilter_kwargs = state.get('CapacitanceFilter_kwargs')
         if CapacitanceFilter_kwargs is not None:
-            self.cap_filter = CapacitanceFilter(self)
+            if self.cap_filter is None:
+                self.cap_filter = CapacitanceFilter(self)
             self.cap_filter._deserialize_state(CapacitanceFilter_kwargs)
+        
         DischargeFilter_kwargs = state.get('DischargeFilter_kwargs')
         if DischargeFilter_kwargs is not None:
-            self.dis_filter = DischargeFilter(self)
+            if self.dis_filter is None:
+                self.dis_filter = DischargeFilter(self)
             self.dis_filter._deserialize_state(DischargeFilter_kwargs)
 
     def log(self, *args, **kwargs):
@@ -614,7 +631,8 @@ class DischargeFilter():
         self._deserialize_state(json.load(path).get('DischargeFilter_kwargs'))
         
     def save_state_json(self, path: str):
-        json.dump(self._deserialize_state(), path)
+        with open(path, 'w') as f:
+            json.dump(self._serialize_state(), f, indent=2)
     
     def _serialize_state(self) -> dict:
         return {
@@ -633,7 +651,7 @@ class DischargeFilter():
                 Y2_history = [float(v) for v in self.Y2_history],
             )
         }
-    
+
     def _deserialize_state(self, state: dict):
         self._positive_init_params = state.get('_positive_init_params')
         self._negative_init_params = state.get('_negative_init_params')
@@ -649,8 +667,8 @@ class DischargeFilter():
         self.excitation_change_uncertainty = state.get('excitation_change_uncertainty')
         self.dMdW = state.get('dMdW')
         self.P = state.get('P')
-        self.W0_history = list(state.get('W0_history'))
-        self.Y2_history = list(state.get('Y2_history2'))
+        self.W0_history = list(state.get('W0_history', []))
+        self.Y2_history = list(state.get('Y2_history', []))
 
     """Kalman Filter Functionality"""
 
@@ -864,36 +882,59 @@ class CapacitanceFilter():
         json.dump(self._serialize_state(), path)
 
     def _serialize_state(self) -> dict:
+        def _to_list(arr):
+            if arr is None:
+                return None
+            if isinstance(arr, np.ndarray):
+                return arr.tolist()
+            return arr
+        
         return {
             'CapacitanceFilter_kwargs': dict(
                 is_negative_initialized = self.is_negative_initialized,
                 is_positive_initialized = self.is_positive_initialized,
-                _positive_init_params = self._positive_init_params,
-                _negative_init_params = self._negative_init_params,
-                balance_change_Q = self.balance_change_Q,
-                excitation_change_Q = self.excitation_change_Q,
+                _positive_init_params = {k: _to_list(v) for k, v in self._positive_init_params.items()} \
+                    if self._positive_init_params else None,
+                _negative_init_params = {k: _to_list(v) for k, v in self._negative_init_params.items()} \
+                    if self._negative_init_params else None,
+                balance_change_Q = _to_list(self.balance_change_Q),
+                excitation_change_Q = _to_list(self.excitation_change_Q),
                 Xamp = self.Xamp,
                 Yamp = self.Yamp,
-                kfilter_X = self.kfilter.x.tolist(),
-                kfilter_P = self.kfilter.P.tolist(),
+                kfilter_x = self.kfilter.x.tolist() if self.kfilter else None,
+                kfilter_P = self.kfilter.P.tolist() if self.kfilter else None,
             )
         }
 
     def _deserialize_state(self, state: dict):
+        def _to_array(val):
+            if val is None:
+                return None
+            return np.array(val)
+        
+        def _restore_init_params(params):
+            if params is None:
+                return None
+            return {k: _to_array(v) if k in ('balance_change_Q', 'excitation_change_Q', 'x_init', 'P_init') else v 
+                    for k, v in params.items()}
+        
         self.is_negative_initialized = state.get('is_negative_initialized')
         self.is_positive_initialized = state.get('is_positive_initialized')
-        self._positive_init_params = state.get('_positive_init_params')
-        self._negative_init_params = state.get('_negative_init_params')
+        self._positive_init_params = _restore_init_params(state.get('_positive_init_params'))
+        self._negative_init_params = _restore_init_params(state.get('_negative_init_params'))
+        
         if self.is_negative_initialized:
             self.negative_initialize()
         elif self.is_positive_initialized:
             self.positive_initialize()
-        self.balance_change_Q = state.get('balance_change_Q')
-        self.excitation_change_Q = state.get('excitation_change_Q')
+        
+        self.balance_change_Q = _to_array(state.get('balance_change_Q'))
+        self.excitation_change_Q = _to_array(state.get('excitation_change_Q'))
         self.Xamp = state.get('Xamp')
         self.Yamp = state.get('Yamp')
-        if self.is_positive_initialized or self.is_negative_initialized:
-            self.kfilter.x = np.array(state.get('kfilter_X'))
+        
+        if self.kfilter and state.get('kfilter_x') is not None:
+            self.kfilter.x = np.array(state.get('kfilter_x'))
             self.kfilter.P = np.array(state.get('kfilter_P'))
 
     """Kalman Filter Functionality"""

@@ -1,63 +1,140 @@
-"""
-This class is an interface for communicating with the AD5791 DC box. The
-instrument in question has an Arduino Uno connected to the Analog Devices DAC
-that takes serial bus input to set 20-bit unipolar DC outputs on 8 channels.
-"""
-
 from .pyvisa_device import pyvisaDevice
-import pyvisa.constants
+from .channel_adapter import ScalarChannelAdapter
+from .registry import register_hardware_class
+
 import numpy as np
-from math import ceil
 import time
 import json
 import os
+from math import ceil
+from logging import Logger
+from typing import Any, Dict, List
 
+@register_hardware_class("ad5791")
 class ad5791(pyvisaDevice):
-    """Class interface for communicating with the AD5791 DC box."""
-    def __init__(self, logger = None, max_step: float = 0.05, 
-                 wait: float = 0.1, calibration_json: str = None,
-                 instrument_id: str = None):
+    """
+    Class representation of the Arduino-AD5791 DC box.
+    
+    The instrument in question has an Arduino Uno connected to the Analog Devices 
+    DAC that takes serial bus input to set 20-bit bipolar DC outputs on 8 channels.
+    """
+
+    DEFAULT_PYVISA_CONFIG = {
+        'baud_rate': 115200,
+        'write_termination': '\n',
+        'read_termination': '\n',
+        'max_retries': 1,
+        'min_interval': 0.05,
+        'timeout': 3000
+    }
+
+    # maximum bounds on channel values
+    max_V = 10.
+    min_V = -10.
+
+    def __init__(self,
+        resource_name: str,
+        registry_id: str | None = None,
+        logger: Logger | None = None, 
+        skip_connect: bool = False,
+        calibration: Dict[int, List[float]] | None = None,
+        **kwargs
+    ):
+        
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        max_step : float, default=0.05
-            maximum voltage step to take when sweeping.
-        wait : float, default=0.1
-            time to wait between setting voltages while sweeping.
-        calibration_json : str, optional
-            path to a file containing DAC calibration data.
-        instrument_id : str, optional
-            VISA resource name.
+        calibration : dict, optional
+            calibration data for the DC channels of the form [a, b] (Vout = a * Vraw + b)
+        **kwargs
         """
 
-        # configurations for pyvisa resource manager
-        self.pyvisa_config = {
-            "resource_name"     : "ASRL5::INSTR",
-            "baud_rate"         : 115200,
-            'write_termination' : '\n',
-            'read_termination'  : '\n',
-
-            'max_retries'       : 1,
-            'min_interval'      : 0.05,
-            "timeout"           : 3000
-        }
-
-        super().__init__(self.pyvisa_config, logger, instrument_id)
-
-        # maximum bounds on channel values
-        self.max_V      = 10.
-        self.min_V      = -10.
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
         # sweep parameters
-        self.max_step   = max_step
-        self.wait       = wait
+        self.max_step = 0.05
+        self.wait = 0.1
 
-        self.load_calibration(calibration_json)
+        if calibration is None:
+            self.calibration = {ch: [1.0, 0.0] for ch in range(self.NUM_CHANNELS)}
+        else:
+            self.calibration = {int(k): v for k, v in calibration.items()}
 
         # arduino reset delay after connect
-        time.sleep(2.5)
+        if not skip_connect:
+            time.sleep(2.5)
+
+    def _serialize_state(self) -> Dict[str, Any]:
+        """
+        Serialize all state needed to reconstruct and restore this device.
+        """
+
+        config = super()._serialize_state()
+        
+        config.update({
+            'max_step': self.max_step,
+            'step_wait': self.wait,
+            'calibration': self.calibration,
+        })
+        
+        return config
+
+    def _deserialize_state(self, state: Dict[str, Any]) -> None:
+        """
+        Restore device state from serialized config.
+        
+        Called when device already exists and we want to apply saved settings.
+        """
+
+        super()._deserialize_state(state)
+        
+        if 'max_step' in state:
+            self.max_step = state['max_step']
+        if 'step_wait' in state:
+            self.wait = state['step_wait']
+        if 'calibration' in state:
+            self.calibration = {int(k): v for k, v in state['calibration'].items()}
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'ad5791':
+        """
+        Construct from serialized config.
+        
+        Parameters
+        ----------
+        config : dict
+            Output from _serialize_state(), plus 'registry_id'.
+        """
+
+        # Extract required fields
+        registry_id = config.pop('registry_id')
+        resource_name = config.pop('resource_name')
+    
+        # Construct instance
+        instance = cls(
+            resource_name=resource_name,
+            registry_id=registry_id,
+            skip_connect=False,
+            **config  # Remaining kwargs go to pyvisaDevice
+        )
+        instance._deserialize_state(config)
+
+        return instance
+
+    def resolve(self, accessor: str) -> 'ad5791_channel':
+        try:
+            assert accessor.startswith('ch')
+            ch = int(accessor[2:])
+            assert 0 <= ch <= 7
+        except:
+            return None
+        return ad5791_channel(self, accessor, ch)
 
     # Output enable
 
@@ -280,3 +357,20 @@ class ad5791(pyvisaDevice):
         with open(path, 'r') as f:
             self.calibration = json.load(f)
             self.calibration = {int(k): v for k, v in self.calibration.items()}
+
+class ad5791_channel(ScalarChannelAdapter):
+    def __init__(self, parent: ad5791, accessor: str, ch: int):
+        super().__init__(parent, accessor)
+        self.ch = ch
+
+    def get_output(self) -> float:
+        return self._parent.get_V(self.ch)
+
+    def set_output(self, value: float):
+        self._parent.set_V(self.ch, value, chatty=False)
+
+    def get_enable(self) -> bool:
+        return self._parent.output()
+
+    def set_enable(self, enabled: bool):
+        self._parent.output(enabled)

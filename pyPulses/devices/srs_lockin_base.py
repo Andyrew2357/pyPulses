@@ -5,7 +5,7 @@ Control classes for Stanford Research Systems DSP Lock-in Amplifiers.
 from .pyvisa_device import pyvisaDevice
 
 import numpy as np
-from typing import Tuple
+from typing import Any, Dict, Tuple
 
 class SRSLockin(pyvisaDevice):
     """
@@ -662,3 +662,29 @@ class SRSLockin(pyvisaDevice):
                 self.aux_output(ch, val)
             except:
                 continue
+    
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'SRSLockin':
+        """
+        Construct from serialized config.
+        
+        Parameters
+        ----------
+        config : dict
+            Output from _serialize_state(), plus 'registry_id'.
+        """
+
+        # Extract required fields
+        registry_id = config.pop('registry_id')
+        resource_name = config.pop('resource_name')
+    
+        # Construct instance
+        instance = cls(
+            resource_name=resource_name,
+            registry_id=registry_id,
+            skip_connect=False,
+            **config  # Remaining kwargs go to pyvisaDevice
+        )
+        instance._deserialize_state(config)
+
+        return instance

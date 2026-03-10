@@ -1,22 +1,34 @@
 from .abstract_device import abstractDevice
-from .dtg_comp_pair import dtgCompPair
-from typing import Any, Callable
-import numpy as np
+from .channel_adapter import ScalarChannel, CompPair, ScalarChannelAdapter
+from .registry import (
+    register_device_class, 
+    format_reference, 
+    DeferredReference,
+    DeviceRegistry,
+)
 
+import numpy as np
+from logging import Logger
+from typing import Any, Callable, Dict
+
+@register_device_class("pulsePair")
 class pulsePair(abstractDevice):
     def __init__(self,
-        relay: dtgCompPair, 
-        X: Callable[[float], Any] | Callable[[], float],
-        Y: Callable[[float], Any] | Callable[[], float],
+        relay: CompPair | DeferredReference, 
+        X: Callable[[float], Any] | Callable[[], float] | ScalarChannel | DeferredReference,
+        Y: Callable[[float], Any] | Callable[[], float] | ScalarChannel | DeferredReference,
         logical_low: float = -0.5,
         logical_high: float = 2.5,
-        attenuation: float = 0.0
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_post_init: bool = False,
     ):
-        super().__init__()
+        super().__init__(logger)
+        DeviceRegistry.register(self, registry_id=registry_id)
+
         self._relay = relay
         self._X = X
         self._Y = Y
-        self._attenuation = attenuation
 
         # relative jump locations compared to internal DTG timing
         self._pol: bool | None = None
@@ -30,10 +42,12 @@ class pulsePair(abstractDevice):
         }
         self.logical_low = logical_low
         self.logical_high = logical_high
-        self._post_init()
+        if not skip_post_init:
+            self._post_init()
 
     def _post_init(self):
-        self._relay._post_init()
+        if hasattr(self._relay, '_post_init'):
+            self._relay._post_init()
         self._relay.Xlow(self.logical_low)
         self._relay.Ylow(self.logical_low)
         self._relay.Xhigh(self.logical_high)
@@ -80,11 +94,11 @@ class pulsePair(abstractDevice):
     def X(self, v: float | None = None) -> float | None:
         eta = 1 if self._pol else -1
         if v is None:
-            return eta * self._X() * self._attenFrac()
+            return eta * self._X()
         if eta * v < 0:
             self._switch_polarity()
 
-        self._X(abs(v) / self._attenFrac())
+        self._X(abs(v))
 
     def Y(self, v: float | None = None) -> float | None:
         """
@@ -95,13 +109,13 @@ class pulsePair(abstractDevice):
         """
         eta = -1 if self._pol else 1
         if v is None:
-            return eta * self._Y() * self._attenFrac()
+            return eta * self._Y()
         if eta * v < 0:
             if self._X() != 0.0:
                 self._Y(0.0)
             else:
                 self._switch_polarity()
-        self._Y(abs(v) / self._attenFrac())
+        self._Y(abs(v))
 
     def _switch_polarity(self):
         # Save the abstract timing settings
@@ -121,34 +135,113 @@ class pulsePair(abstractDevice):
         self.dT0(dT0)
         self.dT1(dT1)
 
-    def _serialize_state(self) -> dict:
-        return {
+    def _serialize_state(self) -> Dict[str, Any]:
+        try:
+            Xref = format_reference(self._X)
+            Yref = format_reference(self._Y)
+            Rref = format_reference(self._relay)
+        except:
+            Xref = None
+            Yref = None
+            Rref = None
+
+        config = {
             'levels': [self.X(), self.Y()],
             'timing': {'T0': self.T0(), 'dT0': self.dT0(),
                        'T1': self.T1(), 'dT1': self.dT1()},
-            'xtuning': self._xtuning,
-            'ytuning': self._ytuning,
+            'xtuning': {str(k): v for k, v in self._xtuning.items()},
+            'ytuning': {str(k): v for k, v in self._ytuning.items()},
+            'CHX': Xref,
+            'CHY': Yref,
+            'relay': Rref,
+            'logical_low': float(self.logical_low),
+            'logical_high': float(self.logical_high),
         }
+        return config
 
-    def _deserialize_state(self, state: dict):
-        self._xtuning = state['xtuning']
-        self._ytuning = state['ytuning']
-        self.T0(state['timing']['T0'])
-        self.dT0(state['timing']['dT0'])
-        self.T1(state['timing']['T1'])
-        self.dT1(state['timing']['dT1'])
-        self.X(state['levels'][0])
-        self.Y(state['levels'][1])
+    def _deserialize_state(self, state: Dict[str, Any]):
 
-    def _attenFrac(self) -> float:
-        if self._attenuation > 0.0:
-            raise RuntimeError("Attenuator should not be positive!")
-        return 10**(self._attenuation / 20.0)
+        if 'relay' in state:
+            self._relay = DeferredReference(state['relay'])
+        if 'CHX' in state:
+            self._X = DeferredReference(state['CHX'])
+        if 'CHY' in state:
+            self._Y = DeferredReference(state['CHY'])
+        self._resolve_references()
 
-    # TODO Come up with a robust way of tuning this.
-    # def set_tuning(self, pol: bool, tuning_parm: str, offset: float):
-    #     self._tuning[pol][tuning_parm] = offset
+        if 'logical_low' in state:
+            self.logical_low = state['logical_low']
+        if 'logical_high' in state:
+            self.logical_high = state['logical_high']
 
-    # def tune_from_curve(self, pol: bool, tuning_parm: str, wf: wfAverager, ta: float, tb: float):
-    #     pass
+        if 'xtuning' in state:
+            self._xtuning = {k == 'True': v for k, v in state['xtuning'].items()}
+        if 'ytuning' in state:
+            self._ytuning = {k == 'True': v for k, v in state['ytuning'].items()}
+
+        self._post_init()
+        if 'timing' in state:
+            self.T0(state['timing']['T0'])
+            self.dT0(state['timing']['dT0'])
+            self.T1(state['timing']['T1'])
+            self.dT1(state['timing']['dT1'])
+        if 'levels' in state:
+            self.X(state['levels'][0])
+            self.Y(state['levels'][1])
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'pulsePair':
+        relay = config.pop('relay')
+        if relay is not None:
+            relay = DeferredReference(relay)
+        X = config.pop('CHX')
+        if X is not None:
+            X = DeferredReference(X)
+        Y = config.pop('CHY')
+        if Y is not None:
+            Y = DeferredReference(Y)
+        logical_low = config.pop('logical_low')
+        logical_high = config.pop('logical_high')
+        registry_id = config.pop('registry_id')
+
+        instance = cls(
+            relay=relay,
+            X=X,
+            Y=Y,
+            logical_low=logical_low,
+            logical_high=logical_high,
+            registry_id=registry_id,
+            skip_post_init=True # We only do a post_init after _deserialize_state
+        )
+        return instance
+
+    def _resolve_references(self):
+        if isinstance(self._relay, DeferredReference):
+            self._relay = self._relay.unwrap()
+        if isinstance(self._X, DeferredReference):
+            self._X = self._X.unwrap()
+        if isinstance(self._Y, DeferredReference):
+            self._Y = self._Y.unwrap()
+
+    def resolve(self, accessor: str) -> 'pulsePair_channel':
+        if accessor == 'X':
+            return pulsePair_channel(self, 'X', self.X)
+        if accessor == 'Y':
+            return pulsePair_channel(self, 'Y', self.Y)
+        if accessor == 'T0':
+            return pulsePair_channel(self, 'T0', self.T0)
+        if accessor == 'T1':
+            return pulsePair_channel(self, 'T1', self.T1)
+        if accessor == 'W':
+            return pulsePair_channel(self, 'W', self.W)
+
+class pulsePair_channel(ScalarChannelAdapter):
+    def __init__(self, parent: pulsePair, accessor: str, f: Callable):
+        super().__init__(parent, accessor)
+        self._func = f
+
+    def get_output(self) -> float:
+        return self._func
     
+    def set_output(self, value):
+        self._func(value)

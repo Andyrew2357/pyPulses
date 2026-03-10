@@ -1,18 +1,20 @@
 """
-This class is a bare-bones framework for low-level devices that use the pyvisa 
-package for communication. This includes the majority of standalone instruments.
+Base class for VISA-controlled instruments.
 """
 
-from ._registry import DeviceRegistry
-from .nivisa_utils import visa_dll
+from .registry import HardwareRegistry
 from .abstract_device import abstractDevice
-import pyvisa.constants
+from .nivisa_utils import visa_dll
+
 import pyvisa
+import pyvisa.constants
 import re
 import functools
 import time
 from threading import Lock
+from typing import Dict, Any
 import numpy as np
+
 
 def parse_IEEE_488_2(data: bytes) -> np.ndarray:
     if not data.startswith(b'#'):
@@ -31,45 +33,137 @@ def parse_IEEE_488_2(data: bytes) -> np.ndarray:
 
 
 class pyvisaDevice(abstractDevice):
-    def __init__(self, pyvisa_config: dict, logger = None, instrument_id = None):
-        """Standard initialization, calling ResourceManager.open_resource."""
-        
+    """
+    Base class for instruments controlled via PyVISA.
+    
+    Handles connection management, retry logic, and rate limiting.
+    Subclasses should define their default pyvisa_config and implement
+    device-specific methods.
+    
+    Parameters
+    ----------
+    resource_name : str
+        VISA resource string (e.g., "ASRL5::INSTR", "GPIB0::5::INSTR").
+    registry_id : str, optional
+        Logical ID for HardwareRegistry. If None, auto-generates.
+    logger : Logger, optional
+        Logger instance for debug/info/warn/error messages.
+    skip_connect : bool, default=False
+        If True, skip connecting on init (for deserialization).
+    **kwargs
+    """
+    
+    # Subclasses can override this with their default config
+    DEFAULT_PYVISA_CONFIG: Dict[str, Any] = {
+        'timeout': 5000,
+        'write_termination': '\n',
+        'read_termination': '\n',
+    }
+    
+    def __init__(
+        self,
+        resource_name: str,
+        registry_id: str | None = None,
+        logger=None,
+        skip_connect: bool = False,
+        **kwargs
+    ):
         super().__init__(logger)
-        self.pyvisa_config = pyvisa_config
-        if instrument_id:
-            self.pyvisa_config['resource_name'] = instrument_id
-        DeviceRegistry.register_device(self.pyvisa_config['resource_name'], self)
         
-        # Retry and rate limit settings (can be updated later)
+        # Build pyvisa config from defaults + overrides
+        self.pyvisa_config = self.DEFAULT_PYVISA_CONFIG.copy()
+        self.pyvisa_config.update(kwargs)
+        self.pyvisa_config['resource_name'] = resource_name
+        
+        # Retry and rate limit settings
         self.retry_settings = {
-            'max_retries': pyvisa_config.get('max_retries', 3),
-            'retry_delay': pyvisa_config.get('retry_delay', 0.1),
-            'retry_exceptions': pyvisa_config.get('retry_exceptions', 
-                                                  (pyvisa.VisaIOError,)),
-            'min_interval': pyvisa_config.get('min_interval', 0.01)
+            'max_retries': self.pyvisa_config.pop('max_retries', 1),
+            'retry_delay': self.pyvisa_config.pop('retry_delay', 0.1),
+            'retry_exceptions': self.pyvisa_config.pop('retry_exceptions', (pyvisa.VisaIOError,)),
+            'min_interval': self.pyvisa_config.pop('min_interval', 0.0),
         }
         self._rate_limit_locks = {}
         self._last_called = {}
-
-        # for debugging purposes, we can connect to an object that mimics a
-        # pyvisa resource but just logs the messages it recieves. The user may
-        # also pre-program responses from the dummy resource for testing. 
-        if pyvisa_config['resource_name'] == 'DEBUG':
-            self.device = dummyResource()
-            return
         
-        self.connect()
+        # Connection state
+        self.device = None
+        
+        # Register in hardware registry
+        HardwareRegistry.register(self, registry_id=registry_id)
+        
+        # Connect unless told not to
+        if not skip_connect:
+            if resource_name == 'DEBUG':
+                self.device = dummyResource()
+            else:
+                self.connect()
+
+    @property
+    def resource_name(self) -> str:
+        """The VISA resource string."""
+        return self.pyvisa_config['resource_name']
+
+    """
+    -------------------------------------------------------------------------
+    Serialization
+    -------------------------------------------------------------------------
+    """
+    
+    def _serialize_state(self) -> Dict[str, Any]:
+        """Serialize connection config and retry settings."""
+        config = self.pyvisa_config.copy()
+        config.update({
+            'max_retries': self.retry_settings['max_retries'],
+            'retry_delay': self.retry_settings['retry_delay'],
+            'min_interval': self.retry_settings['min_interval'],
+        })
+        # Note: retry_exceptions can't be JSON serialized, skip it
+        return config
+
+    def _deserialize_state(self, state: Dict[str, Any]) -> None:
+        """Restore settings from serialized state."""
+        # Update retry settings if present
+        if 'max_retries' in state:
+            self.retry_settings['max_retries'] = state['max_retries']
+        if 'retry_delay' in state:
+            self.retry_settings['retry_delay'] = state['retry_delay']
+        if 'min_interval' in state:
+            self.retry_settings['min_interval'] = state['min_interval']
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> "pyvisaDevice":
+        """
+        Construct from serialized config.
+        
+        Parameters
+        ----------
+        config : dict
+            Must contain 'registry_id' and 'resource_name'.
+        """
+        registry_id = config.pop('registry_id')
+        resource_name = config.pop('resource_name')
+        
+        # Create instance
+        instance = cls(
+            resource_name=resource_name,
+            registry_id=registry_id,
+            skip_connect=False,  # Do connect when deserializing
+            **config
+        )
+        
+        return instance
+
+    """
+    -------------------------------------------------------------------------
+    Connection management
+    -------------------------------------------------------------------------
+    """
 
     def connect(self):
-        """
-        Open a VISA instrument with the right configuration.
-        Works with ASRL, GPIB, and TCPIP instruments.
-        """
-    
-        # Store the resource name and configuration
+        """Open the VISA resource with configured settings."""
         resource_name = self.pyvisa_config["resource_name"]
-    
-        # Determine instrument type
+        
+        # Determine interface type
         if re.match(r'^ASRL', resource_name):
             interface_type = 'ASRL'
         elif re.match(r'^GPIB', resource_name):
@@ -78,11 +172,11 @@ class pyvisaDevice(abstractDevice):
             interface_type = 'TCPIP'
         else:
             interface_type = 'OTHER'
-    
-        # Open the instrument with the resource manager
+        
+        # Open resource
         rm = pyvisa.ResourceManager(visa_dll)
         self.device = rm.open_resource(resource_name)
-    
+        
         # Common configuration
         for attr in ['timeout', 'write_termination', 'read_termination']:
             if attr in self.pyvisa_config:
@@ -91,6 +185,7 @@ class pyvisaDevice(abstractDevice):
                 except Exception as e:
                     self.warn(f"Could not set attribute {attr}: {e}")
 
+        # Buffer sizes
         if 'output_buffer_size' in self.pyvisa_config:
             try:
                 self.device.set_buffer(
@@ -99,6 +194,7 @@ class pyvisaDevice(abstractDevice):
                 )
             except Exception as e:
                 self.warn(f"Could not set output buffer size: {e}")
+                
         if 'input_buffer_size' in self.pyvisa_config:
             try:
                 self.device.set_buffer(
@@ -107,22 +203,25 @@ class pyvisaDevice(abstractDevice):
                 )
             except Exception as e:
                 self.warn(f"Could not set input buffer size: {e}")
-    
+        
         # Interface-specific configuration
+        self._configure_interface(interface_type)
+        
+        self.info(f"Connected to instrument {resource_name}.")
+
+    def _configure_interface(self, interface_type: str):
+        """Apply interface-specific settings."""
         match interface_type:
             case 'ASRL':
-                # Serial-specific attributes
                 for attr in ['baud_rate', 'data_bits', 'stop_bits', 
-                             'parity', 'flow_control', 'write_buffer_size', 
-                             'read_buffer_size']:
+                             'parity', 'flow_control']:
                     if attr in self.pyvisa_config:
                         try:
                             setattr(self.device, attr, self.pyvisa_config[attr])
                         except Exception as e:
                             self.warn(f"Could not set attribute {attr}: {e}")
-                        
+                            
             case 'GPIB':
-                # GPIB-specific attributes using set_visa_attribute
                 if 'gpib_eos_mode' in self.pyvisa_config:
                     self.device.set_visa_attribute(
                         pyvisa.constants.VI_ATTR_TERMCHAR_EN, 
@@ -138,9 +237,8 @@ class pyvisaDevice(abstractDevice):
                         pyvisa.constants.VI_ATTR_TERMCHAR, 
                         self.pyvisa_config['gpib_eos_char']
                     )
-                
+                    
             case 'TCPIP':
-                # TCPIP-specific attributes
                 if 'tcpip_nodelay' in self.pyvisa_config:
                     self.device.set_visa_attribute(
                         pyvisa.constants.VI_ATTR_TCPIP_NODELAY, 
@@ -149,28 +247,34 @@ class pyvisaDevice(abstractDevice):
                 if 'tcpip_keepalive' in self.pyvisa_config:
                     self.device.set_visa_attribute(
                         pyvisa.constants.VI_ATTR_TCPIP_KEEPALIVE, 
-                        self.pyvisa_config['tcpip_keepalive'])
-            
-            case _:
-                self.warn(f"Interface type {interface_type} not recognized.")
-    
-        self.info(f"Connected to instrument {resource_name}.")
+                        self.pyvisa_config['tcpip_keepalive']
+                    )
+
+    def disconnect(self):
+        """Close the VISA resource."""
+        if self.device is not None:
+            try:
+                self.device.close()
+            except Exception as e:
+                self.warn(f"Error closing device: {e}")
+            self.device = None
 
     def refresh(self):
-        """Close and reopen the device."""
+        """Close and reopen the connection."""
         if self.pyvisa_config['resource_name'] == 'DEBUG':
             return
-
-        self.device.close()
+        self.disconnect()
         self.connect()
 
     def __del__(self):
-        try:
-            self.device.close()
-        except Exception as e:
-            self.warn(f"Exception during pyvisaDevice cleanup: {e}")
-            
+        self.disconnect()
         super().__del__()
+
+    """
+    -------------------------------------------------------------------------
+    Retry/rate-limit decorator and settings
+    -------------------------------------------------------------------------
+    """
 
     @staticmethod
     def retry_and_rate_limit(method):
@@ -183,8 +287,7 @@ class pyvisaDevice(abstractDevice):
             # Extract instance settings
             settings = getattr(self, "retry_settings", {})
             max_retries = settings.get("max_retries", 3)
-            retry_exceptions = settings.get("retry_exceptions", 
-                                            (pyvisa.VisaIOError,))
+            retry_exceptions = settings.get("retry_exceptions", (pyvisa.VisaIOError,))
             retry_delay = settings.get("retry_delay", 0.1)
             min_interval = settings.get("min_interval", 0.0)
 
@@ -202,25 +305,27 @@ class pyvisaDevice(abstractDevice):
                 try:
                     return method(self, *args, **kwargs)
                 except retry_exceptions as e:
-                    self.warn(
-                        f"{method.__name__} failed (attempt {attempt+1}): {e}"
-                    )
+                    self.warn(f"{method.__name__} failed (attempt {attempt+1}): {e}")
                     if attempt == max_retries - 1:
                         raise
                     time.sleep(retry_delay)
 
         return wrapper
     
-    def set_retry_params(self, 
-                         max_retries: int = None, 
-                         retry_delay: float = None, 
-                         min_interval: float = None):
+    def set_retry_params(self, max_retries=None, retry_delay=None, min_interval=None):
+        """Update retry settings."""
         if max_retries is not None:
             self.retry_settings["max_retries"] = max_retries
         if retry_delay is not None:
             self.retry_settings["retry_delay"] = retry_delay
         if min_interval is not None:
             self.retry_settings["min_interval"] = min_interval
+
+    """
+    -------------------------------------------------------------------------
+    Communication methods
+    -------------------------------------------------------------------------
+    """
 
     @retry_and_rate_limit
     def write(self, *args, **kwargs):
@@ -257,6 +362,7 @@ class pyvisaDevice(abstractDevice):
     def flush(self, *args, **kwargs):
         self.debug(f"Flushing: {args}")
         return self.device.flush(*args, **kwargs)
+
 
 """
 This is a dummy class for debugging instruments without actually sending 

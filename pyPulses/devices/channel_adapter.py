@@ -1,0 +1,96 @@
+import numpy as np
+from typing import Protocol, runtime_checkable, Tuple
+
+@runtime_checkable
+class ScalarChannel(Protocol):
+    """Anything that can get/set a scalar value."""
+    def get_output(self) -> float: ...
+    def set_output(self, value: float) -> None: ...
+    def __call__(self, v: float | None = None) -> float | None: ...
+
+@runtime_checkable
+class ChannelizedHardware(Protocol):
+    """Protocol for hardware that exposes channels."""
+    
+    def resolve(self, accessor: str) -> ScalarChannel: ...
+
+@runtime_checkable 
+class SwitchableChannel(Protocol):
+    """Extends ScalarChannel with enable/disable."""
+    def get_output(self) -> float: ...
+    def set_output(self, value: float) -> None: ...
+    def get_enable(self) -> bool: ...
+    def set_enable(self, enabled: bool) -> None: ...
+    def __call__(self, v: float | None = None) -> float | None: ...
+
+@runtime_checkable 
+class CompPair(Protocol):
+    """Complementary Digital Timing Pairs (e.g. dtgCompPair)"""
+
+    def Xlow(self, v: float | None = None) -> float | None: ...
+    def Xhigh(self, v: float | None = None) -> float | None: ...
+    def Ylow(self, v: float | None = None) -> float | None: ...
+    def Yhigh(self, v: float | None = None) -> float | None: ...
+    def xpolarity(self, pos: bool | None = None) -> bool | None: ...
+    def ypolarity(self, pos: bool | None = None) -> bool | None: ...
+    def enable(self, on: bool | None = None) -> bool | None: ...
+    def ldelay(self, v: float | None = None) -> float | None: ...
+    def ldoff(self, v: float | None = None) -> float | None: ...
+    def tdelay(self, v: float | None = None) -> float | None: ...
+    def tdoff(self, v: float | None = None) -> float | None: ...
+    def width(self, v: float | None = None) -> float | None: ...
+
+@runtime_checkable
+class ScopeChannel(Protocol):
+    """A scope channel that returns (waveform, dt, t0)."""
+    def __call__(self) -> Tuple[np.ndarray, float, float]: ...
+
+@runtime_checkable
+class ErrorChannel(Protocol):
+    """A channel that returns (error, variance) for balancing."""
+    def __call__(self) -> Tuple[float, float]: ...
+
+@runtime_checkable
+class OffsetChannel(Protocol):
+    """A channel that returns a dynamic offset value."""
+    def __call__(self) -> float: ...
+
+class ChannelAdapter():
+    """
+    Base class for channel adapters.
+    """
+    def __init__(self, parent, accessor: str):
+        self._parent = parent
+        self._accessor = accessor
+
+    @property
+    def parent(self):
+        return self._parent
+    
+    @property
+    def accessor(self) -> str:
+        return self._accessor
+
+    def format_ref(self):
+        return self._parent, self._accessor
+
+class ScalarChannelAdapter(ChannelAdapter):
+    
+    def __init__(self, parent, accessor: str):
+        super.__init__(parent, accessor)
+    
+    def get_output(self) -> float: ...
+    def set_output(self, value: float) -> None: ...
+
+    def __call__(self, value: float | None) -> float | None:
+        if value is None:
+            return self.get_output()
+        self.set_output(value)
+
+class ScopeChannelAdapter(ChannelAdapter):
+    
+    def __init__(self, parent, accessor: str):
+        super().__init__(parent, accessor)
+
+    def __call__(self) -> Tuple[np.ndarray, float, float]: ...
+

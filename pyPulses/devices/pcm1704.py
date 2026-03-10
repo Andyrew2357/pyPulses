@@ -14,8 +14,9 @@ so I'll stick with this
 
 from ..utils.curves import MonotonicPiecewiseLinear
 
-from ._registry import DeviceRegistry
 from .abstract_device import abstractDevice
+from .channel_adapter import ScalarChannelAdapter
+from .registry import register_hardware_class, HardwareRegistry
 
 try:
     from .subroutines.pcm1704_driver import PCM1704Driver # type: ignore
@@ -31,49 +32,109 @@ import os
 import time
 import json
 import threading
-from math import ceil
 import numpy as np
+from math import ceil
+from typing import Any, Dict
 
+@register_hardware_class("pcm1704")
 class pcm1704(abstractDevice):
-    """Class interface for controlling the PCM1704-based 24-bit DC box."""
+    """Class representation of the PCM1704-based 24-bit DC box."""
     
     v_fullscale = 12.0
     bits_max = 0xFFFFFF
     bits_half_max = 0x7FFFFF
     n_ch = 8
 
-    def __init__(self, logger = None, max_step: float = 0.05, 
-                 wait: float = 0.1, calibration_json: str = 'Darjeeling',
-                 dev_name: str = 'Dev2', change_delay_us: int = 0):
+    max_step = 0.05
+    wait = 0.1
+
+    def __init__(self,
+        dev_name: str = 'Dev2', 
+        calibration: dict | str = 'Darjeeling',
+        change_delay_us: int = 0, 
+        registry_id: str | None = None,
+        logger = None,
+        **kwargs,
+    ):
         """
         Parameters
         ----------
-        logger : Logger, optional
-        max_step : float, default=0.05
-            maximum voltage step to take when sweeping.
-        wait : float, default=0.1
-            time to wait between setting voltages while sweeping.
-        calibration_json : str, default='Darjeeling'
-            path to a file containing DAC calibration data. There are also two
-            presets, 'Lipton' and 'Darjeeling' corresponding to the two
-            instances of this instrument in our lab.
         dev_name : str, default='Dev2'
+        calibration: dict or str, default='Darjeeling'
+            DAC calibration data. There are also two presets, 'Lipton' and 
+            'Darjeeling' corresponding to the two instances of this instrument 
+            in our lab.
         change_delay_us : int, default=2
             microsecond delays while bit-banging.
+        logger : Logger, optional
         """
-        
+
         super().__init__(logger)
-        DeviceRegistry.register_device(dev_name, self)
+        HardwareRegistry.register(self, registry_id=registry_id)
 
-        # sweep parameters
-        self.max_step   = max_step
-        self.wait       = wait
-
-        self.load_calibration(calibration_json)
+        if isinstance(calibration, str):
+            self.load_calibration(calibration)
+        else:
+            self.calibration = calibration
 
         self._lock = threading.Lock()
         self.ch_bits = [0.0] * self.n_ch
         self.driver = PCM1704Driver(dev_name, change_delay_us)
+
+        self.dev_name = dev_name
+        self.change_delay_us = change_delay_us
+
+    def _serialize_state(self) -> Dict[str, Any]:
+        """Serialize connection config and retry settings."""
+        config = {
+            'dev_name': self.dev_name,
+            'change_delay_us': self.change_delay_us,
+        }
+        return config
+
+    def _deserialize_state(self, state: Dict[str, Any]) -> None:
+        """Restore settings from serialized state."""
+        
+        super()._deserialize_state()
+        # not implemented for this class (May rework this later)
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> "pcm1704":
+        """
+        Construct from serialized config.
+        
+        Parameters
+        ----------
+        config : dict
+            Must contain 'registry_id'
+        """
+
+        registry_id = config.pop('registry_id')
+        dev_name = config.pop('dev_name')
+        calibration = config.pop('calibration')
+        if calibration is None:
+            calibration = 'Darjeeling'
+        change_delay_us = config.pop('change_delay_us')
+        
+        # Create instance
+        instance = cls(
+            dev_name=dev_name,
+            calibration=calibration,
+            change_delay_us=change_delay_us,
+            registry_id=registry_id,
+            **config,
+        )
+        
+        return instance
+    
+    def resolve(self, accessor: str) -> 'pcm1704_channel':
+        try:
+            assert accessor.startswith('ch')
+            ch = int(accessor[2:])
+            assert 0 <= ch <= 7
+        except:
+            return None
+        return pcm1704_channel(self, accessor, ch)
 
     def _close(self):
         """Close the C++ driver (destructor will clean up DAQmx task)"""
@@ -304,3 +365,13 @@ class pcm1704(abstractDevice):
             for k, p in self.calibration['pwl_fit'].items()
         }
         
+class pcm1704_channel(ScalarChannelAdapter): 
+    def __init__(self, parent: pcm1704, accessor: str, ch: int):
+        super().__init__(parent, accessor)
+        self.ch = ch
+
+    def get_output(self) -> float:
+        return self._parent.get_V(self.ch)
+
+    def set_output(self, value: float):
+        self._parent.set_V(self.ch, value, chatty=False)

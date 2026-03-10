@@ -1,4 +1,4 @@
-from ..pyPulses.routines.wfatd import wfAverager, wfBalance
+from ..pyPulses.devices.wfatd import wfAverager, wfBalance
 from ..pyPulses.utils.getsetter import getSetter
 
 import time

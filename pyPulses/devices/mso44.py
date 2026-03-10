@@ -1,41 +1,59 @@
-"""
-This class is an interface for communicating with the MSO44 digital
-oscilloscope. It implements only a small fraction of the functionality offered
-by the instrument.
-"""
+# TODO This is severely lacking in functionality, in part because I don't expect
+# to use this scope for long
 
 from .pyvisa_device import pyvisaDevice
-from typing import Tuple
-import numpy as np
+from .channel_adapter import ScopeChannelAdapter
+from .registry import register_hardware_class
 
+import time
+import numpy as np
+from logging import Logger
+from typing import Tuple
+
+@register_hardware_class("mso44")
 class mso44(pyvisaDevice):
-    def __init__(self, logger = None, instrument_id: str = None):
+    """
+    Class representation of the MSO44 digital
+    oscilloscope. It implements only a small fraction of the functionality offered
+    by the instrument.
+    """
+
+    DEFAULT_PYVISA_CONFIG = {
+        'timeout': 10000,
+        'input_buffer_size': 16384,
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.05,
+    }
+
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
-        self.pyvisa_config = {
-            "resource_name" : "TCPIP0::169.254.9.11::inst0::INSTR",
-            "timeout"           : 10000,
-            "input_buffer_size" : 16384,
 
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.05
-        }
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
-        super().__init__(self.pyvisa_config, logger, instrument_id)
+        if not skip_connect:
+            # Right now, I've only implemented this for pulling data using ASCII
+            self.write("DATA:WIDTh 2")
+            self.write("DATA:ENCdg ASCII")
 
-        # Right now, I've only implemented this for pulling data using ASCII
-        self.write("DATA:WIDTh 2")
-        self.write("DATA:ENCdg ASCII")
-
-        self.set_channel(1)
-        self._get_status()
+            self.set_channel(1)
+            self._get_status()
 
     def run(self, on: bool):
         """
@@ -205,3 +223,19 @@ class mso44(pyvisaDevice):
 
         if not running:
             self.run(False)
+
+    def resolve(self, accessor: str) -> mso44_trace_channel:
+        if accessor == 'trace':
+            return mso44_trace_channel(self)
+
+class mso44_trace_channel(ScopeChannelAdapter):
+    def __init__(self, parent: mso44):
+        super().__init__(parent, 'trace')
+
+    def __call__(self) -> Tuple[np.ndarray, float, float]:
+        self._parent.run(False)
+        self._parent.clear_trace()
+        self._parent.run(True)
+        time.sleep(0.6)
+        v = self._parent.get_waveform()
+        return v, self._parent.XIN, -self._parent.HPOS * self._parent.XIN * v.size

@@ -1,20 +1,28 @@
-"""
-This class is an interface to the Zurich Instruments HF2LI lock-in amplifier.
-"""
-
 from .zhinst_device import zhinstDevice
+from .registry import register_hardware_class
 
 import numpy as np
-from typing import List, Tuple
+from logging import Logger
+from typing import Any, Dict, List, Tuple
 
+@register_hardware_class("hf2li")
 class hf2li(zhinstDevice):
-    """Class interface for communicating with the HF2LI lock-in amplifier."""
+    """Class representation of the HF2LI lock-in amplifier."""
+
+    num_demods = 8
+    num_outputs = 2
+    num_oscillators = 6
+
     def __init__(self, 
-                 device_id: str = 'dev1616', 
-                 server_host: str = 'localhost',
-                 server_port: int = 8005, 
-                 API_level: int = 1,
-                 logger = None):
+        device_id: str = 'dev1616', 
+        server_host: str = 'localhost',
+        server_port: int = 8005, 
+        api_level: int = 1,
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,
+    ):
         """
         Parameters
         ----------
@@ -23,13 +31,11 @@ class hf2li(zhinstDevice):
         server_port : int, default=8005
         API_level : int, default=1
         logger : Logger, optional
+        registry_id: str, optional
+        logger
         """
-        super().__init__(device_id, server_host, server_port, API_level, 
-                         logger = logger)
-
-        self.num_demods = 8
-        self.num_outputs = 2
-        self.num_oscillators = 6
+        super().__init__(device_id, server_host, server_port, api_level, 
+                         registry_id, logger, skip_connect)
 
         self.settings = {
             'demods': [dict(time_const=None) for _ in range(self.num_demods)]
@@ -149,8 +155,9 @@ class hf2li(zhinstDevice):
         """
         super().load_state_json(path)
 
-    def _serialize_state(self) -> dict:
-        state = {}
+    def _serialize_state(self) -> Dict[str, Any]:
+        state = super()._serialize_state()
+
         # serialize the states of the demodulators
         state['demod'] = [
             {
@@ -179,7 +186,9 @@ class hf2li(zhinstDevice):
         ]
         return state
 
-    def _deserialize_state(self, state: dict):
+    def _deserialize_state(self, state: Dict[str, Any]):
+        super()._deserialize_state(state)
+
         # deserialize the demodulator settings
         for i, s in enumerate(state['demod']):
             self.demod[i].set_reference_mode(s['reference_mode'])
@@ -200,6 +209,39 @@ class hf2li(zhinstDevice):
                 self.output[i].connect_to_demod(d)
             self.output[i].enable(s['enabled'])
 
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'hf2li':
+        """
+        Construct from serialized config.
+        
+        Parameters
+        ----------
+        config : dict
+            Output from _serialize_state(), plus 'registry_id'.
+        """
+
+        # Extract required fields
+        device_id = config.pop('device_id')
+        server_host = config.pop('server_host')
+        server_port = config.pop('server_port')
+        api_level = config.pop('api_level')
+        registry_id = config.pop('registry_id')
+
+        # Construct instance
+        instance = cls(
+            device_id=device_id,
+            server_host=server_host,
+            server_port=server_port,
+            api_level=api_level,
+            registry_id=registry_id,
+            skip_connect=False,
+            **config,
+        )
+        instance._deserialize_state(config)
+
+        return instance
+        
 class hf2liDemodChannel:
     def __init__(self, parent: hf2li, index: int):
         self.parent = parent

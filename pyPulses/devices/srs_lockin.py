@@ -1,59 +1,69 @@
 from ..utils.stats import series_correlated_covariance
 
 from .srs_lockin_base import SRSLockin
-from .pyvisa_device import parse_IEEE_488_2
+from .registry import register_hardware_class
 
 import numpy as np
 import time
 from math import log2
 from collections import defaultdict
 from dataclasses import dataclass
+from logging import Logger
 from typing import Tuple
 
+@register_hardware_class("sr830")
 class sr830(SRSLockin):
-    """Class interface for controlling the SR830 DSP Lock-in"""
-    def __init__(self, logger = None, instrument_id: str = None):
+    """Class representation of the SR830 DSP Lock-in"""
+
+    DEFAULT_PYVISA_CONFIG = {
+        "resource_name"     : "",
+        "output_buffer_size": 512,
+
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.05
+    }
+
+    out_aux_channels = [1, 2, 3, 4]
+
+    output_map = {
+        'X': 1,
+        'Y': 2,
+        'R': 3,
+        'T': 4
+    }
+
+    sens_vals = np.array(
+        [1e0] + [val 
+            for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
+            for val in [factor*5e-9, factor*2e-9, factor*1e-9]]
+    )[:-1][::-1]
+
+    tau_vals = []
+    for factor in [1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10]:
+        tau_vals.extend([factor*1e-6, factor*3e-6])
+    tau_vals = np.array(tau_vals)
+
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
 
-        self.pyvisa_config = {
-            "resource_name"     : "",
-            "output_buffer_size": 512,
-
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.05
-        }
-
-        self.out_aux_channels = [1, 2, 3, 4]
-
-        self.output_map = {
-            'X': 1,
-            'Y': 2,
-            'R': 3,
-            'T': 4
-        }
-
-        x = [5e-9, 2e-9, 1e-9]
-        self.sens_vals = np.array(
-            [1e0] + [val 
-                for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
-                for val in [factor*x[0], factor*x[1], factor*x[2]]]
-        )[:-1][::-1]
-
-        x = [1e-6, 3e-6]
-        tau_vals = []
-        for factor in [1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10]:
-            tau_vals.extend([factor*x[0], factor*x[1]])
-        self.tau_vals = np.array(tau_vals)
-
-        super().__init__(logger, instrument_id)
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
     def reference_input_impedance(self, imp: str = None) -> float | None:
         """Not available for SR830."""
@@ -83,57 +93,66 @@ class sr830(SRSLockin):
         """Not available for SR830."""
         raise AttributeError("SR830 does not offer this functionality.")
 
+@register_hardware_class("sr844")
 class sr844(SRSLockin):
-    """Class interface for controlling the SR844 DSP Lock-in"""
-    def __init__(self, logger = None, instrument_id: str = None):
+    """Class representation of the SR844 DSP Lock-in"""
+
+    DEFAULT_PYVISA_CONFIG = {
+        "resource_name"     : "",
+        "output_buffer_size": 512,
+
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.1
+    }
+
+    out_aux_channels = [1, 2]
+
+    cmd_map = {
+        'icpl': "INPZ",
+        'oaux': "AUXI",
+        'auxv': "AUXO"
+    }
+
+    output_map = {
+        'X': 1,
+        'Y': 2,
+        'R': 3,
+        'T': 5
+    }
+
+    sens_vals = np.array(
+        [1e0] + [val 
+            for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2]
+            for val in [factor*3e-9, factor*1e-9]]
+    )[::-1]
+
+    tau_vals = []
+    for factor in [1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10]:
+        tau_vals.extend([factor*1e-6, factor*3e-6])
+    print(len(tau_vals))
+    tau_vals = np.array(tau_vals)
+
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
 
-        self.pyvisa_config = {
-            "resource_name"     : "",
-            "output_buffer_size": 512,
-
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.1
-        }
-
-        self.out_aux_channels = [1, 2]
-
-        self.cmd_map = {
-            'icpl': "INPZ",
-            'oaux': "AUXI",
-            'auxv': "AUXO"
-        }
-
-        self.output_map = {
-            'X': 1,
-            'Y': 2,
-            'R': 3,
-            'T': 5
-        }
-
-        x = [3e-9, 1e-9]
-        self.sens_vals = np.array(
-            [1e0] + [val 
-                for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2]
-                for val in [factor*x[0], factor*x[1]]]
-        )[::-1]
-
-        x = [1e-6, 3e-6]
-        tau_vals = []
-        for factor in [1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10]:
-            tau_vals.extend([factor*x[0], factor*x[1]])
-        print(len(tau_vals))
-        self.tau_vals = np.array(tau_vals)
-
-        super().__init__(logger, instrument_id)
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
     def detection_harmonic(self, harm: int = None) -> int | None:
         """
@@ -213,51 +232,58 @@ class sr844(SRSLockin):
         """Not available for SR844."""
         raise AttributeError("SR844 does not offer this functionality.")
 
+@register_hardware_class("sr850")
 class sr850(SRSLockin):
-    """Class interface for controlling the SR850 DSP Lock-in"""
-    def __init__(self, logger = None, instrument_id: str = None):
+    """Class representation of the SR850 DSP Lock-in"""
+
+    DEFAULT_PYVISA_CONFIG = {
+        'write_termination': '\n',
+        'output_buffer_size': 512,
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.1,
+    }
+
+    out_aux_channels = [1, 2, 3, 4]
+
+    output_map = {
+        'X': 1,
+        'Y': 2,
+        'R': 3,
+        'T': 4
+    }
+
+    sens_vals = np.array(
+        [1e0] + [val 
+            for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
+            for val in [factor*5e-9, factor*2e-9, factor*1e-9]]
+    )[:-1][::-1]
+
+    tau_vals = []
+    for factor in [1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10]:
+        tau_vals.extend([factor*1e-6, factor*3e-6])
+    tau_vals = np.array(tau_vals)
+
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
 
-        self.pyvisa_config = {
-            "resource_name"     : "",
-            "write_termination" : '\n',
-            "output_buffer_size": 512,
-
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.1
-        }
-
-        self.out_aux_channels = [1, 2, 3, 4]
-
-        self.output_map = {
-            'X': 1,
-            'Y': 2,
-            'R': 3,
-            'T': 4
-        }
-
-        x = [5e-9, 2e-9, 1e-9]
-        self.sens_vals = np.array(
-            [1e0] + [val 
-                for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
-                for val in [factor*x[0], factor*x[1], factor*x[2]]]
-        )[:-1][::-1]
-
-        x = [1e-6, 3e-6]
-        tau_vals = []
-        for factor in [1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10]:
-            tau_vals.extend([factor*x[0], factor*x[1]])
-        self.tau_vals = np.array(tau_vals)
-
-        super().__init__(logger, instrument_id)
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
     def reference_input_impedance(self, imp: str = None) -> float | None:
         """Not available for SR850."""
@@ -294,65 +320,72 @@ class srs_acquisition:
     timeout     : float = None  # fallback timeout
     tau         : float = None
 
+@register_hardware_class("sr860")
 class sr860(SRSLockin):
-    """Class interface for controlling the SR860 DSP Lock-in"""
-    def __init__(self, logger = None, instrument_id: str = None):
+    """Class representation of the SR860 DSP Lock-in"""
+
+    _name = 'SR860'
+
+    DEFAULT_PYVISA_CONFIG = {
+        'output_buffer_size': 512,
+        'input_buffer_size': 5 * 1024 * 1024,
+        'timeout': 10_000,
+        'read_termination': None,
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.05,
+    }
+
+    out_aux_channels = [0, 1, 2, 3]
+
+    cmd_map = {
+        'fmod': "RSRC",
+        'rslp': "RTRG",
+        'igan': "ICUR",
+        'sens': "SCAL",
+        'agan': "ASCL"
+    }
+
+    output_map = {
+        'X': 0,
+        'Y': 1,
+        'R': 2,
+        'T': 3
+    }
+
+    sens_vals = np.array(
+        [1e0] + [val 
+            for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
+            for val in [factor*5e-9, factor*2e-9, factor*1e-9]]
+    )
+    
+    tau_vals = []
+    for factor in [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10]:
+        tau_vals.extend([factor*1e-6, factor*3e-6])
+    tau_vals = np.array(tau_vals)
+
+    irng_vals = np.array([1, 0.3, 0.1, 0.03, 0.01])
+
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
 
-        self._name = 'SR860'
-
-        self.pyvisa_config = {
-            "resource_name"     : "USB0::0xB506::0x2000::003931::INSTR",
-            "output_buffer_size": 512,
-            "input_buffer_size" : 5 * 1024 * 1024,
-            "timeout"           : 10_000,
-            "read_termination"  : None,
-
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.05
-        }
-
-        self.out_aux_channels = [0, 1, 2, 3]
-
-        self.cmd_map = {
-            'fmod': "RSRC",
-            'rslp': "RTRG",
-            'igan': "ICUR",
-            'sens': "SCAL",
-            'agan': "ASCL"
-        }
-
-        self.output_map = {
-            'X': 0,
-            'Y': 1,
-            'R': 2,
-            'T': 3
-        }
-
-        x = [5e-9, 2e-9, 1e-9]
-        self.sens_vals = np.array(
-            [1e0] + [val 
-                for factor in [1e8, 1e7, 1e6, 1e5, 1e4, 1e3, 1e2, 1e1, 1e0]
-                for val in [factor*x[0], factor*x[1], factor*x[2]]]
-        )
-        
-        x = [1e-6, 3e-6]
-        tau_vals = []
-        for factor in [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10]:
-            tau_vals.extend([factor*x[0], factor*x[1]])
-        self.tau_vals = np.array(tau_vals)
-
-        self.irng_vals = np.array([1, 0.3, 0.1, 0.03, 0.01])
-
-        super().__init__(logger, instrument_id)
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
         self._acquisition = srs_acquisition()
 
@@ -652,18 +685,28 @@ class sr860(SRSLockin):
             except:
                 print("Failed to set up data acquisition while deserializing.")
 
-
+@register_hardware_class("sr865")
 class sr865a(sr860):
-    """Class interface for controlling the SR865A DSP Lock-in"""
-    def __init__(self, logger = None, instrument_id: str = None):
+    """Class representation of the SR865A DSP Lock-in"""
+
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
 
-        super().__init__(logger, instrument_id)
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
         self._name = 'SR865A'

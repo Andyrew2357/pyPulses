@@ -8,7 +8,6 @@ from .pulsed_R_bridge import PulsedR
 from .R_predictor import RPredictor
 from .tdpt import TDPTContext
 from .test_gates import GateTest
-from ..routines.wfatd import wfAverager, wfBalance, wfJump, wfSlope
 
 __all__ =[
     "balanceCapBridge",
@@ -25,8 +24,4 @@ __all__ =[
     "RPredictor",
     "TDPTContext",
     "TwoPointCapBalance",
-    "wfAverager", 
-    "wfBalance", 
-    "wfJump",
-    "wfSlope",
 ]

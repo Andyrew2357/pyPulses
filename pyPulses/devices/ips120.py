@@ -1,41 +1,50 @@
-"""
-This class is an interface to the Oxford IPS120 superconducting magnet power
-supply.
-"""
-
 from .pyvisa_device import pyvisaDevice
+from .registry import register_hardware_class
 
 import time
 from enum import IntEnum
+from logging import Logger
 
+@register_hardware_class("ips120")
 class ips120(pyvisaDevice):
-    """Class interface for controlling the IPS120."""
-    def __init__(self, logger = None, instrument_id: str = None):
+    """
+    Class representation of the Oxford IPS120 superconducting magnet power supply.
+    """
+
+    DEFAULT_PYVISA_CONFIG = {
+        'read_termination'  : '\r',
+        'write_termination' : '\r'
+    } 
+
+    retries = 5
+    max_rate = 0.5   # T / min
+    max_B = 10.0  # T
+
+    heater_wait_time = 7 # s
+
+    B_tol_match = 1e-5  # T (Used when matching output and persistent)
+    B_tol_assertive = 1e-4  # T (Used in _goto_B and set_B)
+
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
 
-        self.pyvisa_config = {
-            'resource_name'     : "",
-            'read_termination'  : '\r',
-            'write_termination' : '\r'
-        } 
-
-        super().__init__(self.pyvisa_config, logger, instrument_id)
-
-        self.retries    = 5
-        self.max_rate   = 0.5   # T / min
-        self.max_B      = 10.0  # T
-
-        self.heater_wait_time = 7 # s
-
-        self.B_tol_match        = 1e-5  # T (Used when matching output and persistent)
-        self.B_tol_assertive    = 1e-4  # T (Used in _goto_B and set_B)
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
     class parm(IntEnum):
         OUTPUT_CURRENT      = 0,    # A

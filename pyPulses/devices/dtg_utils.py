@@ -10,7 +10,7 @@ from bitarray import bitarray
 from .pyvisa_device import pyvisaDevice
 
 @dataclass
-class Channel:
+class dtgChannel:
     name : str
     ch   : int
     slot : str
@@ -21,6 +21,9 @@ class Channel:
     min_width : float
     rise_time : float
     dtg: pyvisaDevice
+
+    def format_ref(self):
+        return self.dtg, self.name
 
     def __str__(self) -> str:
         return f"PGEN{self.slot}{self.mf}:CH{self.ch}"
@@ -151,10 +154,10 @@ class Channel:
 
 class Group():
     """Logical bus corresponding to physical channels of the device"""
-    def __init__(self, name: str, channels: int | List[Channel | None]):
+    def __init__(self, name: str, channels: int | List[dtgChannel | None]):
         self.name = name
         self.width: int = None
-        self.channels: List[Channel] = None
+        self.channels: List[dtgChannel] = None
         if type(channels) == int:
             self.width = channels
             self.channels = [None] * channels

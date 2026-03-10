@@ -1,43 +1,49 @@
-"""
-This class is an interface to the Cryomagnetics 4G Superconducting Magnet Power
-Supply.
-"""
-
 from .pyvisa_device import pyvisaDevice
-import time
+from .registry import register_hardware_class
 
+import time
+from logging import Logger
+
+@register_hardware_class("cryomagnetics4G")
 class cryomagnetics4G(pyvisaDevice):
     """
-    Class interface for communicating with the Cryomagnetics 4G Superconducting 
-    Magnet Power Supply.
+    Class representation of the Cryomagnetics 4G Superconducting Magnet Power Supply.
     """
-    def __init__(self, logger = None, instrument_id: str = None):
+
+    DEFAULT_PYVISA_CONFIG = {
+        'output_buffer_size' : 512,
+        'gpib_eos_mode'     : False,
+        'gpib_eos_char'     : ord('\n'),
+        'gpib_eoi_mode'     : True,
+        'write_termination' : '\n',
+        'max_retries': 3,
+        'retry_delay': 0.1,
+        'min_interval': 0.05
+    }
+
+    H_tol_kG = 1e-3 # finite-precision field strength tolerance
+    H_sweep_tol = 0.01
+
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
-            logger used by abstractDevice
-        instrument_id : str, optional
-            VISA resource name
+            logger used by abstractDevice.
+        **kwargs
         """
 
-        self.pyvisa_config = {
-            "resource_name" : "GPIB0::25::INSTR",
-            "output_buffer_size" : 512,
-            "gpib_eos_mode"     : False,
-            "gpib_eos_char"     : ord('\n'),
-            "gpib_eoi_mode"     : True,
-            "write_termination" : '\n',
-
-            'max_retries': 3,
-            'retry_delay': 0.1,
-            'min_interval': 0.05
-        }
-
-        super().__init__(self.pyvisa_config, logger, instrument_id)
-
-        self.H_tol_kG    = 1e-3 # finite-precision field strength tolerance
-        self.H_sweep_tol = 0.01
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
     def get_H(self) -> float:
         """
@@ -55,7 +61,6 @@ class cryomagnetics4G(pyvisaDevice):
             return
         
         return 0.1 * float(imag_[:-2])
-
 
     def sweep_H(self, H_T: float) -> bool:
         """
@@ -210,6 +215,7 @@ class cryomagnetics4G(pyvisaDevice):
 
         self.info("Finished pause.")
 
+
 if __name__ == '__main__':
     """Example test of the magnet power supply using dummyResource"""
 
@@ -224,7 +230,7 @@ if __name__ == '__main__':
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-    magnet = cryomagnetics4G(logger, instrument_id = 'DEBUG')
+    magnet = cryomagnetics4G(resource_name = 'DEBUG', logger = logger)
 
     magnet.device.attr['IMAG'] = '0.0kG\n'
     def get_IMAG(obj):
