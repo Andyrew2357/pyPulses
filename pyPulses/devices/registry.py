@@ -9,7 +9,10 @@ unregistered classes (tracked but not serialized).
 """
 
 from __future__ import annotations
-from typing import Dict, Type, TypeVar, TYPE_CHECKING
+
+import json
+from pathlib import Path
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .abstract_device import abstractDevice
@@ -19,7 +22,7 @@ T = TypeVar('T')
 # Global mapping: class_tag -> class type
 # Populated by @register_hardware_class decorator
 _HARDWARE_CLASS_REGISTRY: Dict[str, Type] = {}
-_ID_COUNTERS: Dict[str, int] = {}  # For auto-generating IDs
+_HARDWARE_ID_COUNTERS: Dict[str, int] = {}  # For auto-generating IDs
 
 def register_hardware_class(tag: str):
     """
@@ -84,11 +87,11 @@ class HardwareRegistry():
         device_class = type(device)
         base = getattr(device_class, '_registry_class_tag_', None) or device_class.__name__
         
-        count = _ID_COUNTERS.get(base, 0)
+        count = _HARDWARE_ID_COUNTERS.get(base, 0)
         while True:
             candidate = f"{base}_{count}"
             if candidate not in cls._devices:
-                _ID_COUNTERS[base] = count + 1
+                _HARDWARE_ID_COUNTERS[base] = count + 1
                 return candidate
             count += 1
 
@@ -196,7 +199,7 @@ class HardwareRegistry():
         for registry_id in list(cls._devices.keys()):
             cls.unregister(registry_id)
         cls._devices.clear()
-        _ID_COUNTERS.clear()
+        _HARDWARE_ID_COUNTERS.clear()
 
     @classmethod
     def serialize_all(cls) -> Dict[str, dict]:
@@ -287,16 +290,8 @@ Devices reference each other by registry ID, resolved at access time.
 This avoids dependency ordering issues during deserialization.
 """
 
-from __future__ import annotations
-from typing import Dict, Type, TypeVar, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .abstract_device import abstractDevice
-
-T = TypeVar('T')
-
 _DEVICE_CLASS_REGISTRY: Dict[str, Type] = {}
-_ID_COUNTERS: Dict[str, int] = {}
+_DEVICE_ID_COUNTERS: Dict[str, int] = {}
 
 
 def register_device_class(tag: str):
@@ -346,11 +341,11 @@ class DeviceRegistry:
         device_class = type(device)
         base = getattr(device_class, '_registry_class_tag_', None) or device_class.__name__
         
-        count = _ID_COUNTERS.get(base, 0)
+        count = _DEVICE_ID_COUNTERS.get(base, 0)
         while True:
             candidate = f"{base}_{count}"
             if candidate not in cls._devices:
-                _ID_COUNTERS[base] = count + 1
+                _DEVICE_ID_COUNTERS[base] = count + 1
                 return candidate
             count += 1
 
@@ -409,7 +404,7 @@ class DeviceRegistry:
         for registry_id in list(cls._devices.keys()):
             cls.unregister(registry_id)
         cls._devices.clear()
-        _ID_COUNTERS.clear()
+        _DEVICE_ID_COUNTERS.clear()
 
     @classmethod
     def serialize_all(cls) -> Dict[str, dict]:
@@ -486,10 +481,6 @@ Rack State - Save and load the entire system state.
 Coordinates serialization of both HardwareRegistry and DeviceRegistry,
 ensuring proper ordering (hardware must exist before devices that reference it).
 """
-
-import json
-from pathlib import Path
-from typing import Dict, Any
 
 class RackState:
     """

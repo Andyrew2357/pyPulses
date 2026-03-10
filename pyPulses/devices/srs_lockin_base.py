@@ -5,57 +5,66 @@ Control classes for Stanford Research Systems DSP Lock-in Amplifiers.
 from .pyvisa_device import pyvisaDevice
 
 import numpy as np
-from typing import Any, Dict, Tuple
+from logging import Logger
+from typing import Any, Dict, List, Tuple
 
 class SRSLockin(pyvisaDevice):
     """
     Base control class for 800 series Stanford Research Systems lock-in 
     amplifiers.
     """
-    def __init__(self, logger = None, instrument_id: str = None):
-        
-        assert hasattr(self, 'pyvisa_config')
-        assert hasattr(self, 'out_aux_channels')
-        assert hasattr(self, 'output_map')
-        assert hasattr(self, 'sens_vals')
-        assert hasattr(self, 'tau_vals')
-        if not hasattr(self, 'irng_vals'):
-            self.irng_vals = []
+    out_aux_channels: List[int]
+    output_map: Dict[str, int]
+    sens_vals: np.ndarray
+    tau_vals: np.ndarray
+    irng_vals: np.ndarray = np.array([])
+    cmd_map: Dict[str, str] = {}
 
-        default_cmds = {
-            'phas': "PHAS",
-            'fmod': "FMOD",
-            'freq': "FREQ",
-            'harm': "HARM",
-            'rslp': "RSLP",
-            'refz': "REFZ",
-            'slvl': "SLVL",
-            'soff': "SOFF",
-            'isrc': "ISRC",
-            'ignd': "IGND",
-            'icpl': "ICPL",
-            'ivmd': "IVMD",
-            'irng': "IRNG",
-            'igan': "IGAN",
-            'ilin': "ILIN",
-            'ilvl': "ILVL",
-            'sens': "SENS",
-            'oflt': "OFLT",
-            'ofsl': "OFSL",
-            'sync': "SYNC",
-            'oaux': "OAUX",
-            'auxv': "AUXV",
-            'aphs': "APHS",
-            'arng': "ARNG",
-            'agan': "AGAN",
-        }
+    DEFAULT_CMDS = {
+        'phas': "PHAS",
+        'fmod': "FMOD",
+        'freq': "FREQ",
+        'harm': "HARM",
+        'rslp': "RSLP",
+        'refz': "REFZ",
+        'slvl': "SLVL",
+        'soff': "SOFF",
+        'isrc': "ISRC",
+        'ignd': "IGND",
+        'icpl': "ICPL",
+        'ivmd': "IVMD",
+        'irng': "IRNG",
+        'igan': "IGAN",
+        'ilin': "ILIN",
+        'ilvl': "ILVL",
+        'sens': "SENS",
+        'oflt': "OFLT",
+        'ofsl': "OFSL",
+        'sync': "SYNC",
+        'oaux': "OAUX",
+        'auxv': "AUXV",
+        'aphs': "APHS",
+        'arng': "ARNG",
+        'agan': "AGAN",
+    }
 
-        if not hasattr(self, 'cmd_map'):
-            self.cmd_map =  {}
-        for k, v in default_cmds.items():
+    def __init__(self, 
+        resource_name: str, 
+        registry_id: str | None = None, 
+        logger: Logger | None = None, 
+        skip_connect: bool = False, 
+        **kwargs,
+    ):
+        super().__init__(
+            resource_name=resource_name, 
+            registry_id=registry_id, 
+            logger=logger, 
+            skip_connect=skip_connect, 
+            **kwargs
+        )
+
+        for k, v in self.DEFAULT_CMDS.items():
             self.cmd_map.setdefault(k, v)
-
-        super().__init__(self.pyvisa_config, logger, instrument_id)
 
     # QUERYING DATA
 
@@ -607,7 +616,7 @@ class SRSLockin(pyvisaDevice):
             'sync_filter_state',
         ]
 
-        state = {}
+        state = super()._serialize_state()
         for setting in simple_settings:
             try:
                 state[setting] = getattr(self, setting, lambda: None)()
@@ -626,6 +635,8 @@ class SRSLockin(pyvisaDevice):
 
     def _deserialize_state(self, state: dict):
         
+        super()._deserialize_state(state)
+
         simple_settings = [
             # timebase settings
             'reference_phase',

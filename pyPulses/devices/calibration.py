@@ -78,6 +78,9 @@ class TrivialCalibration(CalibrationModel):
         if o > c_max or o < c_min:
             raise ValueError(f"Output {o} not in [{c_min}, {c_max}]")
         return o
+    
+    def output_bounds(self, c_min: float, c_max: float) -> Tuple[float, float]:
+        return c_min, c_max
 
 class PolynomialCalibration(CalibrationModel):
     """
@@ -426,7 +429,7 @@ class CalibratedChannel(abstractDevice):
     Control Access
     """
 
-    def _get_voltage(self, lazy: bool = True) -> float:
+    def _get_control(self, lazy: bool = True) -> float:
         """Get current control."""
         if lazy and self._cached_control is not None:
             return self._cached_control

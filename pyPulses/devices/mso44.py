@@ -224,7 +224,7 @@ class mso44(pyvisaDevice):
         if not running:
             self.run(False)
 
-    def resolve(self, accessor: str) -> mso44_trace_channel:
+    def resolve(self, accessor: str) -> 'mso44_trace_channel':
         if accessor == 'trace':
             return mso44_trace_channel(self)
 

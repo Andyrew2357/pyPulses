@@ -77,7 +77,7 @@ class ChannelAdapter():
 class ScalarChannelAdapter(ChannelAdapter):
     
     def __init__(self, parent, accessor: str):
-        super.__init__(parent, accessor)
+        super().__init__(parent, accessor)
     
     def get_output(self) -> float: ...
     def set_output(self, value: float) -> None: ...

@@ -99,7 +99,7 @@ class ad5764(pyvisaDevice):
         Called when device already exists and we want to apply saved settings.
         """
 
-        super()._deserialize_state()
+        super()._deserialize_state(state)
         if 'max_V' in state:
             self.max_V = state['max_V']
         if 'min_V' in state:
