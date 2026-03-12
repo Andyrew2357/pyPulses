@@ -1122,7 +1122,7 @@ class DTG(pyvisaDevice):
             'burst_count'   : self._burst_count,
             'channels': {
                 name: {
-                    'enable'   : ch.enable(),
+                    # 'enable'   : ch.enable(),
                     'polarity'  : ch.polarity(),
                     'high'      : ch.high(),
                     'low'       : ch.low(),
@@ -1197,7 +1197,7 @@ class DTG(pyvisaDevice):
                 continue
 
             ch = self.channels[ch_id]
-            self.chan_output(ch, ch_state['enable'])
+            # self.chan_output(ch, ch_state['enable'])
             self.low_level(ch, ch_state['low'])
             self.high_level(ch, ch_state['high'])
             self.termination_Z(ch, ch_state['termination_Z'])
@@ -1265,6 +1265,7 @@ class DTG(pyvisaDevice):
             skip_connect=False,
             **config  # Remaining kwargs go to pyvisaDevice
         )
+        instance.output_enable(False) # default to outputs off for safety
         instance._deserialize_state(config)
 
         return instance
@@ -1298,14 +1299,23 @@ class dtg5274(DTG):
     mainframes = [1,]
     slots      = ['A', 'B', 'C', 'D']
 
-    def __init__(self, logger = None, instrument_id: str = None):
+    def __init__(self,
+        resource_name: str, 
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+        skip_connect: bool = False,
+        **kwargs,              
+    ):
         """
         Parameters
         ----------
+        resource_name : str
+            VISA resource name.
+        registry_id : str, optional
+            Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
-        instrument_id : str, optional
-            VISA resource name.
+        **kwargs
         """
         
-        super().__init__(logger, instrument_id)
+        super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)

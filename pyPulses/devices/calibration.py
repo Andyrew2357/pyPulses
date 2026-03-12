@@ -5,6 +5,7 @@ from .channel_adapter import CompPair, ScalarChannel
 import time
 import json
 import numpy as np
+from logging import Logger
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -69,19 +70,20 @@ class CalibrationModel(ABC):
         """Serialize to a configuration dictionary"""
         ...
 
-    @abstractmethod
     @classmethod
+    @abstractmethod
     def from_dict(cls, config: Dict[str, Any]) -> 'CalibrationModel':
         """Initialize from a configuration dictionary"""
         ...
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> 'CalibrationModel':
-        if config['model'] == 'trivial':
-            return TrivialCalibration.from_config(config)
-        if config['model'] == 'polynomial':
-            return PolynomialCalibration.from_config(config)
-        raise ValueError(f"Unknown calibration model: {config['model']}")
+        model = config.get('model')
+        if model == 'trivial':
+            return TrivialCalibration.from_dict(config)
+        if model == 'polynomial':
+            return PolynomialCalibration.from_dict(config)
+        raise ValueError(f"Unknown calibration model: {model}")
 
 class CalibratedChannelProtocol(Protocol):
     """Protocol for channels that accept calibration."""
@@ -254,8 +256,9 @@ class PolynomialCalibration(CalibrationModel):
         return min(vals), max(vals)
 
     def to_dict(self) -> Dict[str, Any]:
+        # Use 'model' key for consistency with TrivialCalibration
         return {
-            'type': 'polynomial',
+            'model': 'polynomial',
             'coefficients': self._coeffs.tolist(),
             'c_fit_min': self._c_fit_min,
             'c_fit_max': self._c_fit_max,
@@ -682,6 +685,7 @@ class PulseShaperCalibration:
         y_high_level: float | None = None,
         y_low_level: float | None = None,
         parallel_meters: bool = True,
+        logger: Logger | None = None,
     ):
         self.relay = relay
         self.x_channel = x_channel
@@ -701,13 +705,19 @@ class PulseShaperCalibration:
         self.parallel_meters = parallel_meters
         self._executor = ThreadPoolExecutor(max_workers=2) if parallel_meters else None
 
+        self.logger = logger
+
     def close(self):
         """Shutdown executor if present."""
         if self._executor:
             self._executor.shutdown(wait=False)
-    
+
     def __del__(self):
         self.close()
+
+    def log(self, *args, **kwargs):
+        if self.logger is not None:
+            self.logger.info(*args, **kwargs)
     
     def _configure_levels(self):
         """Set DTG high/low levels if specified."""
@@ -756,6 +766,7 @@ class PulseShaperCalibration:
             sweep_channel.set_output(c)
             time.sleep(self.settle_time)
             x_readings[i], y_readings[i] = self._read_meters()
+            self.log(f"Readings at control point {i} ({c:.5e}): X={x_readings[i]:.5e}, Y={y_readings[i]:.5e}")
         
         return x_readings, y_readings
     
@@ -773,17 +784,21 @@ class PulseShaperCalibration:
         )
         
         # Passes 1,2: Sweep X, Y=0
+        self.log("Starting pass 1 (X sweep, Y=0)")
         raw.pass1_x_meter, raw.pass1_y_meter = self._sweep_single_channel(
             self.x_channel, self.y_channel, x_polarity=True
         )
+        self.log("Starting pass 2 (X sweep, Y=0)")
         raw.pass2_x_meter, raw.pass2_y_meter = self._sweep_single_channel(
             self.x_channel, self.y_channel, x_polarity=False
         )
         
         # Passes 3,4: Sweep Y, X=0
+        self.log("Starting pass 3 (Y sweep, X=0)")
         raw.pass3_x_meter, raw.pass3_y_meter = self._sweep_single_channel(
             self.y_channel, self.x_channel, x_polarity=True
         )
+        self.log("Starting pass 4 (Y sweep, X=0)")
         raw.pass4_x_meter, raw.pass4_y_meter = self._sweep_single_channel(
             self.y_channel, self.x_channel, x_polarity=False
         )
@@ -896,8 +911,11 @@ class PulseShaperCalibration:
         
         Assumes DTG run is already disabled by caller.
         """
+        self.log("Starting calibration...")
         raw = self.measure()
+        self.log("Measurement complete, processing data...")
         result = self.process(raw)
+        self.log("Data processing complete, fitting calibrations...")
         
         # Fit polynomial calibrations (control -> output)
         result.x_cal = result.x_data.fit_polynomial(degree)
@@ -916,4 +934,7 @@ class PulseShaperCalibration:
         if len(y_out) > 1:
             result.crosstalk_y_to_x = float(np.polyfit(y_out, x_effect, 1)[0])
         
+        self.log("Calibration fitting complete.")
+        self.log(result.summary())
+
         return result

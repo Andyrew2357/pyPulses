@@ -84,11 +84,14 @@ class ad9854(pyvisaDevice):
         """
 
         config = super()._serialize_state()
-        
+        sanitized_amplitudes = {
+            f"{chan}{chip}": val
+            for (chip, chan), val in self.amplitudes.items()
+        }
         config.update({
             'freq': self.freq,
             'phase': self.phase,
-            'amplitudes': self.amplitudes,
+            'amplitudes': sanitized_amplitudes,
         })
         
         return config
@@ -108,7 +111,9 @@ class ad9854(pyvisaDevice):
             self.set_phase(state['phase'])
         if 'amplitudes' in state:
             for k, v in state['amplitudes'].items():
-                self.set_amplitude(*k, v)
+                chip = int(k[1])
+                chan = k[0]
+                self.set_amplitude(chip, chan, v)
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> 'ad9854':
@@ -149,7 +154,7 @@ class ad9854(pyvisaDevice):
             return ad9854_phase_channel(self)
         if accessor == 'freq':
             return ad9854_frequency_channel(self)
-        return None
+        raise ValueError(f"Unknown accessor: {accessor}")
 
     def set_frequency(self, f: float):
         """

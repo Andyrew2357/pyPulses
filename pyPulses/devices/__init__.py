@@ -7,8 +7,9 @@ if not find_and_load_gpib():
 from .ad5764 import ad5764
 from .ad5791 import ad5791
 from .ad9854 import ad9854
-from .calibrated_channel import (CalibratedChannel, PolarityCalibratedChannel, 
-                          PolynomialCalibration, TrivialCalibration)
+from .attenuator import FixedAttenuator
+from .calibrated_channel import CalibratedChannel, PolarityCalibratedChannel 
+from .calibration import PolynomialCalibration, TrivialCalibration
 from .cryomagnetics_4G import cryomagnetics4G
 from .dtg import dtg5274
 from .dtg_comp_pair import dtgCompPair
@@ -38,6 +39,7 @@ __all__ = [
     "dtgCompPair",
     "dtg5274",
     "FastFlight2",
+    "FixedAttenuator",
     # "HEMTCommonSource",
     "hf2li",
     "hf2liACout",

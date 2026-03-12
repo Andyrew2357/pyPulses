@@ -139,17 +139,30 @@ class pulsePair(abstractDevice):
         self.dT1(dT1)
 
     def _serialize_state(self) -> Dict[str, Any]:
+        # format_reference can raise; capture per-item so one bad ref
+        # doesn't prevent serializing the rest of the state.
         try:
             Xref = format_reference(self._X)
-            Yref = format_reference(self._Y)
-            Rref = format_reference(self._relay)
-        except:
+        except Exception:
             Xref = None
+        try:
+            Yref = format_reference(self._Y)
+        except Exception:
             Yref = None
+        try:
+            Rref = format_reference(self._relay)
+        except Exception:
             Rref = None
 
+        def _safe_call(fn):
+            try:
+                return fn()
+            except Exception:
+                return None
+        levels = [_safe_call(self.X), _safe_call(self.Y)]
+
         config = {
-            'levels': [self.X(), self.Y()],
+            'levels': levels,
             'timing': {'T0': self.T0(), 'dT0': self.dT0(),
                        'T1': self.T1(), 'dT1': self.dT1()},
             'xtuning': {str(k): v for k, v in self._xtuning.items()},
