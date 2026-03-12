@@ -1,5 +1,5 @@
 from .abstract_device import abstractDevice
-from .channel_adapter import ScalarChannel, CompPair, ScalarChannelAdapter
+from .channel_adapter import ScalarChannel, CompPair, ScalarChannelAdapter, BoolChannelAdapter
 from .registry import (
     register_device_class, 
     format_reference, 
@@ -54,6 +54,9 @@ class pulsePair(abstractDevice):
         self._relay.Yhigh(self.logical_high)
         self._pol = self._relay.xpolarity()
         self._relay.ypolarity(not self._pol)
+
+    def get_polarity(self) -> bool:
+        return self._pol
 
     def enable(self, on: bool | None = None) -> bool | None:
         return self._relay.enable(on)
@@ -234,6 +237,9 @@ class pulsePair(abstractDevice):
             return pulsePair_channel(self, 'T1', self.T1)
         if accessor == 'W':
             return pulsePair_channel(self, 'W', self.W)
+        if accessor == 'pol':
+            return BoolChannelAdapter(self, 'pol', self.get_polarity)
+        raise ValueError(f"Unknown accessor: {accessor}")
 
 class pulsePair_channel(ScalarChannelAdapter):
     def __init__(self, parent: pulsePair, accessor: str, f: Callable):

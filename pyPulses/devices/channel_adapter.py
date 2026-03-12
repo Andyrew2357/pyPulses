@@ -1,5 +1,12 @@
 import numpy as np
-from typing import Protocol, runtime_checkable, Tuple
+from typing import Any, Callable, Protocol, runtime_checkable, Tuple
+
+@runtime_checkable
+class BoolChannel(Protocol):
+    """A channel that returns a boolean value."""
+    def get_output(self) -> bool: ...
+    def set_output(self, value: bool) -> None: ...
+    def __call__(self, value: bool | None = None) -> bool: ...
 
 @runtime_checkable
 class ScalarChannel(Protocol):
@@ -74,6 +81,31 @@ class ChannelAdapter():
     def format_ref(self):
         return self._parent, self._accessor
 
+class BoolChannelAdapter(ChannelAdapter):
+    
+    def __init__(self, 
+        parent, 
+        accessor: str, 
+        getter: Callable[[], bool], 
+        setter: Callable[[bool], Any]
+    ):
+        super().__init__(parent, accessor)
+        self._getter = getter
+        self._setter = setter
+
+    def get_output(self) -> bool:
+        return self._getter()
+    
+    def set_output(self, value: bool):
+        if self._setter is None:
+            return
+        self._setter(value)
+    
+    def __call__(self, value: bool | None = None) -> bool | None:
+        if value is None:
+            return self._getter()
+        self._setter(value)
+
 class ScalarChannelAdapter(ChannelAdapter):
     
     def __init__(self, parent, accessor: str):
@@ -93,4 +125,3 @@ class ScopeChannelAdapter(ChannelAdapter):
         super().__init__(parent, accessor)
 
     def __call__(self) -> Tuple[np.ndarray, float, float]: ...
-

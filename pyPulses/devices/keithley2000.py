@@ -1,5 +1,6 @@
 from .pyvisa_device import pyvisaDevice
 from .registry import register_hardware_class
+from .channel_adapter import ScalarChannelAdapter
 
 from logging import Logger
 
@@ -49,3 +50,18 @@ class keithley2000(pyvisaDevice):
         """Query the measured voltage."""
         self.write(":CONF:VOLT:DC")
         return float(self.query(":READ?"))
+    
+    def resolve(self, accessor: str) -> 'keithley2000_channel':
+        if accessor == 'V':
+            return keithley2000_channel(self)
+        raise ValueError(f"keithley2000 Cannot resolve accessor: {accessor}")
+
+class keithley2000_channel(ScalarChannelAdapter):
+    def __init__(self, parent: keithley2000):
+        super().__init__(parent, 'V')
+
+    def set_output(self, value: float | None = None):
+        raise RuntimeError('keithley2000 Cannot set an output.')
+    
+    def get_output(self):
+        return self._parent.get_V()

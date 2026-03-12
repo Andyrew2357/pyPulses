@@ -1,5 +1,6 @@
 from .pyvisa_device import pyvisaDevice
 from .registry import register_hardware_class
+from .channel_adapter import ScalarChannelAdapter
 
 from logging import Logger
 
@@ -49,3 +50,18 @@ class keithley2700(pyvisaDevice):
         """Query the measured voltage."""
 
         return float(self.query(":MEAS:VOLT:DC?").split("VDC")[0]) # FIX THIS LATER. I JUST NEEDED ANOTHER MULTIMETER QUICKLY
+
+    def resolve(self, accessor: str) -> 'keithley2700_channel':
+        if accessor == 'V':
+            return keithley2700_channel(self)
+        raise ValueError(f"keithley2700 Cannot resolve accessor: {accessor}")
+
+class keithley2700_channel(ScalarChannelAdapter):
+    def __init__(self, parent: keithley2700):
+        super().__init__(parent, 'V')
+
+    def set_output(self, value: float | None = None):
+        raise RuntimeError('keithley2700 Cannot set an output.')
+    
+    def get_output(self):
+        return self._parent.get_V()

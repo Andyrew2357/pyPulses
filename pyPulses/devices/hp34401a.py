@@ -1,6 +1,7 @@
 
 from .pyvisa_device import pyvisaDevice
 from .registry import register_hardware_class
+from .channel_adapter import ScalarChannelAdapter
 
 from logging import Logger
 
@@ -48,3 +49,18 @@ class hp34401a(pyvisaDevice):
         V : float
         """
         return float(self.query(":MEAS:VOLT:DC?").strip())
+    
+    def resolve(self, accessor: str) -> 'hp34401a_channel':
+        if accessor == 'V':
+            return hp34401a_channel(self)
+        raise ValueError(f"hp34401a Cannot resolve accessor: {accessor}")
+
+class hp34401a_channel(ScalarChannelAdapter):
+    def __init__(self, parent: hp34401a):
+        super().__init__(parent, 'V')
+
+    def set_output(self, value: float | None = None):
+        raise RuntimeError('hp34401a Cannot set an output.')
+    
+    def get_output(self):
+        return self._parent.get_V()

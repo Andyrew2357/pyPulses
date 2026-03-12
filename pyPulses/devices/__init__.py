@@ -7,7 +7,8 @@ if not find_and_load_gpib():
 from .ad5764 import ad5764
 from .ad5791 import ad5791
 from .ad9854 import ad9854
-from .calibration import CalibratedChannel, PolynomialCalibration, TrivialCalibration
+from .calibrated_channel import (CalibratedChannel, PolarityCalibratedChannel, 
+                          PolynomialCalibration, TrivialCalibration)
 from .cryomagnetics_4G import cryomagnetics4G
 from .dtg import dtg5274
 from .dtg_comp_pair import dtgCompPair
@@ -52,6 +53,7 @@ __all__ = [
     "mso44",
     "pcm1704",
     "PIDbox",
+    "PolarityCalibratedChannel",
     "PolynomialCalibration",
     "pulsePair",
     "sr830",

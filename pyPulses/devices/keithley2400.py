@@ -1,5 +1,6 @@
 from .pyvisa_device import pyvisaDevice
 from .registry import register_hardware_class
+from .channel_adapter import ScalarChannelAdapter
 
 import numpy as np
 import time
@@ -222,3 +223,30 @@ class keithley2400(pyvisaDevice):
         Vrange : float
         """
         return float(self.query("SOUR:VOLT:RANG?"))
+    
+    def resolve(self, accessor: str) -> ScalarChannelAdapter:
+        if accessor == 'V':
+            return keithley2400_V_channel(self)
+        if accessor == 'I':
+            return keithley2400_I_channel(self)
+        raise ValueError(f"keithley2400 Cannot resolve accessor: {accessor}")
+
+class keithley2400_V_channel(ScalarChannelAdapter):
+    def __init__(self, parent: keithley2400):
+        super().__init__(parent, 'V')
+
+    def set_output(self, value: float | None = None):
+        self._parent.set_V(value)
+    
+    def get_output(self):
+        return self._parent.get_V()
+    
+class keithley2400_I_channel(ScalarChannelAdapter):
+    def __init__(self, parent: keithley2400):
+        super().__init__(parent, 'V')
+
+    def set_output(self, value: float | None = None):
+        self._parent.set_I(value)
+    
+    def get_output(self):
+        return self._parent.get_I()
