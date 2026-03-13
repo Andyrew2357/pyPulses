@@ -100,8 +100,12 @@ class pulsePair(abstractDevice):
             return eta * self._X()
         if eta * v < 0:
             self._switch_polarity()
-
-        self._X(abs(v))
+            self._X(abs(v))
+            # Trigger recalibration on Y
+            if hasattr(self._Y, 'recalibrate'):
+                self._Y.recalibrate()
+        else:
+            self._X(abs(v))
 
     def Y(self, v: float | None = None) -> float | None:
         """
@@ -118,7 +122,12 @@ class pulsePair(abstractDevice):
                 self._Y(0.0)
             else:
                 self._switch_polarity()
-        self._Y(abs(v))
+                self._Y(abs(v))
+                # Trigger recalibration on Y
+                if hasattr(self._X, 'recalibrate'):
+                    self._X.recalibrate()
+        else:
+            self._Y(abs(v))
 
     def _switch_polarity(self):
         # Save the abstract timing settings
@@ -137,6 +146,12 @@ class pulsePair(abstractDevice):
         self.T1(T1)
         self.dT0(dT0)
         self.dT1(dT1)
+
+        # Notify amplitude channels of polarity change
+        if hasattr(self._X, 'update_polarity'):
+            self._X.update_polarity(self._pol)
+        if hasattr(self._Y, 'update_polarity'):
+            self._Y.update_polarity(not self._pol)
 
     def _serialize_state(self) -> Dict[str, Any]:
         # format_reference can raise; capture per-item so one bad ref

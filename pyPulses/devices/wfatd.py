@@ -241,7 +241,7 @@ class wfAveragerView(abstractDevice):
 
     def _new_curve(self):
         offset = self._dynamic_offset() if callable(self._dynamic_offset) else 0.0
-        self._offset += self._static_offset + offset
+        self._offset = self._static_offset + offset
         for k, v in self._state.items():
             self._state[k] = None
 

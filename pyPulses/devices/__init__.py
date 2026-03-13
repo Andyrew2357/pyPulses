@@ -8,8 +8,9 @@ from .ad5764 import ad5764
 from .ad5791 import ad5791
 from .ad9854 import ad9854
 from .attenuator import FixedAttenuator
-from .calibrated_channel import CalibratedChannel, PolarityCalibratedChannel 
+from .calibrated_channel import CalibratedChannel
 from .calibration import PolynomialCalibration, TrivialCalibration
+from .calibrate_pulse_shaper import PulseShaperCalibration, PulseShaperCalibrationResult, PulseShaperRawData
 from .cryomagnetics_4G import cryomagnetics4G
 from .dtg import dtg5274
 from .dtg_comp_pair import dtgCompPair
@@ -26,6 +27,7 @@ from .keithley2700 import keithley2700
 from .mso44 import mso44
 from .pcm1704 import pcm1704
 from .pid_dcbox import PIDbox
+from .pulse_amplitude_manager import PulseAmplitudeManager, PulseAmplitudeChannel
 from .pulse_pair import pulsePair
 from .srs_lockin import (sr830, sr844, sr850, sr860, sr865a)
 from .wfatd import wfAverager, wfBalance, wfJump, wfSlope
@@ -55,9 +57,13 @@ __all__ = [
     "mso44",
     "pcm1704",
     "PIDbox",
-    "PolarityCalibratedChannel",
     "PolynomialCalibration",
+    "PulseAmplitudeChannel",
+    "PulseAmplitudeManager",
     "pulsePair",
+    "PulseShaperCalibration",
+    "PulseShaperCalibrationResult",
+    "PulseShaperRawData",
     "sr830",
     "sr844",
     "sr850",
