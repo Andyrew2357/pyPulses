@@ -1,14 +1,14 @@
-from .abstract_device import abstractDevice
-from .registry import (
+from ..pyPulses.devices.abstract_device import abstractDevice
+from ..pyPulses.devices.registry import (
     DeviceRegistry, 
     DeferredReference,
     register_device_class,
     format_reference,
 )
 
-from .channel_adapter import ScalarChannelAdapter
-from .calibration import CalibrationModel
-from .calibrated_channel import CalibratedChannel
+from ..pyPulses.devices.channel_adapter import ScalarChannelAdapter
+from ..pyPulses.devices.calibration import CalibrationModel
+from ..pyPulses.devices.calibrated_channel import CalibratedChannel
 
 from logging import Logger
 from typing import Any, Dict, List, Tuple

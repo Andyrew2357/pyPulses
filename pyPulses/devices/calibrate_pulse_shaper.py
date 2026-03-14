@@ -1,115 +1,66 @@
 """
 Calibration measurement for pulse shaper + DTG + DC box.
+(SEE NOTES FOR THE NOTATION AND EXPLANATION OF HOW THIS PROCEDURE WORKS)
 
-Measures F^{(x)}_{p1,p2}(X1, X2) for all polarity combinations, then derives
-Δ calibrations for each (sig1, sig2) operating point.
+Measures F_{p1,p2}(c1, c2) for all polarity combinations, then derives
+calibrations for PolarityCalibratedChannel.
 
-See my notes for the logic behind this procedure.
+Key relationships:
+    Δ1_{sig1,sig2} = -Δ1_{-sig1,sig2}  (depends only on sig2)
+    Δ2_{sig1,sig2} = -Δ2_{sig1,-sig2}  (depends only on sig1)
+
+So we only need two calibrations per channel, indexed by the OTHER pair's polarity.
 """
 
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Tuple, Any
 import numpy as np
 import time
 import json
-from pathlib import Path
 
 from .channel_adapter import ScalarChannel, CompPair
 from .calibration import PolynomialCalibration
-
-"""
-Raw Data Storage
-"""
-
-@dataclass
-class PulseShaperRawData:
-    """
-    Raw F_{p1,p2}(c1, c2) measurements for all polarity combinations.
-    
-    Axis measurements: dense sweeps along (c1, 0) and (0, c2)
-    Joint measurements: sparse sweeps on full (c1, c2) grid
-    
-    Naming convention:
-        F_pp = F_{+,+}, F_pm = F_{+,-}, F_mp = F_{-,+}, F_mm = F_{-,-}
-        where first index is p1 (relay 1 polarity), second is p2 (relay 2 polarity)
-    """
-    # Control points
-    axis_controls: np.ndarray = None      # Dense 1D array for axis sweeps
-    sparse_controls: np.ndarray = None    # Sparse 1D array for joint sweeps
-    
-    # Axis 1 sweeps: F(c1, 0) - shape (n_axis,)
-    axis1_F_pp_x: np.ndarray = None
-    axis1_F_pm_x: np.ndarray = None
-    axis1_F_mp_x: np.ndarray = None
-    axis1_F_mm_x: np.ndarray = None
-    axis1_F_pp_y: np.ndarray = None
-    axis1_F_pm_y: np.ndarray = None
-    axis1_F_mp_y: np.ndarray = None
-    axis1_F_mm_y: np.ndarray = None
-    
-    # Axis 2 sweeps: F(0, c2) - shape (n_axis,)
-    axis2_F_pp_x: np.ndarray = None
-    axis2_F_pm_x: np.ndarray = None
-    axis2_F_mp_x: np.ndarray = None
-    axis2_F_mm_x: np.ndarray = None
-    axis2_F_pp_y: np.ndarray = None
-    axis2_F_pm_y: np.ndarray = None
-    axis2_F_mp_y: np.ndarray = None
-    axis2_F_mm_y: np.ndarray = None
-    
-    # Joint sweeps: F(c1, c2) - shape (n_sparse, n_sparse)
-    joint_F_pp_x: np.ndarray = None
-    joint_F_pm_x: np.ndarray = None
-    joint_F_mp_x: np.ndarray = None
-    joint_F_mm_x: np.ndarray = None
-    joint_F_pp_y: np.ndarray = None
-    joint_F_pm_y: np.ndarray = None
-    joint_F_mp_y: np.ndarray = None
-    joint_F_mm_y: np.ndarray = None
-    
-    def to_dict(self) -> Dict[str, Any]:
-        def _arr(a):
-            return a.tolist() if a is not None else None
-        return {k: _arr(v) for k, v in self.__dict__.items()}
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PulseShaperRawData':
-        def _arr(v):
-            return np.array(v) if v is not None else None
-        return cls(**{k: _arr(v) for k, v in data.items()})
 
 
 """
 Calibration Result
 """
 
-@dataclass 
+@dataclass
 class PulseShaperCalibrationResult:
     """
     Processed calibration result.
     
-    Contains Δ calibrations for each channel and each (sig1, sig2) combination.
-    Ready to be loaded into PulseAmplitudeManager.
+    Contains calibrations for each channel indexed by the OTHER pair's polarity.
+    Ready to be loaded into PolarityCalibratedChannel.
+    
+    For channel 1 (charging): indexed by sig2 (discharging pair's X polarity)
+    For channel 2 (discharging): indexed by sig1 (charging pair's X polarity)
     """
-    # Calibrations keyed by (sigma1, sigma2)
-    x1_calibrations: Dict[Tuple[bool, bool], PolynomialCalibration] = field(default_factory=dict)
-    x2_calibrations: Dict[Tuple[bool, bool], PolynomialCalibration] = field(default_factory=dict)
-    y1_calibrations: Dict[Tuple[bool, bool], PolynomialCalibration] = field(default_factory=dict)
-    y2_calibrations: Dict[Tuple[bool, bool], PolynomialCalibration] = field(default_factory=dict)
+    # X calibrations keyed by other pair's polarity
+    x1_cal_pos: PolynomialCalibration = None  # When discharging pair X polarity is True
+    x1_cal_neg: PolynomialCalibration = None  # When discharging pair X polarity is False
+    x2_cal_pos: PolynomialCalibration = None  # When charging pair X polarity is True
+    x2_cal_neg: PolynomialCalibration = None  # When charging pair X polarity is False
     
-    # Raw data for diagnostics
-    raw_data: PulseShaperRawData = None
+    # Y calibrations (optional, only if y_meter provided)
+    y1_cal_pos: PolynomialCalibration = None
+    y1_cal_neg: PolynomialCalibration = None
+    y2_cal_pos: PolynomialCalibration = None
+    y2_cal_neg: PolynomialCalibration = None
     
-    # Fit quality metrics
-    fit_degree: int = 2
+    # Fit metadata
+    fit_degree: int = 8
     rms_errors: Dict[str, float] = field(default_factory=dict)
     cross_term_diagnostics: Dict[str, Any] = field(default_factory=dict)
     
     # Metadata
     cal_attenuation: float = 1.0
     timestamp: float = field(default_factory=time.time)
+    raw_data_path: str | None = None
     
     def summary(self) -> str:
         lines = [
@@ -118,10 +69,25 @@ class PulseShaperCalibrationResult:
             f"  Attenuation: {self.cal_attenuation}",
             f"  Polynomial degree: {self.fit_degree}",
             "",
-            "  RMS fit errors:",
         ]
-        for name, err in self.rms_errors.items():
-            lines.append(f"    {name}: {err:.6g}")
+        
+        def cal_summary(name: str, cal: PolynomialCalibration | None) -> str:
+            if cal is None:
+                return f"  {name}: not calibrated"
+            linear_coeff = cal.coefficients[1] if len(cal.coefficients) > 1 else 0
+            return f"  {name}: linear={linear_coeff:.6g}, RMS={self.rms_errors.get(name, 0):.2e}"
+        
+        lines.append(cal_summary("X1(sig2=+)", self.x1_cal_pos))
+        lines.append(cal_summary("X1(sig2=-)", self.x1_cal_neg))
+        lines.append(cal_summary("X2(sig1=+)", self.x2_cal_pos))
+        lines.append(cal_summary("X2(sig1=-)", self.x2_cal_neg))
+        
+        if self.y1_cal_pos is not None:
+            lines.append("")
+            lines.append(cal_summary("Y1(sig2=+)", self.y1_cal_pos))
+            lines.append(cal_summary("Y1(sig2=-)", self.y1_cal_neg))
+            lines.append(cal_summary("Y2(sig1=+)", self.y2_cal_pos))
+            lines.append(cal_summary("Y2(sig1=-)", self.y2_cal_neg))
         
         if self.cross_term_diagnostics:
             lines.append("")
@@ -130,54 +96,60 @@ class PulseShaperCalibrationResult:
                 if isinstance(v, float):
                     lines.append(f"    {k}: {v:.4g}")
         
+        if self.raw_data_path:
+            lines.append("")
+            lines.append(f"  Raw data: {self.raw_data_path}")
+        
         return '\n'.join(lines)
     
     def to_dict(self) -> Dict[str, Any]:
-        def serialize_cal_dict(d):
-            return {f"{s1},{s2}": cal.to_dict() for (s1, s2), cal in d.items()}
+        def cal_to_dict(cal):
+            return cal.to_dict() if cal is not None else None
         
         return {
-            'x1_calibrations': serialize_cal_dict(self.x1_calibrations),
-            'x2_calibrations': serialize_cal_dict(self.x2_calibrations),
-            'y1_calibrations': serialize_cal_dict(self.y1_calibrations),
-            'y2_calibrations': serialize_cal_dict(self.y2_calibrations),
-            'raw_data': self.raw_data.to_dict() if self.raw_data else None,
+            'x1_cal_pos': cal_to_dict(self.x1_cal_pos),
+            'x1_cal_neg': cal_to_dict(self.x1_cal_neg),
+            'x2_cal_pos': cal_to_dict(self.x2_cal_pos),
+            'x2_cal_neg': cal_to_dict(self.x2_cal_neg),
+            'y1_cal_pos': cal_to_dict(self.y1_cal_pos),
+            'y1_cal_neg': cal_to_dict(self.y1_cal_neg),
+            'y2_cal_pos': cal_to_dict(self.y2_cal_pos),
+            'y2_cal_neg': cal_to_dict(self.y2_cal_neg),
             'fit_degree': self.fit_degree,
             'rms_errors': self.rms_errors,
             'cross_term_diagnostics': self.cross_term_diagnostics,
             'cal_attenuation': self.cal_attenuation,
             'timestamp': self.timestamp,
+            'raw_data_path': self.raw_data_path,
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'PulseShaperCalibrationResult':
-        def deserialize_cal_dict(d):
-            result = {}
-            for key, cal_data in d.items():
-                s1_str, s2_str = key.split(',')
-                s1 = s1_str.strip() == 'True'
-                s2 = s2_str.strip() == 'True'
-                result[(s1, s2)] = PolynomialCalibration.from_dict(cal_data)
-            return result
+        def cal_from_dict(d):
+            return PolynomialCalibration.from_dict(d) if d is not None else None
         
         return cls(
-            x1_calibrations=deserialize_cal_dict(data.get('x1_calibrations', {})),
-            x2_calibrations=deserialize_cal_dict(data.get('x2_calibrations', {})),
-            y1_calibrations=deserialize_cal_dict(data.get('y1_calibrations', {})),
-            y2_calibrations=deserialize_cal_dict(data.get('y2_calibrations', {})),
-            raw_data=PulseShaperRawData.from_dict(data['raw_data']) if data.get('raw_data') else None,
-            fit_degree=data.get('fit_degree', 2),
+            x1_cal_pos=cal_from_dict(data.get('x1_cal_pos')),
+            x1_cal_neg=cal_from_dict(data.get('x1_cal_neg')),
+            x2_cal_pos=cal_from_dict(data.get('x2_cal_pos')),
+            x2_cal_neg=cal_from_dict(data.get('x2_cal_neg')),
+            y1_cal_pos=cal_from_dict(data.get('y1_cal_pos')),
+            y1_cal_neg=cal_from_dict(data.get('y1_cal_neg')),
+            y2_cal_pos=cal_from_dict(data.get('y2_cal_pos')),
+            y2_cal_neg=cal_from_dict(data.get('y2_cal_neg')),
+            fit_degree=data.get('fit_degree', 8),
             rms_errors=data.get('rms_errors', {}),
             cross_term_diagnostics=data.get('cross_term_diagnostics', {}),
             cal_attenuation=data.get('cal_attenuation', 1.0),
             timestamp=data.get('timestamp', time.time()),
+            raw_data_path=data.get('raw_data_path'),
         )
     
     def save(self, path: str | Path):
         path = Path(path)
         with open(path, 'w') as f:
             json.dump(self.to_dict(), f, indent=2)
-        print(f"Saved calibration to {path}")
+        print(f"Saved calibration result to {path}")
     
     @classmethod
     def load(cls, path: str | Path) -> 'PulseShaperCalibrationResult':
@@ -185,8 +157,14 @@ class PulseShaperCalibrationResult:
         with open(path, 'r') as f:
             data = json.load(f)
         result = cls.from_dict(data)
-        print(f"Loaded calibration from {path}")
+        print(f"Loaded calibration result from {path}")
         return result
+    
+    def load_raw_data(self) -> Dict[str, np.ndarray]:
+        """Load raw data from the npz file."""
+        if self.raw_data_path is None:
+            raise ValueError("No raw data path stored")
+        return dict(np.load(self.raw_data_path))
 
 
 """
@@ -198,14 +176,16 @@ class PulseShaperCalibration:
     Calibration measurement procedure for the pulse shaper box.
     
     Measures F_{p1,p2}(c1, c2) for all polarity combinations, then computes
-    Δ calibrations for each (sig1, sig2) operating point.
+    calibrations for PolarityCalibratedChannel.
     
     Physical setup:
     - relay1 controls charging pair (X1/Y1 polarities are complementary)
     - relay2 controls discharging pair (X2/Y2 polarities are complementary)
-    - X output measured by x_meter, Y output measured by y_meter
-    - ch1_x, ch1_y are DC controls for charging pair
-    - ch2_x, ch2_y are DC controls for discharging pair
+    - x_meter measures X output (required)
+    - y_meter measures Y output (optional)
+    
+    Key insight: calibration for channel 1 only depends on sig2 (other pair's polarity),
+    and calibration for channel 2 only depends on sig1.
     """
     
     POLARITY_KEYS = ['pp', 'pm', 'mp', 'mm']
@@ -220,65 +200,82 @@ class PulseShaperCalibration:
         relay1: CompPair,
         relay2: CompPair,
         ch1_x: ScalarChannel,
-        ch1_y: ScalarChannel,
         ch2_x: ScalarChannel,
-        ch2_y: ScalarChannel,
         x_meter: ScalarChannel,
-        y_meter: ScalarChannel,
-        axis_controls: np.ndarray,
+        ch1_y: ScalarChannel | None = None,
+        ch2_y: ScalarChannel | None = None,
+        y_meter: ScalarChannel | None = None,
+        axis_controls: np.ndarray | None = None,
         cal_attenuation: float = 1.0,
         settle_time: float = 0.5,
         averages: int = 3,
-        parallel_meters: bool = True,
         sparse_downsample: int = 4,
+        output_dir: str | Path | None = None,
     ):
         """
         Parameters
         ----------
         relay1, relay2 : CompPair
             Relays controlling charging and discharging pair polarities.
-        ch1_x, ch1_y : ScalarChannel
-            DC controls for charging pair (X and Y outputs).
-        ch2_x, ch2_y : ScalarChannel
-            DC controls for discharging pair (X and Y outputs).
-        x_meter, y_meter : ScalarChannel
-            DMMs measuring X and Y outputs.
-        axis_controls : np.ndarray
-            Dense control points for axis sweeps.
+        ch1_x, ch2_x : ScalarChannel
+            DC controls for charging and discharging pairs (X output).
+        x_meter : ScalarChannel
+            DMM measuring X output.
+        ch1_y, ch2_y : ScalarChannel, optional
+            DC controls for Y output. Required if y_meter is provided.
+        y_meter : ScalarChannel, optional
+            DMM measuring Y output. If None, only X is calibrated.
+        axis_controls : np.ndarray, optional
+            Dense control points for axis sweeps. Default: linspace(0, 10, 101).
         cal_attenuation : float
             Output attenuation to compensate in results.
         settle_time : float
             Time to wait after changing settings.
         averages : int
             Number of DMM readings to average.
-        parallel_meters : bool
-            If True, read X and Y meters in parallel.
         sparse_downsample : int
             Downsampling factor for joint sweep grid.
+        output_dir : str | Path, optional
+            Directory to save raw data incrementally. If None, uses current directory.
         """
         self.relay1 = relay1
         self.relay2 = relay2
         self.ch1_x = ch1_x
-        self.ch1_y = ch1_y
         self.ch2_x = ch2_x
-        self.ch2_y = ch2_y
         self.x_meter = x_meter
-        self.y_meter = y_meter
         
+        self.ch1_y = ch1_y
+        self.ch2_y = ch2_y
+        self.y_meter = y_meter
+        self._has_y = (ch1_y is not None and ch2_y is not None and y_meter is not None)
+        
+        if axis_controls is None:
+            axis_controls = np.linspace(0, 10, 101)
         self.axis_controls = np.asarray(axis_controls)
         self.sparse_controls = self.axis_controls[::sparse_downsample]
         self.cal_attenuation = cal_attenuation
         self.settle_time = settle_time
         self.averages = averages
-        self.parallel_meters = parallel_meters
         
-        self._executor = ThreadPoolExecutor(max_workers=2) if parallel_meters else None
+        if output_dir is not None:
+            self.output_dir = Path(output_dir)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self.output_dir = Path('.')
+        
+        # Parallel meter reading if we have both meters
+        self._executor = ThreadPoolExecutor(max_workers=2) if self._has_y else None
+        
+        # Raw data storage
+        self._raw_data: Dict[str, np.ndarray] = {}
+        self._raw_data_path: Path | None = None
         
         print(
             f"PulseShaperCalibration initialized: "
             f"{len(self.axis_controls)} axis points, "
             f"{len(self.sparse_controls)} sparse points, "
-            f"attenuation={cal_attenuation}"
+            f"attenuation={cal_attenuation}, "
+            f"has_y={self._has_y}"
         )
     
     def _set_polarities(self, p1: bool, p2: bool):
@@ -287,326 +284,401 @@ class PulseShaperCalibration:
         self.relay1.ypolarity(not p1)
         self.relay2.xpolarity(p2)
         self.relay2.ypolarity(not p2)
-        print(f"Polarities: p1={p1}, p2={p2}")
     
-    def _read_meters(self) -> Tuple[float, float]:
-        """Read both meters, optionally in parallel."""
+    def _read_meters(self) -> Tuple[float, float | None]:
+        """Read meters, optionally in parallel if both exist."""
         def read_avg(meter):
             readings = [meter.get_output() for _ in range(self.averages)]
             return float(np.mean(readings))
         
-        if self._executor:
+        if self._has_y and self._executor:
             x_future = self._executor.submit(read_avg, self.x_meter)
             y_future = self._executor.submit(read_avg, self.y_meter)
             return x_future.result(), y_future.result()
         else:
-            return read_avg(self.x_meter), read_avg(self.y_meter)
+            return read_avg(self.x_meter), None
     
     def _zero_all(self):
         """Set all DC controls to zero."""
         self.ch1_x.set_output(0.0)
-        self.ch1_y.set_output(0.0)
         self.ch2_x.set_output(0.0)
-        self.ch2_y.set_output(0.0)
+        if self._has_y:
+            self.ch1_y.set_output(0.0)
+            self.ch2_y.set_output(0.0)
     
-    def _sweep_axis1(self, p1: bool, p2: bool) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Sweep axis 1: vary (c1, c1) with (c2, c2) = 0.
+    def _save_raw_data(self):
+        """Save raw data incrementally to npz file."""
+        if self._raw_data_path is None:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            self._raw_data_path = self.output_dir / f"pulse_shaper_raw_{timestamp}.npz"
         
-        Returns (x_readings, y_readings).
+        np.savez(self._raw_data_path, **self._raw_data)
+    
+    def _sweep_axis1(self, p1: bool, p2: bool) -> Tuple[np.ndarray, np.ndarray | None]:
+        """
+        Sweep axis 1: vary c1 with c2 = 0.
+        
+        Returns (x_readings, y_readings or None).
         """
         self._set_polarities(p1, p2)
         self.ch2_x.set_output(0.0)
-        self.ch2_y.set_output(0.0)
+        if self._has_y:
+            self.ch2_y.set_output(0.0)
         time.sleep(self.settle_time)
         
         n = len(self.axis_controls)
         x_readings = np.zeros(n)
-        y_readings = np.zeros(n)
+        y_readings = np.zeros(n) if self._has_y else None
         
         for i, c in enumerate(self.axis_controls):
             self.ch1_x.set_output(c)
-            self.ch1_y.set_output(c)
+            if self._has_y:
+                self.ch1_y.set_output(c)
             time.sleep(self.settle_time)
-            x_readings[i], y_readings[i] = self._read_meters()
-            # Live progress: print a carriage-return-updating line and also
-            # log the full message for records. We use print(..., end='')
-            # so the console updates in-place while logging preserves history.
+            x_val, y_val = self._read_meters()
+            x_readings[i] = x_val
+            if y_readings is not None:
+                y_readings[i] = y_val
+            
             try:
                 pct = 100.0 * (i + 1) / n
-                msg = (
-                    f"[{i+1:4d}/{n:4d}] "
-                    f"c={c:12g} "
-                    f"x={x_readings[i]:12g} "
-                    f"y={y_readings[i]:12g} "
-                    f"{pct:6.1f}%"
-                )
+                if self._has_y:
+                    msg = (
+                        f"[{i+1:4d}/{n:4d}] "
+                        f"c={c:10.4f} "
+                        f"x={x_val:12.6f} "
+                        f"y={y_val:12.6f} "
+                        f"{pct:5.1f}%"
+                    )
+                else:
+                    msg = (
+                        f"[{i+1:4d}/{n:4d}] "
+                        f"c={c:10.4f} "
+                        f"x={x_val:12.6f} "
+                        f"{pct:5.1f}%"
+                    )
                 print('\r' + msg, end='', flush=True)
             except Exception:
-                # Don't let progress printing break the sweep
                 pass
         
-        try:
-            print()
-        except Exception:
-            pass
+        print()
         return x_readings, y_readings
     
-    def _sweep_axis2(self, p1: bool, p2: bool) -> Tuple[np.ndarray, np.ndarray]:
+    def _sweep_axis2(self, p1: bool, p2: bool) -> Tuple[np.ndarray, np.ndarray | None]:
         """
-        Sweep axis 2: vary (c2, c2) with (c1, c1) = 0.
+        Sweep axis 2: vary c2 with c1 = 0.
         
-        Returns (x_readings, y_readings).
+        Returns (x_readings, y_readings or None).
         """
         self._set_polarities(p1, p2)
         self.ch1_x.set_output(0.0)
-        self.ch1_y.set_output(0.0)
+        if self._has_y:
+            self.ch1_y.set_output(0.0)
         time.sleep(self.settle_time)
         
         n = len(self.axis_controls)
         x_readings = np.zeros(n)
-        y_readings = np.zeros(n)
+        y_readings = np.zeros(n) if self._has_y else None
         
         for i, c in enumerate(self.axis_controls):
             self.ch2_x.set_output(c)
-            self.ch2_y.set_output(c)
+            if self._has_y:
+                self.ch2_y.set_output(c)
             time.sleep(self.settle_time)
-            x_readings[i], y_readings[i] = self._read_meters()
+            x_val, y_val = self._read_meters()
+            x_readings[i] = x_val
+            if y_readings is not None:
+                y_readings[i] = y_val
+            
             try:
                 pct = 100.0 * (i + 1) / n
-                msg = (
-                    f"[{i+1:4d}/{n:4d}] "
-                    f"c={c:12g} "
-                    f"x={x_readings[i]:12g} "
-                    f"y={y_readings[i]:12g} "
-                    f"{pct:6.1f}%"
-                )
+                if self._has_y:
+                    msg = (
+                        f"[{i+1:4d}/{n:4d}] "
+                        f"c={c:10.4f} "
+                        f"x={x_val:12.6f} "
+                        f"y={y_val:12.6f} "
+                        f"{pct:5.1f}%"
+                    )
+                else:
+                    msg = (
+                        f"[{i+1:4d}/{n:4d}] "
+                        f"c={c:10.4f} "
+                        f"x={x_val:12.6f} "
+                        f"{pct:5.1f}%"
+                    )
                 print('\r' + msg, end='', flush=True)
             except Exception:
                 pass
         
-        try:
-            print()
-        except Exception:
-            pass
+        print()
         return x_readings, y_readings
     
-    def _sweep_joint(self, p1: bool, p2: bool) -> Tuple[np.ndarray, np.ndarray]:
+    def _sweep_joint(self, p1: bool, p2: bool) -> Tuple[np.ndarray, np.ndarray | None]:
         """
         Sweep joint grid on sparse controls.
         
-        Returns (x_grid, y_grid) each of shape (n_sparse, n_sparse).
-        First index is c1, second index is c2.
+        Returns (x_grid, y_grid or None) each of shape (n_sparse, n_sparse).
         """
         self._set_polarities(p1, p2)
         time.sleep(self.settle_time)
         
         n = len(self.sparse_controls)
         x_grid = np.zeros((n, n))
-        y_grid = np.zeros((n, n))
+        y_grid = np.zeros((n, n)) if self._has_y else None
+        total = n * n
         
         for i, c1 in enumerate(self.sparse_controls):
             self.ch1_x.set_output(c1)
-            self.ch1_y.set_output(c1)
+            if self._has_y:
+                self.ch1_y.set_output(c1)
             for j, c2 in enumerate(self.sparse_controls):
                 self.ch2_x.set_output(c2)
-                self.ch2_y.set_output(c2)
+                if self._has_y:
+                    self.ch2_y.set_output(c2)
                 time.sleep(self.settle_time)
-                x_grid[i, j], y_grid[i, j] = self._read_meters()
+                x_val, y_val = self._read_meters()
+                x_grid[i, j] = x_val
+                if y_grid is not None:
+                    y_grid[i, j] = y_val
+                
                 try:
-                    # progress over the full grid
-                    total = n * n
                     idx = i * n + j + 1
                     pct = 100.0 * idx / total
-                    try:
+                    if self._has_y:
                         msg = (
                             f"[{idx:4d}/{total:4d}] "
-                            f"c1={c1:12g} "
-                            f"c2={c2:12g} "
-                            f"x={x_grid[i,j]:12g} "
-                            f"y={y_grid[i,j]:12g} "
-                            f"{pct:6.1f}%"
+                            f"c1={c1:8.3f} c2={c2:8.3f} "
+                            f"x={x_val:12.6f} "
+                            f"y={y_val:12.6f} "
+                            f"{pct:5.1f}%"
                         )
-                        print('\r' + msg, end='', flush=True)
-                    except Exception:
-                        # fallback
-                        print('\r' + msg, end='', flush=True)
+                    else:
+                        msg = (
+                            f"[{idx:4d}/{total:4d}] "
+                            f"c1={c1:8.3f} c2={c2:8.3f} "
+                            f"x={x_val:12.6f} "
+                            f"{pct:5.1f}%"
+                        )
+                    print('\r' + msg, end='', flush=True)
                 except Exception:
                     pass
         
-        try:
-            print()
-        except Exception:
-            pass
+        print()
         return x_grid, y_grid
     
-    def measure(self) -> PulseShaperRawData:
+    def measure(self) -> Dict[str, np.ndarray]:
         """
         Execute full measurement.
         
         Assumes DTG run is already disabled.
+        Raw data is saved incrementally to npz file after each sweep.
+        
+        Returns raw data dict (also accessible via load_raw_data on result).
         """
         print("=" * 60)
         print("Starting pulse shaper calibration measurement")
         print("=" * 60)
         start = time.time()
         
-        raw = PulseShaperRawData(
-            axis_controls=self.axis_controls.copy(),
-            sparse_controls=self.sparse_controls.copy(),
-        )
+        self._raw_data = {
+            'axis_controls': self.axis_controls.copy(),
+            'sparse_controls': self.sparse_controls.copy(),
+        }
+        self._save_raw_data()
         
         # Axis 1 sweeps (4 polarity combinations)
-        print("Measuring axis 1 (charging pair)...")
+        print("\nMeasuring axis 1 (charging pair)...")
         for key in self.POLARITY_KEYS:
             p1, p2 = self.POLARITY_VALUES[key]
-            print(f"  Sweep F_{key}(c1, 0)")
+            print(f"  Sweep F_{key}(c1, 0)  [p1={p1}, p2={p2}]")
             x_rd, y_rd = self._sweep_axis1(p1, p2)
-            setattr(raw, f'axis1_F_{key}_x', x_rd)
-            setattr(raw, f'axis1_F_{key}_y', y_rd)
+            self._raw_data[f'axis1_F_{key}_x'] = x_rd
+            if y_rd is not None:
+                self._raw_data[f'axis1_F_{key}_y'] = y_rd
+            self._save_raw_data()
         
         # Axis 2 sweeps (4 polarity combinations)
-        print("Measuring axis 2 (discharging pair)...")
+        print("\nMeasuring axis 2 (discharging pair)...")
         for key in self.POLARITY_KEYS:
             p1, p2 = self.POLARITY_VALUES[key]
-            print(f"  Sweep F_{key}(0, c2)")
+            print(f"  Sweep F_{key}(0, c2)  [p1={p1}, p2={p2}]")
             x_rd, y_rd = self._sweep_axis2(p1, p2)
-            setattr(raw, f'axis2_F_{key}_x', x_rd)
-            setattr(raw, f'axis2_F_{key}_y', y_rd)
+            self._raw_data[f'axis2_F_{key}_x'] = x_rd
+            if y_rd is not None:
+                self._raw_data[f'axis2_F_{key}_y'] = y_rd
+            self._save_raw_data()
         
         # Joint sweeps (4 polarity combinations)
         n_sparse = len(self.sparse_controls)
-        print(f"Measuring joint grid ({n_sparse}x{n_sparse})...")
+        print(f"\nMeasuring joint grid ({n_sparse}x{n_sparse})...")
         for key in self.POLARITY_KEYS:
             p1, p2 = self.POLARITY_VALUES[key]
-            print(f"  Sweep F_{key}(c1, c2)")
+            print(f"  Sweep F_{key}(c1, c2)  [p1={p1}, p2={p2}]")
             x_grid, y_grid = self._sweep_joint(p1, p2)
-            setattr(raw, f'joint_F_{key}_x', x_grid)
-            setattr(raw, f'joint_F_{key}_y', y_grid)
+            self._raw_data[f'joint_F_{key}_x'] = x_grid
+            if y_grid is not None:
+                self._raw_data[f'joint_F_{key}_y'] = y_grid
+            self._save_raw_data()
         
         self._zero_all()
         elapsed = time.time() - start
-        print(f"Measurement complete in {elapsed:.1f}s")
+        print(f"\nMeasurement complete in {elapsed:.1f}s")
+        print(f"Raw data saved to: {self._raw_data_path}")
         
-        return raw
-
-    def process(self, raw: PulseShaperRawData, degree: int = 2) -> PulseShaperCalibrationResult:
+        return self._raw_data
+    
+    def process(self, 
+        raw: Dict[str, np.ndarray] | None = None, 
+        degree: int = 8,
+    ) -> PulseShaperCalibrationResult:
         """
         Process raw data into calibrations.
         
-        For each (sig1, sig2), compute:
-            Δ^{X1}_{sig1,sig2}(c1) = F_{sig1,-sig2}(c1,0) - F_{-sig1,-sig2}(c1,0)
-            Δ^{X2}_{sig1,sig2}(c2) = F_{-sig1,sig2}(0,c2) - F_{-sig1,-sig2}(0,c2)
+        Key insight: calibration for channel 1 only depends on sig2,
+        and calibration for channel 2 only depends on sig1.
         
-        and similarly for Y1, Y2.
+        We compute:
+            Δ1(c1; sig2=+) = F_{p,m}(c1,0) - F_{m,m}(c1,0)
+            Δ1(c1; sig2=-) = F_{p,p}(c1,0) - F_{m,p}(c1,0)
+            Δ2(c2; sig1=+) = F_{m,p}(0,c2) - F_{m,m}(0,c2)
+            Δ2(c2; sig1=-) = F_{p,p}(0,c2) - F_{p,m}(0,c2)
+        
+        Sign correction is applied at the end to ensure positive linear coefficient.
         """
-        print("Processing calibration data...")
+        if raw is None:
+            raw = self._raw_data
+        
+        print("\nProcessing calibration data...")
         atten = self.cal_attenuation
-        controls = raw.axis_controls
+        controls = raw['axis_controls']
         
         result = PulseShaperCalibrationResult(
-            raw_data=raw,
             fit_degree=degree,
             cal_attenuation=atten,
+            raw_data_path=str(self._raw_data_path) if self._raw_data_path else None,
         )
         
-        def pol_key(p: bool) -> str:
-            return 'p' if p else 'm'
-        
-        def get_axis1(key: str, output: str) -> np.ndarray:
-            return getattr(raw, f'axis1_F_{key}_{output}')
-        
-        def get_axis2(key: str, output: str) -> np.ndarray:
-            return getattr(raw, f'axis2_F_{key}_{output}')
-        
-        def fit_cal(controls: np.ndarray, delta: np.ndarray) -> PolynomialCalibration:
-            """Fit polynomial without sign correction."""
-            coeffs = np.polyfit(controls, delta, degree)[::-1]
-            return PolynomialCalibration(
-                coeffs=coeffs.tolist(),
-                c_fit_min=float(controls.min()),
-                c_fit_max=float(controls.max()),
+        def fit_polynomial(ctrl: np.ndarray, delta: np.ndarray) -> Tuple[PolynomialCalibration, float]:
+            """Fit polynomial and return (calibration, rms_error)."""
+            coeffs = np.polyfit(ctrl, delta, degree)[::-1]
+            cal = PolynomialCalibration(
+                coeffs=list(coeffs),
+                c_fit_min=float(ctrl.min()),
+                c_fit_max=float(ctrl.max()),
             )
+            predicted = cal.forward_vectorized(ctrl)
+            rms = float(np.sqrt(np.mean((delta - predicted)**2)))
+            return cal, rms
         
-        def rms(delta: np.ndarray, cal: PolynomialCalibration) -> float:
-            predicted = cal.forward_vectorized(controls)
-            return float(np.sqrt(np.mean((delta - predicted)**2)))
+        def ensure_positive_linear(cal: PolynomialCalibration) -> PolynomialCalibration:
+            """Flip coefficients if linear term is negative."""
+            coeffs = cal.coefficients
+            if len(coeffs) > 1 and coeffs[1] < 0:
+                return PolynomialCalibration(
+                    coeffs=[-c for c in coeffs],
+                    c_fit_min=cal._c_fit_min,
+                    c_fit_max=cal._c_fit_max,
+                )
+            return cal
         
-        # Compute calibrations for each (sig1, sig2)
-        for sigma1 in [True, False]:
-            for sigma2 in [True, False]:
-                s1, s2 = pol_key(sigma1), pol_key(sigma2)
-                ns1, ns2 = pol_key(not sigma1), pol_key(not sigma2)
-                
-                # X1: Δ = F_{sig1,-sig2}(c1,0) - F_{-sig1,-sig2}(c1,0)
-                key_a = s1 + ns2
-                key_b = ns1 + ns2
-                delta_x1 = (get_axis1(key_a, 'x') - get_axis1(key_b, 'x')) / atten
-                cal_x1 = fit_cal(controls, delta_x1)
-                result.x1_calibrations[(sigma1, sigma2)] = cal_x1
-                result.rms_errors[f'X1_({sigma1},{sigma2})'] = rms(delta_x1, cal_x1)
-                
-                # X2: Δ = F_{-sig1,sig2}(0,c2) - F_{-sig1,-sig2}(0,c2)
-                key_a = ns1 + s2
-                key_b = ns1 + ns2
-                delta_x2 = (get_axis2(key_a, 'x') - get_axis2(key_b, 'x')) / atten
-                cal_x2 = fit_cal(controls, delta_x2)
-                result.x2_calibrations[(sigma1, sigma2)] = cal_x2
-                result.rms_errors[f'X2_({sigma1},{sigma2})'] = rms(delta_x2, cal_x2)
-                
-                # Y1: Δ = F_{-sig1,sig2}(c1,0) - F_{sig1,sig2}(c1,0)
-                key_a = ns1 + s2
-                key_b = s1 + s2
-                delta_y1 = (get_axis1(key_a, 'y') - get_axis1(key_b, 'y')) / atten
-                cal_y1 = fit_cal(controls, delta_y1)
-                result.y1_calibrations[(sigma1, sigma2)] = cal_y1
-                result.rms_errors[f'Y1_({sigma1},{sigma2})'] = rms(delta_y1, cal_y1)
-
-                # Y2: Δ = F_{sig1,-sig2}(0,c2) - F_{sig1,sig2}(0,c2)
-                key_a = s1 + ns2
-                key_b = s1 + s2
-                delta_y2 = (get_axis2(key_a, 'y') - get_axis2(key_b, 'y')) / atten
-                cal_y2 = fit_cal(controls, delta_y2)
-                result.y2_calibrations[(sigma1, sigma2)] = cal_y2
-                result.rms_errors[f'Y2_({sigma1},{sigma2})'] = rms(delta_y2, cal_y2)
+        # X1: depends on sig2 (discharging pair's X polarity)
+        # When sig2=True (p2=True for X): Δ = F_{pm} - F_{mm}
+        # When sig2=False (p2=False for X): Δ = F_{pp} - F_{mp}
         
-        # Cross-term validation using joint measurements
+        delta_x1_pos = (raw['axis1_F_pm_x'] - raw['axis1_F_mm_x']) / atten
+        cal, rms = fit_polynomial(controls, delta_x1_pos)
+        result.x1_cal_pos = ensure_positive_linear(cal)
+        result.rms_errors['X1(sig2=+)'] = rms
+        
+        delta_x1_neg = (raw['axis1_F_pp_x'] - raw['axis1_F_mp_x']) / atten
+        cal, rms = fit_polynomial(controls, delta_x1_neg)
+        result.x1_cal_neg = ensure_positive_linear(cal)
+        result.rms_errors['X1(sig2=-)'] = rms
+        
+        # X2: depends on sig1 (charging pair's X polarity)
+        # When sig1=True (p1=True for X): Δ = F_{mp} - F_{mm}
+        # When sig1=False (p1=False for X): Δ = F_{pp} - F_{pm}
+        
+        delta_x2_pos = (raw['axis2_F_mp_x'] - raw['axis2_F_mm_x']) / atten
+        cal, rms = fit_polynomial(controls, delta_x2_pos)
+        result.x2_cal_pos = ensure_positive_linear(cal)
+        result.rms_errors['X2(sig1=+)'] = rms
+        
+        delta_x2_neg = (raw['axis2_F_pp_x'] - raw['axis2_F_pm_x']) / atten
+        cal, rms = fit_polynomial(controls, delta_x2_neg)
+        result.x2_cal_neg = ensure_positive_linear(cal)
+        result.rms_errors['X2(sig1=-)'] = rms
+        
+        # Y calibrations (if available)
+        # Y uses same indexing by X polarity for consistency with PolarityCalibratedChannel
+        # Y1: Δ = F_{mp} - F_{pp} (when sig2=+) or F_{mm} - F_{pm} (when sig2=-)
+        # Y2: Δ = F_{pm} - F_{pp} (when sig1=+) or F_{mm} - F_{mp} (when sig1=-)
+        
+        if self._has_y:
+            delta_y1_pos = (raw['axis1_F_mp_y'] - raw['axis1_F_pp_y']) / atten
+            cal, rms = fit_polynomial(controls, delta_y1_pos)
+            result.y1_cal_pos = ensure_positive_linear(cal)
+            result.rms_errors['Y1(sig2=+)'] = rms
+            
+            delta_y1_neg = (raw['axis1_F_mm_y'] - raw['axis1_F_pm_y']) / atten
+            cal, rms = fit_polynomial(controls, delta_y1_neg)
+            result.y1_cal_neg = ensure_positive_linear(cal)
+            result.rms_errors['Y1(sig2=-)'] = rms
+            
+            delta_y2_pos = (raw['axis2_F_pm_y'] - raw['axis2_F_pp_y']) / atten
+            cal, rms = fit_polynomial(controls, delta_y2_pos)
+            result.y2_cal_pos = ensure_positive_linear(cal)
+            result.rms_errors['Y2(sig1=+)'] = rms
+            
+            delta_y2_neg = (raw['axis2_F_mm_y'] - raw['axis2_F_mp_y']) / atten
+            cal, rms = fit_polynomial(controls, delta_y2_neg)
+            result.y2_cal_neg = ensure_positive_linear(cal)
+            result.rms_errors['Y2(sig1=-)'] = rms
+        
+        # Cross-term analysis
         result.cross_term_diagnostics = self._analyze_cross_terms(raw, result)
-        
-        # Apply sign correction at the end
-        self._apply_sign_corrections(result)
         
         print("Processing complete.")
         return result
-
+    
     def _analyze_cross_terms(self,
-        raw: PulseShaperRawData,
+        raw: Dict[str, np.ndarray],
         result: PulseShaperCalibrationResult,
     ) -> Dict[str, Any]:
         """
         Validate that Δ is approximately independent of the other control.
-        
-        Compare measured Δ on joint grid to predicted Δ from axis calibrations.
-        No sign correction here - we use raw deltas.
         """
         atten = self.cal_attenuation
-        sparse = raw.sparse_controls
+        sparse = raw['sparse_controls']
         
         diagnostics = {}
         
-        def analyze_channel(name: str, 
-                            joint_a: np.ndarray, 
-                            joint_b: np.ndarray,
+        def analyze_channel(name: str,
+                            joint_a_key: str,
+                            joint_b_key: str,
                             cal: PolynomialCalibration,
-                            axis: int):
+                            axis: int,
+                            output: str = 'x'):
             """
             Analyze cross-term for one channel.
             
-            axis=0 means delta should be independent of c2 (broadcast along axis 1)
-            axis=1 means delta should be independent of c1 (broadcast along axis 0)
+            axis=0 means delta should be independent of c2
+            axis=1 means delta should be independent of c1
             """
-            joint_delta = (joint_a - joint_b) / atten
+            key_a = f'joint_F_{joint_a_key}_{output}'
+            key_b = f'joint_F_{joint_b_key}_{output}'
+            
+            if key_a not in raw or key_b not in raw:
+                return
+            
+            joint_delta = (raw[key_a] - raw[key_b]) / atten
             predicted = cal.forward_vectorized(sparse)
+            
+            # Match sign to calibration (which has been corrected)
+            diag = np.diag(joint_delta)
+            if np.sum(diag * predicted < 0) > len(diag) // 2:
+                joint_delta = -joint_delta
             
             if axis == 0:
                 predicted_grid = predicted[:, np.newaxis]
@@ -618,186 +690,90 @@ class PulseShaperCalibration:
             rms_signal = np.sqrt(np.mean(joint_delta**2))
             rms_residual = np.sqrt(np.mean(residual**2))
             
-            diagnostics[f'{name}_cross_term_rms'] = float(rms_residual)
-            diagnostics[f'{name}_cross_term_ratio'] = float(rms_residual / rms_signal) if rms_signal > 0 else 0.0
+            diagnostics[f'{name}_rms'] = float(rms_residual)
+            if rms_signal > 0:
+                diagnostics[f'{name}_ratio'] = float(rms_residual / rms_signal)
         
-        # X1: varies with c1 (axis 0), should be independent of c2
-        analyze_channel('x1', raw.joint_F_pm_x, raw.joint_F_mm_x,
-                        result.x1_calibrations[(True, True)], axis=0)
+        # X1 (sig2=+): Δ = F_{pm} - F_{mm}
+        analyze_channel('X1_cross', 'pm', 'mm', result.x1_cal_pos, axis=0, output='x')
         
-        # X2: varies with c2 (axis 1), should be independent of c1
-        analyze_channel('x2', raw.joint_F_mp_x, raw.joint_F_mm_x,
-                        result.x2_calibrations[(True, True)], axis=1)
+        # X2 (sig1=+): Δ = F_{mp} - F_{mm}
+        analyze_channel('X2_cross', 'mp', 'mm', result.x2_cal_pos, axis=1, output='x')
         
-        # Y1: varies with c1 (axis 0), should be independent of c2
-        analyze_channel('y1', raw.joint_F_mp_y, raw.joint_F_pp_y,
-                        result.y1_calibrations[(True, True)], axis=0)
+        if self._has_y:
+            # Y1 (sig2=+): Δ = F_{mp} - F_{pp}
+            analyze_channel('Y1_cross', 'mp', 'pp', result.y1_cal_pos, axis=0, output='y')
+            
+            # Y2 (sig1=+): Δ = F_{pm} - F_{pp}
+            analyze_channel('Y2_cross', 'pm', 'pp', result.y2_cal_pos, axis=1, output='y')
         
-        # Y2: varies with c2 (axis 1), should be independent of c1
-        analyze_channel('y2', raw.joint_F_pm_y, raw.joint_F_pp_y,
-                        result.y2_calibrations[(True, True)], axis=1)
-        
-        print(
-            f"Cross-term analysis: "
-            f"X1={diagnostics['x1_cross_term_ratio']*100:.2f}%, "
-            f"X2={diagnostics['x2_cross_term_ratio']*100:.2f}%, "
-            f"Y1={diagnostics['y1_cross_term_ratio']*100:.2f}%, "
-            f"Y2={diagnostics['y2_cross_term_ratio']*100:.2f}%"
-        )
+        if diagnostics:
+            cross_ratios = [v for k, v in diagnostics.items() if 'ratio' in k]
+            if cross_ratios:
+                print(f"  Cross-term ratios: {[f'{r*100:.1f}%' for r in cross_ratios]}")
         
         return diagnostics
-
-    def _apply_sign_corrections(self, result: PulseShaperCalibrationResult):
-        """
-        Apply sign corrections to calibrations so outputs are majority positive.
-        
-        For each channel, check if majority of outputs are negative and flip if so.
-        All (sigma1, sigma2) combinations for a channel are flipped together.
-        """
-        controls = result.raw_data.axis_controls
-        
-        def needs_flip(calibrations: Dict[Tuple[bool, bool], PolynomialCalibration]) -> bool:
-            """Check if calibrations produce majority negative outputs."""
-            total_negative = 0
-            total_positive = 0
-            for cal in calibrations.values():
-                outputs = cal.forward_vectorized(controls)
-                total_negative += np.sum(outputs < 0)
-                total_positive += np.sum(outputs > 0)
-            return total_negative > total_positive
-        
-        def flip_calibrations(calibrations: Dict[Tuple[bool, bool], PolynomialCalibration]):
-            """Flip sign of all calibration coefficients."""
-            for key, cal in calibrations.items():
-                flipped_coeffs = [-c for c in cal.coefficients]
-                calibrations[key] = PolynomialCalibration(
-                    coeffs=flipped_coeffs,
-                    c_fit_min=cal._c_fit_min,
-                    c_fit_max=cal._c_fit_max,
-                )
-        
-        # Check and flip each channel
-        for name, cals in [
-            ('X1', result.x1_calibrations),
-            ('X2', result.x2_calibrations),
-            ('Y1', result.y1_calibrations),
-            ('Y2', result.y2_calibrations),
-        ]:
-            if needs_flip(cals):
-                flip_calibrations(cals)
-                print(f"Applied sign correction to {name} calibrations")
-
-    def plot_calibration(self, 
-        raw: PulseShaperRawData, 
-        result: PulseShaperCalibrationResult,
-        sigma1: bool = True,
-        sigma2: bool = True,
+    
+    def plot_calibration(self,
+        raw: Dict[str, np.ndarray] | None = None,
+        result: PulseShaperCalibrationResult | None = None,
         save_path: str | Path | None = None,
     ):
         """
-        Plot calibration results for a given (sigma1, sigma2) operating point.
+        Plot calibration results.
         
-        Creates a figure with:
-        - Row 1: X1, X2, Y1, Y2 calibration curves with fits
-        - Row 2: Fit residuals
-        - Row 3: Cross-term heatmaps (joint grid)
+        Creates a figure showing calibration curves and cross-term analysis.
         """
         import matplotlib.pyplot as plt
         
+        if raw is None:
+            raw = self._raw_data
+        
         atten = self.cal_attenuation
-        controls = raw.axis_controls
-        sparse = raw.sparse_controls
+        controls = raw['axis_controls']
+        sparse = raw['sparse_controls']
         
-        def pol_key(p: bool) -> str:
-            return 'p' if p else 'm'
+        # Determine layout based on whether Y is available
+        if self._has_y:
+            fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+            channels = [
+                ('X1(sig2=+)', 'axis1_F_pm_x', 'axis1_F_mm_x', result.x1_cal_pos, 'joint_F_pm_x', 'joint_F_mm_x', 0),
+                ('X2(sig1=+)', 'axis2_F_mp_x', 'axis2_F_mm_x', result.x2_cal_pos, 'joint_F_mp_x', 'joint_F_mm_x', 1),
+                ('Y1(sig2=+)', 'axis1_F_mp_y', 'axis1_F_pp_y', result.y1_cal_pos, 'joint_F_mp_y', 'joint_F_pp_y', 0),
+                ('Y2(sig1=+)', 'axis2_F_pm_y', 'axis2_F_pp_y', result.y2_cal_pos, 'joint_F_pm_y', 'joint_F_pp_y', 1),
+            ]
+        else:
+            fig, axes = plt.subplots(3, 2, figsize=(10, 12))
+            channels = [
+                ('X1(sig2=+)', 'axis1_F_pm_x', 'axis1_F_mm_x', result.x1_cal_pos, 'joint_F_pm_x', 'joint_F_mm_x', 0),
+                ('X2(sig1=+)', 'axis2_F_mp_x', 'axis2_F_mm_x', result.x2_cal_pos, 'joint_F_mp_x', 'joint_F_mm_x', 1),
+            ]
         
-        s1, s2 = pol_key(sigma1), pol_key(sigma2)
-        ns1, ns2 = pol_key(not sigma1), pol_key(not sigma2)
+        fig.suptitle('Pulse Shaper Calibration', fontsize=14)
         
-        def get_axis1(key: str, output: str) -> np.ndarray:
-            return getattr(raw, f'axis1_F_{key}_{output}')
-        
-        def get_axis2(key: str, output: str) -> np.ndarray:
-            return getattr(raw, f'axis2_F_{key}_{output}')
-        
-        def get_joint(key: str, output: str) -> np.ndarray:
-            return getattr(raw, f'joint_F_{key}_{output}')
-        
-        # Compute raw deltas (no sign correction)
-        delta_x1 = (get_axis1(s1 + ns2, 'x') - get_axis1(ns1 + ns2, 'x')) / atten
-        delta_x2 = (get_axis2(ns1 + s2, 'x') - get_axis2(ns1 + ns2, 'x')) / atten
-        delta_y1 = (get_axis1(ns1 + s2, 'y') - get_axis1(s1 + s2, 'y')) / atten
-        delta_y2 = (get_axis2(s1 + ns2, 'y') - get_axis2(s1 + s2, 'y')) / atten
-        
-        # Get calibrations (already sign-corrected)
-        cal_x1 = result.x1_calibrations[(sigma1, sigma2)]
-        cal_x2 = result.x2_calibrations[(sigma1, sigma2)]
-        cal_y1 = result.y1_calibrations[(sigma1, sigma2)]
-        cal_y2 = result.y2_calibrations[(sigma1, sigma2)]
-        
-        # Predictions from calibrations
-        pred_x1 = cal_x1.forward_vectorized(controls)
-        pred_x2 = cal_x2.forward_vectorized(controls)
-        pred_y1 = cal_y1.forward_vectorized(controls)
-        pred_y2 = cal_y2.forward_vectorized(controls)
-        
-        # Match delta signs to calibration signs for plotting
-        # (calibration may have been flipped)
-        def match_sign(delta, pred):
+        for col, (name, key_a, key_b, cal, joint_a, joint_b, axis) in enumerate(channels):
+            # Compute delta
+            delta = (raw[key_a] - raw[key_b]) / atten
+            pred = cal.forward_vectorized(controls)
+            
+            # Match sign
             if np.sum(delta * pred < 0) > len(delta) // 2:
-                return -delta
-            return delta
-        
-        delta_x1 = match_sign(delta_x1, pred_x1)
-        delta_x2 = match_sign(delta_x2, pred_x2)
-        delta_y1 = match_sign(delta_y1, pred_y1)
-        delta_y2 = match_sign(delta_y2, pred_y2)
-        
-        # Joint deltas
-        joint_delta_x1 = (get_joint(s1 + ns2, 'x') - get_joint(ns1 + ns2, 'x')) / atten
-        joint_delta_x2 = (get_joint(ns1 + s2, 'x') - get_joint(ns1 + ns2, 'x')) / atten
-        joint_delta_y1 = (get_joint(ns1 + s2, 'y') - get_joint(s1 + s2, 'y')) / atten
-        joint_delta_y2 = (get_joint(s1 + ns2, 'y') - get_joint(s1 + s2, 'y')) / atten
-        
-        # Match joint delta signs
-        def match_sign_joint(joint_delta, cal):
-            pred = cal.forward_vectorized(sparse)
-            diag = np.diag(joint_delta)
-            if np.sum(diag * pred < 0) > len(diag) // 2:
-                return -joint_delta
-            return joint_delta
-        
-        joint_delta_x1 = match_sign_joint(joint_delta_x1, cal_x1)
-        joint_delta_x2 = match_sign_joint(joint_delta_x2, cal_x2)
-        joint_delta_y1 = match_sign_joint(joint_delta_y1, cal_y1)
-        joint_delta_y2 = match_sign_joint(joint_delta_y2, cal_y2)
-        
-        # Create figure
-        fig, axes = plt.subplots(3, 4, figsize=(16, 12))
-        fig.suptitle(f'Pulse Shaper Calibration (σ₁={sigma1}, σ₂={sigma2})', fontsize=14)
-        
-        channels = [
-            ('X1', delta_x1, pred_x1, cal_x1, joint_delta_x1, 0),
-            ('X2', delta_x2, pred_x2, cal_x2, joint_delta_x2, 1),
-            ('Y1', delta_y1, pred_y1, cal_y1, joint_delta_y1, 0),
-            ('Y2', delta_y2, pred_y2, cal_y2, joint_delta_y2, 1),
-        ]
-        
-        for col, (name, delta, pred, cal, joint_delta, axis) in enumerate(channels):
-            # Row 0: Calibration curve + fit
+                delta = -delta
+            
+            # Row 0: Calibration curve
             ax = axes[0, col]
-            ax.plot(controls, delta, 'o', markersize=3, alpha=0.5, label='Measured')
+            ax.plot(controls, delta, 'o', markersize=2, alpha=0.5, label='Measured')
             ax.plot(controls, pred, '-', linewidth=2, label='Fit')
             ax.set_xlabel('Control (V)')
             ax.set_ylabel('Δ Output (V)')
-            ax.set_title(f'{name}')
+            ax.set_title(name)
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.3)
             
             # Row 1: Residuals
             ax = axes[1, col]
             residual = delta - pred
-            ax.plot(controls, residual, 'o', markersize=3)
+            ax.plot(controls, residual, 'o', markersize=2)
             ax.axhline(0, color='k', linestyle='--', alpha=0.5)
             ax.set_xlabel('Control (V)')
             ax.set_ylabel('Residual (V)')
@@ -808,7 +784,14 @@ class PulseShaperCalibration:
             # Row 2: Cross-term heatmap
             ax = axes[2, col]
             
+            joint_delta = (raw[joint_a] - raw[joint_b]) / atten
             pred_sparse = cal.forward_vectorized(sparse)
+            
+            # Match sign
+            diag = np.diag(joint_delta)
+            if np.sum(diag * pred_sparse < 0) > len(diag) // 2:
+                joint_delta = -joint_delta
+            
             if axis == 0:
                 expected = pred_sparse[:, np.newaxis] * np.ones((1, len(sparse)))
             else:
@@ -819,12 +802,12 @@ class PulseShaperCalibration:
             vmax = np.max(np.abs(cross_term))
             if vmax == 0:
                 vmax = 1.0
-            im = ax.imshow(cross_term, origin='lower', cmap='RdBu_r', 
-                        vmin=-vmax, vmax=vmax, aspect='auto',
-                        extent=[sparse[0], sparse[-1], sparse[0], sparse[-1]])
+            im = ax.imshow(cross_term, origin='lower', cmap='RdBu_r',
+                          vmin=-vmax, vmax=vmax, aspect='auto',
+                          extent=[sparse[0], sparse[-1], sparse[0], sparse[-1]])
             ax.set_xlabel('c₂ (V)')
             ax.set_ylabel('c₁ (V)')
-            ax.set_title(f'Cross-term')
+            ax.set_title('Cross-term')
             plt.colorbar(im, ax=ax, label='Deviation (V)')
         
         plt.tight_layout()
@@ -834,8 +817,8 @@ class PulseShaperCalibration:
             print(f"Saved calibration plot to {save_path}")
         
         return fig, axes
-
-    def run(self, degree: int = 2) -> PulseShaperCalibrationResult:
+    
+    def run(self, degree: int = 8) -> PulseShaperCalibrationResult:
         """
         Run complete calibration.
         
@@ -850,15 +833,15 @@ class PulseShaperCalibration:
         print("\n" + result.summary())
         
         return result
-
+    
     def close(self):
         if self._executor:
             self._executor.shutdown(wait=False)
             self._executor = None
-
+    
     def __enter__(self):
         return self
-
+    
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
         return False

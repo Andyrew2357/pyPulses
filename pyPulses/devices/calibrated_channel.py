@@ -350,3 +350,134 @@ class CalibratedChannel(abstractDevice):
         )
 
         return instance
+    
+@register_device_class("PolarityCalibratedChannel")
+class PolarityCalibratedChannel(abstractDevice):
+    """
+    A calibrated channel that selects calibration based on an external polarity source.
+    We primarily use these in the context of the pulse shaper, where the calibration
+    of a pulse height depends on polarity of the other pulse on the same output channel
+
+    The calibration depends on the polarity of the *other* pulse pair:
+        Δ1_{sig₁,sig₂} = -Δ1_{-sig₁,sig₂}  (only depends on sig₂)
+        Δ2_{sig₁,sig₂} = -Δ2_{sig₁,-sig₂}  (only depends on sig₁)
+    
+    So we only need two calibrations: one for polarity=True, one for polarity=False.
+    The polarity is read from a BoolChannel (typically the other pulsePair's polarity).
+    """
+    
+    def __init__(self,
+        channel: CalibratedChannel | DeferredReference,
+        polarity_source: BoolChannel | DeferredReference,
+        cal_pos: CalibrationModel,  # Calibration when other pair's polarity is True
+        cal_neg: CalibrationModel,  # Calibration when other pair's polarity is False
+        registry_id: str | None = None,
+        logger: Logger | None = None,
+    ):
+        super().__init__(logger)
+        DeviceRegistry.register(self, registry_id=registry_id)
+        
+        self._channel = channel
+        self._polarity_source = polarity_source
+        self._calibrations = {True: cal_pos, False: cal_neg}
+        
+        self._cached_polarity: bool | None = None
+        self._target: float | None = None
+    
+    def _get_polarity(self) -> bool:
+        """Get current polarity from external source."""
+        if hasattr(self._polarity_source, 'get_output'):
+            return self._polarity_source.get_output()
+        elif callable(self._polarity_source):
+            return self._polarity_source()
+        else:
+            raise TypeError("polarity_source must be BoolChannel or callable")
+    
+    def _update_calibration_if_needed(self):
+        """Update the underlying channel's calibration if polarity changed."""
+        current_pol = self._get_polarity()
+        if current_pol != self._cached_polarity:
+            self._channel.set_calibration(self._calibrations[current_pol])
+            self._cached_polarity = current_pol
+            return True
+        return False
+    
+    def set_output(self, value: float):
+        """Set output amplitude."""
+        self._target = value
+        self._update_calibration_if_needed()
+        self._channel.set_output(value)
+    
+    def get_output(self) -> float:
+        """Get current output amplitude."""
+        self._update_calibration_if_needed()
+        return self._channel.get_output()
+    
+    def recalibrate(self):
+        """Force recalibration check and reapply current target."""
+        polarity_changed = self._update_calibration_if_needed()
+        if polarity_changed and self._target is not None:
+            self._channel.set_output(self._target)
+    
+    def __call__(self, v: float | None = None) -> float | None:
+        if v is None:
+            return self.get_output()
+        self.set_output(v)
+        return None
+    
+    def _serialize_state(self) -> Dict[str, Any]:
+        return {
+            'channel': format_reference(self._channel),
+            'polarity_source': format_reference(self._polarity_source),
+            'cal_pos': self._calibrations[True].to_dict(),
+            'cal_neg': self._calibrations[False].to_dict(),
+            'target': self._target,
+        }
+    
+    def _deserialize_state(self, state: Dict[str, Any]):
+        if 'channel' in state:
+            self._channel = DeferredReference(state['channel'])
+        if 'polarity_source' in state:
+            self._polarity_source = DeferredReference(state['polarity_source'])
+        if 'cal_pos' in state:
+            self._calibrations[True] = CalibrationModel.from_config(state['cal_pos'])
+        if 'cal_neg' in state:
+            self._calibrations[False] = CalibrationModel.from_config(state['cal_neg'])
+        if 'target' in state:
+            self._target = state['target']
+        
+        self._cached_polarity = None
+        self._resolve_references()
+    
+    def _resolve_references(self):
+        if isinstance(self._channel, DeferredReference):
+            self._channel = self._channel.unwrap()
+        if isinstance(self._polarity_source, DeferredReference):
+            self._polarity_source = self._polarity_source.unwrap()
+    
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'PolarityCalibratedChannel':
+        channel = config.pop('channel')
+        if channel is not None:
+            channel = DeferredReference(channel)
+        
+        polarity_source = config.pop('polarity_source')
+        if polarity_source is not None:
+            polarity_source = DeferredReference(polarity_source)
+        
+        cal_pos = CalibrationModel.from_config(config.pop('cal_pos'))
+        cal_neg = CalibrationModel.from_config(config.pop('cal_neg'))
+        registry_id = config.pop('registry_id')
+        
+        instance = cls(
+            channel=channel,
+            polarity_source=polarity_source,
+            cal_pos=cal_pos,
+            cal_neg=cal_neg,
+            registry_id=registry_id,
+        )
+        
+        if 'target' in config:
+            instance._target = config['target']
+        
+        return instance
