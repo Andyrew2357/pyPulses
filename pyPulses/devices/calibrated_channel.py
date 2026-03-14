@@ -171,6 +171,12 @@ class CalibratedChannel(abstractDevice):
 
         # Compute required control setting
         control = self._calibration.inverse(target_raw, self._c_min, self._c_max)
+        if control < self._c_min:
+            self.warn(f"Required control {control} is below allowed range {self._c_min}; Clamping...")
+            control = self._c_min
+        if control > self._c_max:
+            self.warn(f"Required control {control} is above allowed range {self._c_max}; Clamping...")
+            control = self._c_max
 
         # Set hardware
         self._hw.set_output(control)

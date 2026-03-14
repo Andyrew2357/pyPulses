@@ -10,19 +10,14 @@ See my notes for the logic behind this procedure.
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Dict, Tuple, Any, List
+from typing import Dict, Tuple, Any
 import numpy as np
 import time
 import json
-import logging
 from pathlib import Path
 
 from .channel_adapter import ScalarChannel, CompPair
 from .calibration import PolynomialCalibration
-
-
-logger = logging.getLogger(__name__)
-
 
 """
 Raw Data Storage
@@ -182,7 +177,7 @@ class PulseShaperCalibrationResult:
         path = Path(path)
         with open(path, 'w') as f:
             json.dump(self.to_dict(), f, indent=2)
-        logger.info(f"Saved calibration to {path}")
+        print(f"Saved calibration to {path}")
     
     @classmethod
     def load(cls, path: str | Path) -> 'PulseShaperCalibrationResult':
@@ -190,7 +185,7 @@ class PulseShaperCalibrationResult:
         with open(path, 'r') as f:
             data = json.load(f)
         result = cls.from_dict(data)
-        logger.info(f"Loaded calibration from {path}")
+        print(f"Loaded calibration from {path}")
         return result
 
 
@@ -200,7 +195,7 @@ Calibration Measurement
 
 class PulseShaperCalibration:
     """
-    Calibration measurement procedure for dual pulse pair system.
+    Calibration measurement procedure for the pulse shaper box.
     
     Measures F_{p1,p2}(c1, c2) for all polarity combinations, then computes
     Δ calibrations for each (sig1, sig2) operating point.
@@ -279,7 +274,7 @@ class PulseShaperCalibration:
         
         self._executor = ThreadPoolExecutor(max_workers=2) if parallel_meters else None
         
-        logger.info(
+        print(
             f"PulseShaperCalibration initialized: "
             f"{len(self.axis_controls)} axis points, "
             f"{len(self.sparse_controls)} sparse points, "
@@ -292,7 +287,7 @@ class PulseShaperCalibration:
         self.relay1.ypolarity(not p1)
         self.relay2.xpolarity(p2)
         self.relay2.ypolarity(not p2)
-        logger.debug(f"Polarities: p1={p1}, p2={p2}")
+        print(f"Polarities: p1={p1}, p2={p2}")
     
     def _read_meters(self) -> Tuple[float, float]:
         """Read both meters, optionally in parallel."""
@@ -334,7 +329,27 @@ class PulseShaperCalibration:
             self.ch1_y.set_output(c)
             time.sleep(self.settle_time)
             x_readings[i], y_readings[i] = self._read_meters()
+            # Live progress: print a carriage-return-updating line and also
+            # log the full message for records. We use print(..., end='')
+            # so the console updates in-place while logging preserves history.
+            try:
+                pct = 100.0 * (i + 1) / n
+                msg = (
+                    f"[{i+1:4d}/{n:4d}] "
+                    f"c={c:12g} "
+                    f"x={x_readings[i]:12g} "
+                    f"y={y_readings[i]:12g} "
+                    f"{pct:6.1f}%"
+                )
+                print('\r' + msg, end='', flush=True)
+            except Exception:
+                # Don't let progress printing break the sweep
+                pass
         
+        try:
+            print()
+        except Exception:
+            pass
         return x_readings, y_readings
     
     def _sweep_axis2(self, p1: bool, p2: bool) -> Tuple[np.ndarray, np.ndarray]:
@@ -357,7 +372,23 @@ class PulseShaperCalibration:
             self.ch2_y.set_output(c)
             time.sleep(self.settle_time)
             x_readings[i], y_readings[i] = self._read_meters()
+            try:
+                pct = 100.0 * (i + 1) / n
+                msg = (
+                    f"[{i+1:4d}/{n:4d}] "
+                    f"c={c:12g} "
+                    f"x={x_readings[i]:12g} "
+                    f"y={y_readings[i]:12g} "
+                    f"{pct:6.1f}%"
+                )
+                print('\r' + msg, end='', flush=True)
+            except Exception:
+                pass
         
+        try:
+            print()
+        except Exception:
+            pass
         return x_readings, y_readings
     
     def _sweep_joint(self, p1: bool, p2: bool) -> Tuple[np.ndarray, np.ndarray]:
@@ -382,7 +413,31 @@ class PulseShaperCalibration:
                 self.ch2_y.set_output(c2)
                 time.sleep(self.settle_time)
                 x_grid[i, j], y_grid[i, j] = self._read_meters()
+                try:
+                    # progress over the full grid
+                    total = n * n
+                    idx = i * n + j + 1
+                    pct = 100.0 * idx / total
+                    try:
+                        msg = (
+                            f"[{idx:4d}/{total:4d}] "
+                            f"c1={c1:12g} "
+                            f"c2={c2:12g} "
+                            f"x={x_grid[i,j]:12g} "
+                            f"y={y_grid[i,j]:12g} "
+                            f"{pct:6.1f}%"
+                        )
+                        print('\r' + msg, end='', flush=True)
+                    except Exception:
+                        # fallback
+                        print('\r' + msg, end='', flush=True)
+                except Exception:
+                    pass
         
+        try:
+            print()
+        except Exception:
+            pass
         return x_grid, y_grid
     
     def measure(self) -> PulseShaperRawData:
@@ -391,9 +446,9 @@ class PulseShaperCalibration:
         
         Assumes DTG run is already disabled.
         """
-        logger.info("=" * 60)
-        logger.info("Starting pulse shaper calibration measurement")
-        logger.info("=" * 60)
+        print("=" * 60)
+        print("Starting pulse shaper calibration measurement")
+        print("=" * 60)
         start = time.time()
         
         raw = PulseShaperRawData(
@@ -402,36 +457,36 @@ class PulseShaperCalibration:
         )
         
         # Axis 1 sweeps (4 polarity combinations)
-        logger.info("Measuring axis 1 (charging pair)...")
+        print("Measuring axis 1 (charging pair)...")
         for key in self.POLARITY_KEYS:
             p1, p2 = self.POLARITY_VALUES[key]
-            logger.debug(f"  Sweep F_{key}(c1, 0)")
+            print(f"  Sweep F_{key}(c1, 0)")
             x_rd, y_rd = self._sweep_axis1(p1, p2)
             setattr(raw, f'axis1_F_{key}_x', x_rd)
             setattr(raw, f'axis1_F_{key}_y', y_rd)
         
         # Axis 2 sweeps (4 polarity combinations)
-        logger.info("Measuring axis 2 (discharging pair)...")
+        print("Measuring axis 2 (discharging pair)...")
         for key in self.POLARITY_KEYS:
             p1, p2 = self.POLARITY_VALUES[key]
-            logger.debug(f"  Sweep F_{key}(0, c2)")
+            print(f"  Sweep F_{key}(0, c2)")
             x_rd, y_rd = self._sweep_axis2(p1, p2)
             setattr(raw, f'axis2_F_{key}_x', x_rd)
             setattr(raw, f'axis2_F_{key}_y', y_rd)
         
         # Joint sweeps (4 polarity combinations)
         n_sparse = len(self.sparse_controls)
-        logger.info(f"Measuring joint grid ({n_sparse}x{n_sparse})...")
+        print(f"Measuring joint grid ({n_sparse}x{n_sparse})...")
         for key in self.POLARITY_KEYS:
             p1, p2 = self.POLARITY_VALUES[key]
-            logger.debug(f"  Sweep F_{key}(c1, c2)")
+            print(f"  Sweep F_{key}(c1, c2)")
             x_grid, y_grid = self._sweep_joint(p1, p2)
             setattr(raw, f'joint_F_{key}_x', x_grid)
             setattr(raw, f'joint_F_{key}_y', y_grid)
         
         self._zero_all()
         elapsed = time.time() - start
-        logger.info(f"Measurement complete in {elapsed:.1f}s")
+        print(f"Measurement complete in {elapsed:.1f}s")
         
         return raw
 
@@ -445,7 +500,7 @@ class PulseShaperCalibration:
         
         and similarly for Y1, Y2.
         """
-        logger.info("Processing calibration data...")
+        print("Processing calibration data...")
         atten = self.cal_attenuation
         controls = raw.axis_controls
         
@@ -521,7 +576,7 @@ class PulseShaperCalibration:
         # Apply sign correction at the end
         self._apply_sign_corrections(result)
         
-        logger.info("Processing complete.")
+        print("Processing complete.")
         return result
 
     def _analyze_cross_terms(self,
@@ -582,7 +637,7 @@ class PulseShaperCalibration:
         analyze_channel('y2', raw.joint_F_pm_y, raw.joint_F_pp_y,
                         result.y2_calibrations[(True, True)], axis=1)
         
-        logger.info(
+        print(
             f"Cross-term analysis: "
             f"X1={diagnostics['x1_cross_term_ratio']*100:.2f}%, "
             f"X2={diagnostics['x2_cross_term_ratio']*100:.2f}%, "
@@ -630,7 +685,7 @@ class PulseShaperCalibration:
         ]:
             if needs_flip(cals):
                 flip_calibrations(cals)
-                logger.info(f"Applied sign correction to {name} calibrations")
+                print(f"Applied sign correction to {name} calibrations")
 
     def plot_calibration(self, 
         raw: PulseShaperRawData, 
@@ -776,7 +831,7 @@ class PulseShaperCalibration:
         
         if save_path:
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            logger.info(f"Saved calibration plot to {save_path}")
+            print(f"Saved calibration plot to {save_path}")
         
         return fig, axes
 
@@ -789,10 +844,10 @@ class PulseShaperCalibration:
         raw = self.measure()
         result = self.process(raw, degree=degree)
         
-        logger.info("=" * 60)
-        logger.info("Calibration complete")
-        logger.info("=" * 60)
-        logger.info("\n" + result.summary())
+        print("=" * 60)
+        print("Calibration complete")
+        print("=" * 60)
+        print("\n" + result.summary())
         
         return result
 

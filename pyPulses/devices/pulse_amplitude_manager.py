@@ -63,7 +63,7 @@ class PulseAmplitudeManager(abstractDevice):
             self.recalibrate()
         return self.channels[ind].get_output()
     
-    def resolve(self, accessor: str) -> PulseAmplitudeChannel:
+    def resolve(self, accessor: str) -> 'PulseAmplitudeChannel':
         if accessor == 'ch1':
             return self.channel_handlers[0]
         if accessor == 'ch2':
