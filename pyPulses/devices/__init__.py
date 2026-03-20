@@ -10,7 +10,7 @@ from .ad9854 import ad9854
 from .attenuator import FixedAttenuator
 from .calibrated_channel import CalibratedChannel, PolarityCalibratedChannel
 from .calibration import PolynomialCalibration, TrivialCalibration
-from .calibrate_pulse_shaper import PulseShaperCalibration, PulseShaperCalibrationResult, PulseShaperRawData
+from .calibrate_pulse_shaper import PulseShaperCalibration, PulseShaperCalibrationResult
 from .cryomagnetics_4G import cryomagnetics4G
 from .dtg import dtg5274
 from .dtg_comp_pair import dtgCompPair
@@ -61,7 +61,6 @@ __all__ = [
     "pulsePair",
     "PulseShaperCalibration",
     "PulseShaperCalibrationResult",
-    "PulseShaperRawData",
     "sr830",
     "sr844",
     "sr850",

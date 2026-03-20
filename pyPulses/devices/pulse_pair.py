@@ -16,7 +16,7 @@ class pulsePair(abstractDevice):
         relay: CompPair | DeferredReference, 
         X: ScalarChannel | DeferredReference,
         Y: ScalarChannel | DeferredReference,
-        dependent_pairs: List[pulsePair | DeferredReference] | None = None,
+        dependent_pairs: List['pulsePair | DeferredReference'] | None = None,
         logical_low: float = -0.5,
         logical_high: float = 2.5,
         registry_id: str | None = None,

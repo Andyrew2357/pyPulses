@@ -765,7 +765,7 @@ class PulseShaperCalibration:
             ax.plot(controls, delta, 'o', markersize=2, alpha=0.5, label='Measured')
             ax.plot(controls, pred, '-', linewidth=2, label='Fit')
             ax.set_xlabel('Control (V)')
-            ax.set_ylabel('Δ Output (V)')
+            ax.set_ylabel(R'$\Delta$ Output (V)')
             ax.set_title(name)
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.3)
@@ -805,8 +805,8 @@ class PulseShaperCalibration:
             im = ax.imshow(cross_term, origin='lower', cmap='RdBu_r',
                           vmin=-vmax, vmax=vmax, aspect='auto',
                           extent=[sparse[0], sparse[-1], sparse[0], sparse[-1]])
-            ax.set_xlabel('c₂ (V)')
-            ax.set_ylabel('c₁ (V)')
+            ax.set_xlabel(R'$c_2$ (V)')
+            ax.set_ylabel(R'$c_1$ (V)')
             ax.set_title('Cross-term')
             plt.colorbar(im, ax=ax, label='Deviation (V)')
         

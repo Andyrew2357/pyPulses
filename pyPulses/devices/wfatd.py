@@ -305,7 +305,7 @@ class wfAveragerView(abstractDevice):
 
         m = (xy - x * y) / (xx - x * x)
         b = y - m * x
-        N = self._averager._N
+        N = self._t().size
         chisq = (yy + m*m*xx + b*b - 2*m*xy - 2*b*y + 2*m*b*x) / (N - 2)
         m_var = chisq / (xx - x * x)
         b_var = chisq / (1 - x * x / xx)
@@ -568,7 +568,7 @@ class wfJump(wfBalance, abstractDevice):
         (ml, cl), (mlv, clv) = self._left.lin_fit()
         (mr, cr), (mrv, crv) = self._right.lin_fit()
         self.error = cr - cl + self._t0 * (mr - ml)
-        self.var = crv + clv + self._t0 * (mrv + mlv)
+        self.var = crv + clv + self._t0**2 * (mrv + mlv)
         return self.error, self.var
     
     def plot_annotations(self, ax: Axes):
