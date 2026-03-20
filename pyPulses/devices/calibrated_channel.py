@@ -359,8 +359,8 @@ class PolarityCalibratedChannel(abstractDevice):
     of a pulse height depends on polarity of the other pulse on the same output channel
 
     The calibration depends on the polarity of the *other* pulse pair:
-        Δ1_{sig₁,sig₂} = -Δ1_{-sig₁,sig₂}  (only depends on sig₂)
-        Δ2_{sig₁,sig₂} = -Δ2_{sig₁,-sig₂}  (only depends on sig₁)
+        Δ1_{sig1,sig2} = -Δ1_{-sig1,sig2}  (only depends on sig2)
+        Δ2_{sig1,sig2} = -Δ2_{sig1,-sig2}  (only depends on sig1)
     
     So we only need two calibrations: one for polarity=True, one for polarity=False.
     The polarity is read from a BoolChannel (typically the other pulsePair's polarity).
