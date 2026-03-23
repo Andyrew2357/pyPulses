@@ -481,3 +481,37 @@ class PolarityCalibratedChannel(abstractDevice):
             instance._target = config['target']
         
         return instance
+    
+    # ── Attenuator passthroughs ──
+
+    @property
+    def output_min(self) -> float:
+        return self._channel.output_min
+
+    @property
+    def output_max(self) -> float:
+        return self._channel.output_max
+
+    @property
+    def attenuator_mode(self) -> str:
+        return self._channel._attenuator_mode
+
+    @attenuator_mode.setter
+    def attenuator_mode(self, mode: str):
+        self._channel._attenuator_mode = mode
+
+    @property
+    def attenuator_preference(self) -> str:
+        return self._channel._attenuator_preference
+
+    @attenuator_preference.setter
+    def attenuator_preference(self, pref: str):
+        self._channel._attenuator_preference = pref
+
+    @property
+    def attenuator_locked(self) -> bool:
+        return self._channel._attenuator_locked
+
+    @attenuator_locked.setter
+    def attenuator_locked(self, locked: bool):
+        self._channel._attenuator_locked = locked

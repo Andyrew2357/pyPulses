@@ -1,11 +1,11 @@
-from .balance_parameter import balanceKnob
-from .linear_balance import lstsqBalance, bracket1d
+from ..pyPulses.routines.balance_parameter import balanceKnob
+from ..pyPulses.routines.linear_balance import lstsqBalance, bracket1d
 
-from ..devices.registry import resolve_reference, format_reference
-from ..devices.wfatd import wfAverager, wfBalance, wfCurveData
-from ..devices.pulse_pair import pulsePair
-from ..utils import kalman
-from ..thread_job import _checkpoint
+from ..pyPulses.devices.registry import resolve_reference, format_reference
+from ..pyPulses.devices.wfatd import wfAverager, wfBalance, wfCurveData
+from ..pyPulses.devices.pulse_pair import pulsePair
+from ..pyPulses.utils import kalman
+from ..pyPulses.thread_job import _checkpoint
 
 from dataclasses import dataclass
 import numpy as np
@@ -1119,7 +1119,7 @@ def TDPT_initialize_filters(
 
     X1 = ctx.X1(X1)
     X2 = ctx.X2(X2)
-    Y1 = ctx.Y2(-cap_guess * X1)
+    Y1 = ctx.Y1(-cap_guess * X1)
     Y2 = ctx.Y2(-cap_guess * X2)
     W = ctx.W(W)
 

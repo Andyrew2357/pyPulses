@@ -575,6 +575,102 @@ class RackState:
         
         cls.deserialize(state)
 
+    @classmethod
+    def inject_into_namespace(cls,
+        hardware: bool = True,
+        devices: bool = True,
+        overwrite: bool = False,
+        prefix: str = '',
+    ) -> list[str]:
+        """
+        Inject registry entries into the IPython user namespace as named variables.
+
+        Parameters
+        ----------
+        hardware : bool
+            If True, inject entries from HardwareRegistry.
+        devices : bool
+            If True, inject entries from DeviceRegistry.
+        overwrite : bool
+            If False (default), skip names that already exist and log a warning.
+            If True, overwrite existing names silently (with a warning logged).
+        prefix : str
+            Optional prefix prepended to all variable names, e.g. prefix='rack_'
+            gives rack_dcbox_main etc. Useful as a collision escape hatch.
+
+        Returns
+        -------
+        list[str]
+            Names of variables successfully injected.
+        """
+
+        import warnings
+        def warn(msg: str):
+            warnings.warn(msg, stacklevel=2)
+
+        def info(msg: str):
+            print(msg)
+
+        # Require IPython
+        try:
+            ip = get_ipython()  # type: ignore[name-defined]
+        except NameError:
+            ip = None
+
+        if ip is None:
+            warn("inject_into_namespace: not running in an IPython environment, aborting.")
+            return []
+
+        ns = ip.user_ns
+
+        sources: dict[str, object] = {}
+        if hardware:
+            sources.update(HardwareRegistry.all())
+        if devices:
+            # DeviceRegistry entries take precedence on key collision between the two
+            # registries, but that should never happen in practice (disjoint ID spaces)
+            for reg_id, obj in DeviceRegistry.all().items():
+                if reg_id in sources:
+                    warn(
+                        f"Registry ID '{reg_id}' exists in both HardwareRegistry and "
+                        f"DeviceRegistry; the DeviceRegistry entry will be used."
+                    )
+                sources[reg_id] = obj
+
+        injected: list[str] = []
+        for reg_id, obj in sources.items():
+            var_name = f"{prefix}{reg_id}"
+
+            if not var_name.isidentifier():
+                warn(
+                    f"Skipping '{var_name}': not a valid Python identifier "
+                    f"(originated from registry ID '{reg_id}')."
+                )
+                continue
+
+            if var_name in ns:
+                if not overwrite:
+                    warn(
+                        f"Skipping '{var_name}': name already exists in namespace "
+                        f"(existing={type(ns[var_name]).__name__}, "
+                        f"new={type(obj).__name__}). "
+                        f"Use overwrite=True or supply a prefix to force."
+                    )
+                    continue
+                else:
+                    warn(
+                        f"Overwriting '{var_name}' in namespace "
+                        f"(old={type(ns[var_name]).__name__}, new={type(obj).__name__})."
+                    )
+
+            ns[var_name] = obj
+            injected.append(var_name)
+            info(f"Injected '{var_name}' ({type(obj).__name__}).")
+
+        info(f"inject_into_namespace: {len(injected)}/{len(sources)} entries injected.")
+        return injected
+
+
 """
 Handling References to Registered Objects
 """
