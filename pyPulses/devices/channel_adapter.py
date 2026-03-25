@@ -114,7 +114,7 @@ class ScalarChannelAdapter(ChannelAdapter):
     def get_output(self) -> float: ...
     def set_output(self, value: float) -> None: ...
 
-    def __call__(self, value: float | None) -> float | None:
+    def __call__(self, value: float | None = None) -> float | None:
         if value is None:
             return self.get_output()
         self.set_output(value)

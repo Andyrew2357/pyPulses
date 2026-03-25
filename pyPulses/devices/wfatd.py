@@ -389,7 +389,7 @@ class wfAveragerView(abstractDevice):
         
         return cls(
             averager=averager,
-            ranges=ranges,
+            range=ranges,
             static_offset=static_offset,
             dynamic_offset=dynamic_offset,
             registry_id=registry_id,

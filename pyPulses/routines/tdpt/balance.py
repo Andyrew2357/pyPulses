@@ -377,22 +377,17 @@ def TDPT_filter_balance(ctx: TDPTContext, new_point: bool = True) -> BalanceResu
             railed_lo     = False
             railed_hi     = False
 
-        if railed_lo:
-            rail_hi_count = 0
-            if cap_satisfied and dis_satisfied:
-                good_sweep_count += 1
-            # good_sweep_count frozen if either error not satisfied
-
-        elif railed_hi:
-            rail_hi_count   += 1
+        if cap_satisfied and dis_satisfied and int_satisfied:
+            good_sweep_count += 1
+        else:
             good_sweep_count = 0
 
+        if railed_lo:
+            rail_hi_count = 0
+        elif railed_hi:
+            rail_hi_count   += 1
         else:
             rail_hi_count = 0
-            if cap_satisfied and dis_satisfied and int_satisfied:
-                good_sweep_count += 1
-            else:
-                good_sweep_count = 0
 
         ctx.log(
             f"  Satisfied: cap={cap_satisfied}"

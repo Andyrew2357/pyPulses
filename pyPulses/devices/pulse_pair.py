@@ -301,7 +301,7 @@ class pulsePair(abstractDevice):
         if accessor == 'W':
             return pulsePair_channel(self, 'W', self.W)
         if accessor == 'pol':
-            return BoolChannelAdapter(self, 'pol', self.get_polarity)
+            return BoolChannelAdapter(self, 'pol', self.get_polarity, self.get_polarity)
         raise ValueError(f"Unknown accessor: {accessor}")
 
 class pulsePair_channel(ScalarChannelAdapter):
@@ -310,7 +310,7 @@ class pulsePair_channel(ScalarChannelAdapter):
         self._func = f
 
     def get_output(self) -> float:
-        return self._func
+        return self._func()
     
     def set_output(self, value):
         self._func(value)
