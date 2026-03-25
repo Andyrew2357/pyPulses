@@ -312,6 +312,15 @@ class wfAveragerView(abstractDevice):
 
         return (m, b), (m_var, b_var)
     
+    def lin_fit_eval_var(self, t: float) -> float:
+        """Variance of the linear fit evaluated at time t."""
+        (m, b), (mvar, bvar) = self.lin_fit()
+        x = self._tmean()
+        # Cov[m, c] = -xmean * Var[m]
+        cov_mb = -x * mvar
+        return t**2 * mvar + bvar + 2 * t * cov_mb
+        # equivalently: (t - x)**2 * mvar + sig^2/N
+
     def integral(self) -> Tuple[float, float]:
         if self._state['integral'] is None:
             x = self._t()
@@ -565,10 +574,11 @@ class wfJump(wfBalance, abstractDevice):
             self._right._averager._supported_balances.append(self)
 
     def __call__(self) -> Tuple[float, float]:
-        (ml, cl), (mlv, clv) = self._left.lin_fit()
-        (mr, cr), (mrv, crv) = self._right.lin_fit()
-        self.error = cr - cl + self._t0 * (mr - ml)
-        self.var = crv + clv + self._t0**2 * (mrv + mlv)
+        (ml, cl), _ = self._left.lin_fit()
+        (mr, cr), _ = self._right.lin_fit()
+        self.error = (mr * self._t0 + cr) - (ml * self._t0 + cl)
+        self.var = self._left.lin_fit_eval_var(self._t0) + \
+                self._right.lin_fit_eval_var(self._t0)
         return self.error, self.var
     
     def plot_annotations(self, ax: Axes):
