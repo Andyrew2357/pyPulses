@@ -20,8 +20,8 @@ class mso44(pyvisaDevice):
 
     DEFAULT_PYVISA_CONFIG = {
         'timeout': 10000,
-        'input_buffer_size': 16384,
-        'max_retries': 3,
+        'input_buffer_size': 1_000_000,
+        'max_retries': 1,
         'retry_delay': 0.1,
         'min_interval': 0.05,
     }
@@ -48,10 +48,11 @@ class mso44(pyvisaDevice):
         super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
         if not skip_connect:
-            # Right now, I've only implemented this for pulling data using ASCII
-            self.write("DATA:WIDTh 2")
-            self.write("DATA:ENCdg ASCII")
-
+            self.write("WFMOutpre:ENCdg BINary")
+            self.write("WFMOutpre:BN_Fmt RI")
+            self.write("WFMOutpre:BYT_Nr 4")
+            self.write("WFMOutpre:BYT_Or LSB")
+            
             self.set_channel(1)
             self._get_status()
 
@@ -106,17 +107,33 @@ class mso44(pyvisaDevice):
         -------
         t, v : np.ndarray
         """
+        # try:
+        #     data = np.fromstring(self.query("CURVe?"), dtype=float, sep=',')
+        # except Exception as e:
+        #     self.warn(f"MSO44: CURVe? failed ({e}), flushing and retrying...")
+        #     self.write("*CLS")
+        #     self.query("*OPC?")
+        #     data = np.fromstring(self.query("CURVe?"), dtype=float, sep=',')
+        
+        # v = (data - self.YOF) * self.YMU + self.YZE
+        # return v
+    
         try:
-            data = np.fromstring(self.query("CURVe?"), dtype=float, sep=',')
+            self.write("CURVe?")
+            raw = self.read_raw()
         except Exception as e:
             self.warn(f"MSO44: CURVe? failed ({e}), flushing and retrying...")
             self.write("*CLS")
             self.query("*OPC?")
-            data = np.fromstring(self.query("CURVe?"), dtype=float, sep=',')
-        
+            self.write("CURVe?")
+            raw = self.read_raw()
+
+        n = int(raw[1:2])
+        length = int(raw[2:2+n])
+        data = np.frombuffer(raw[2+n:2+n+length], dtype='<i2')
         v = (data - self.YOF) * self.YMU + self.YZE
         return v
-    
+
     def get_waveform_parameters(self):
         """
         Update the parameters used to convert from raw waveform data to voltage.
@@ -231,11 +248,12 @@ class mso44(pyvisaDevice):
 class mso44_trace_channel(ScopeChannelAdapter):
     def __init__(self, parent: mso44):
         super().__init__(parent, 'trace')
+        self.pause_time = 0.6
 
     def __call__(self) -> Tuple[np.ndarray, float, float]:
         self._parent.run(False)
         self._parent.clear_trace()
         self._parent.run(True)
-        time.sleep(0.6)
+        time.sleep(self.pause_time)
         v = self._parent.get_waveform()
         return v, self._parent.XIN, -self._parent.HPOS * self._parent.XIN * v.size

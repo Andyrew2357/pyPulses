@@ -274,7 +274,8 @@ def TDPT_filter_balance(ctx: TDPTContext, new_point: bool = True) -> BalanceResu
             )
 
         time.sleep(ctx.settle_time)
-        ctx.take_sweep()
+        high_res = good_sweep_count > 0 or ctx.good_sweep_threshold == 1
+        ctx.take_sweep(ctx.high_resolution_sweep_multiplier if high_res else 1)
         n_iter += 1
 
         ctx.log(
