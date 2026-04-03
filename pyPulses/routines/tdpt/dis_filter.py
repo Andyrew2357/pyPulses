@@ -46,6 +46,8 @@ class DischargeFilter():
         self.dMdW: float | None = None
         self.P: float | None = None
 
+        self._home_W: float = None
+
     def add_context(self, ctx: 'TDPTContext'):
         self.ctx = ctx
         ctx.dis_filter = self
@@ -56,6 +58,7 @@ class DischargeFilter():
         self.dMdW                = init_params['dMdW']
         self._previous_dMdW      = self.dMdW
         self.P                   = init_params['P']
+        self._home_W             = init_params['W0']
 
     def positive_initialize(self):
         if self.is_positive_initialized:

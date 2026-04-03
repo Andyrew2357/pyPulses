@@ -400,6 +400,12 @@ def TDPT_filter_balance(ctx: TDPTContext, new_point: bool = True) -> BalanceResu
             success = True
             break
 
+        # If we don't have enough remaining sweeps to reach 
+        # the good count threshold, no need to try.
+        if itr - ctx.max_iterations > ctx.good_sweep_threshold - good_sweep_count:
+            success = False
+            break
+
         if itr == ctx.max_iterations:
             success = False
             break

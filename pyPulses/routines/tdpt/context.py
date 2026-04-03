@@ -32,7 +32,8 @@ class TDPTContext():
     discharge_X_ratio: float | None = None
 
     # Limits on the control parameters
-    max_pulse_height: float = 50.0e-3
+    max_pulse_height_x: float = 50.0e-3
+    max_pulse_height_y: float = 50.0e-3
     min_pulse_width: float = 1.0e-6
     max_pulse_width: float = 5.0e-6
     pulse_width_resolution: float = 2.7e-10
@@ -158,8 +159,8 @@ class TDPTContext():
 
     def X1(self, v: float | None = None) -> float:
         if v is not None:
-            if not (-self.max_pulse_height <= v <= self.max_pulse_height):
-                v = float(np.clip(v, -self.max_pulse_height, self.max_pulse_height))
+            if not (-self.max_pulse_height_x <= v <= self.max_pulse_height_x):
+                v = float(np.clip(v, -self.max_pulse_height_x, self.max_pulse_height_x))
                 self.log(f"X1 clamped to {v:.5e}")
             self.charge_pair.X(v)
 
@@ -170,8 +171,8 @@ class TDPTContext():
 
     def Y1(self, v: float | None = None) -> float:
         if v is not None:
-            if not (-self.max_pulse_height <= v <= self.max_pulse_height):
-                v = float(np.clip(v, -self.max_pulse_height, self.max_pulse_height))
+            if not (-self.max_pulse_height_y <= v <= self.max_pulse_height_y):
+                v = float(np.clip(v, -self.max_pulse_height_y, self.max_pulse_height_y))
                 self.log(f"Y1 clamped to {v:.5e}")
             self.charge_pair.Y(v)
 
@@ -184,8 +185,8 @@ class TDPTContext():
         if not self.is_discharge():
             return None
         if v is not None:
-            if not (-self.max_pulse_height <= v <= self.max_pulse_height):
-                v = float(np.clip(v, -self.max_pulse_height, self.max_pulse_height))
+            if not (-self.max_pulse_height_x <= v <= self.max_pulse_height_x):
+                v = float(np.clip(v, -self.max_pulse_height_x, self.max_pulse_height_x))
                 self.log(f"X2 clamped to {v:.5e}")
             self.discharge_pair.X(v)
         return self.discharge_pair.X()
@@ -194,8 +195,8 @@ class TDPTContext():
         if not self.is_discharge():
             return None
         if v is not None:
-            if not (-self.max_pulse_height <= v <= self.max_pulse_height):
-                v = float(np.clip(v, -self.max_pulse_height, self.max_pulse_height))
+            if not (-self.max_pulse_height_y <= v <= self.max_pulse_height_y):
+                v = float(np.clip(v, -self.max_pulse_height_y, self.max_pulse_height_y))
                 self.log(f"Y2 clamped to {v:.5e}")
             self.discharge_pair.Y(v)
         return self.discharge_pair.Y()
@@ -238,15 +239,17 @@ class TDPTContext():
         else:
             self.reinitialize_negative_filter()
 
+        if W0 is None:
+            W0 = self.dis_filter._home_W
+        W0 = self.W(W0)
+
         if self.extrapolator is not None:
             self.extrapolator.clear()
-            if W0 is not None:
-                self.extrapolator.push_W0(W0)
+            self.extrapolator.push_W0(W0)
 
         self.log(
             f"Polarity switch to {'positive' if positive else 'negative'}. "
-            + (f"W0 set to {W0:.5e}. " if W0 is not None else "")
-            + "Filters reinitialized. Extrapolator histories cleared."
+            f"W set to {W0:.5e}. Filters reinitialized. Extrapolator histories cleared."
         )
 
     """Serialization"""
@@ -299,7 +302,8 @@ class TDPTContext():
                 cap_balance_threshold        = float(self.cap_balance_threshold),
                 dis_balance_threshold        = float(self.dis_balance_threshold),
                 int_balance_threshold        = float(self.int_balance_threshold),
-                max_pulse_height             = float(self.max_pulse_height),
+                max_pulse_height_x           = float(self.max_pulse_height_x),
+                max_pulse_height_y           = float(self.max_pulse_height_y),
                 discharge_X_ratio            = float(self.discharge_X_ratio) \
                     if self.discharge_X_ratio is not None else None,
                 min_pulse_width              = float(self.min_pulse_width),
