@@ -191,11 +191,11 @@ class DischargeFilter():
                 _positive_init_params    = self._positive_init_params,
                 _negative_init_params    = self._negative_init_params,
                 use_heuristic_process_noise = self.use_heuristic_process_noise,
-                _previous_dMdW           = self._previous_dMdW,
-                balance_change_Q         = self.balance_change_Q,
-                excitation_change_Q      = self.excitation_change_Q,
-                dMdW                     = self.dMdW,
-                P                        = self.P,
+                _previous_dMdW           = float(self._previous_dMdW),
+                balance_change_Q         = float(self.balance_change_Q),
+                excitation_change_Q      = float(self.excitation_change_Q),
+                dMdW                     = float(self.dMdW),
+                P                        = float(self.P),
             )
         }
 

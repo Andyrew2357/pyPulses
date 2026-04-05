@@ -16,7 +16,7 @@ is where the Kalman filter comes in).
 
 from ..pyPulses.devices import sr860, ad9854
 from ..pyPulses.utils import kalman
-from ..pyPulses.routines.cap_bridge import balanceCapBridge, BalanceCapBridgeConfig
+from .cap_bridge import balanceCapBridge, BalanceCapBridgeConfig
 
 import time
 import numpy as np

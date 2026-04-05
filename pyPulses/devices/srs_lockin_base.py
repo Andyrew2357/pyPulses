@@ -3,6 +3,7 @@ Control classes for Stanford Research Systems DSP Lock-in Amplifiers.
 """
 
 from .pyvisa_device import pyvisaDevice
+from .channel_adapter import ScalarChannelAdapter
 
 import numpy as np
 from logging import Logger
@@ -699,3 +700,33 @@ class SRSLockin(pyvisaDevice):
         instance._deserialize_state(config)
 
         return instance
+    
+    def resolve(self, accessor: str) -> ScalarChannelAdapter:
+        if accessor == 'input_sensitivity':
+            return SRSLockin_sensitivity_channel(self, lockin_scale=1.0)
+        if accessor == 'input_sensitivity_uV':
+            return SRSLockin_sensitivity_channel(self, lockin_scale=1e6)
+        raise ValueError(f"{self.__class__.__name__} cannot resolve accessor: {accessor!r}")
+    
+class SRSLockin_sensitivity_channel(ScalarChannelAdapter):
+    """
+    ScalarChannel for lock-in input sensitivity in volts.
+
+    Parameters
+    ----------
+    parent : SRSLockin
+    lockin_scale : float
+        The scale factor used by the accompanying lockin_call channel
+        (e.g. 1e6 if readings are in µV). Sensitivity targets derived
+        from lock-in readings must be divided by this before being passed
+        to input_sensitivity().
+    """
+    def __init__(self, parent: SRSLockin, lockin_scale: float = 1.0):
+        super().__init__(parent, 'input_sensitivity')
+        self.lockin_scale = lockin_scale
+
+    def get_output(self) -> float:
+        return self._parent.input_sensitivity() * self.lockin_scale
+
+    def set_output(self, value: float):
+        self._parent.input_sensitivity(value / self.lockin_scale)

@@ -62,6 +62,29 @@ class OffsetChannel(Protocol):
     """A channel that returns a dynamic offset value."""
     def __call__(self) -> float: ...
 
+@runtime_checkable
+class LockInChannel(Protocol):
+    """
+    A channel that returns a lock-in mean reading and its covariance.
+ 
+    Returns
+    -------
+    mean : ndarray, shape (2,)
+        [X, Y] mean reading.
+    cov : ndarray, shape (2, 2)
+        Covariance matrix of the mean.
+    """
+    def __call__(self) -> Tuple[np.ndarray, np.ndarray]: ...
+ 
+@runtime_checkable
+class CommandChannel(Protocol):
+    """
+    A channel that executes an immediate command with no arguments and
+    no meaningful return value. Typical use: triggering a lock-in
+    auto-gain or auto-range adjustment.
+    """
+    def __call__(self) -> None: ...
+
 class ChannelAdapter():
     """
     Base class for channel adapters.
@@ -125,3 +148,24 @@ class ScopeChannelAdapter(ChannelAdapter):
         super().__init__(parent, accessor)
 
     def __call__(self) -> Tuple[np.ndarray, float, float]: ...
+
+class LockInChannelAdapter(ChannelAdapter):
+    """
+    Base class for lock-in channel adapters.
+    Subclasses implement __call__ to return (mean, cov).
+    """
+    def __init__(self, parent, accessor: str):
+        super().__init__(parent, accessor)
+ 
+    def __call__(self) -> Tuple[np.ndarray, np.ndarray]: ...
+ 
+ 
+class CommandChannelAdapter(ChannelAdapter):
+    """
+    Base class for command channel adapters.
+    Subclasses implement __call__ to execute an immediate command.
+    """
+    def __init__(self, parent, accessor: str):
+        super().__init__(parent, accessor)
+ 
+    def __call__(self) -> None: ...

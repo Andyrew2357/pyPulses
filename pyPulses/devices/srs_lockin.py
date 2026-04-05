@@ -487,6 +487,61 @@ class sr860(SRSLockin):
         self.info(f"    sample_rate = {sample_rate} Hz")
         return sample_rate
     
+    def setup_data_acquisition_timed(self,
+        duration:    float,
+        config:      str   = 'XY',
+        sample_rate: float = None,
+        timeout:     float = None,
+    ) -> float:
+        """
+        Configure the data acquisition system for a given measurement duration.
+ 
+        Computes the required buffer size from the desired duration and sample
+        rate, rounded up to the nearest kilobyte, and calls
+        `setup_data_acquisition`.
+ 
+        Parameters
+        ----------
+        duration : float
+            Desired measurement duration in seconds.
+        config : str
+            One of {'X', 'XY', 'RT', 'XYRT'}.
+        sample_rate : float, optional
+            Desired sample rate in Hz. Defaults to maximum.
+        timeout : float, optional
+            Acquisition timeout in seconds. Defaults to 2 * duration + 5.
+ 
+        Returns
+        -------
+        sample_rate : float
+            The actual sample rate used.
+        """
+        import math
+        from math import log2
+ 
+        if timeout is None:
+            timeout = 2 * duration + 5
+ 
+        bytes_per_sample = {'X': 2, 'XY': 4, 'RT': 4, 'XYRT': 8}[config]
+ 
+        max_sample_rate = float(self.query("CAPTURERATEMAX?"))
+        if sample_rate is not None:
+            n = max(0, min(20, int(log2(max_sample_rate / sample_rate))))
+        else:
+            n = 0
+        actual_sample_rate = max_sample_rate / (2 ** n)
+ 
+        n_samples = math.ceil(duration * actual_sample_rate)
+        n_bytes   = n_samples * bytes_per_sample
+        buffer_kb = max(1, min(4096, math.ceil(n_bytes / 1024)))
+ 
+        return self.setup_data_acquisition(
+            buffer_size = buffer_kb,
+            config      = config,
+            sample_rate = actual_sample_rate,
+            timeout     = timeout,
+        )
+
     def _start_acquisition(self):
         """Start data acquisition."""
         if not self._acquisition.ready:
@@ -684,6 +739,52 @@ class sr860(SRSLockin):
                 )
             except:
                 print("Failed to set up data acquisition while deserializing.")
+
+    def resolve(self, accessor: str):
+        from .channel_adapter import LockInChannelAdapter, RescaleChannelAdapter
+ 
+        _lockin_accessors = {
+            'get_average':       (False, 1.0),
+            'get_average_uV':    (False, 1e6),
+            'get_average_sc':    (True,  1.0),
+            'get_average_sc_uV': (True,  1e6),
+        }
+        if accessor in _lockin_accessors:
+            series_corr, scale = _lockin_accessors[accessor]
+            return sr860_lockin_channel(self, accessor, scale, series_corr)
+ 
+        return super().resolve(accessor)
+    
+class sr860_lockin_channel():
+    """
+    LockInChannel for sr860.get_average / get_average_series_correlated.
+ 
+    Parameters
+    ----------
+    parent : sr860
+    accessor : str
+    scale : float
+        1.0 for raw volts, 1e6 for microvolts. Applied as mean*scale,
+        cov*(scale**2) so that units are consistent throughout.
+    series_corr : bool
+        If True, use get_average_series_correlated; else get_average.
+    """
+    def __init__(self, parent, accessor: str, scale: float, series_corr: bool):
+        self._parent      = parent
+        self._accessor    = accessor
+        self.scale        = scale
+        self._series_corr = series_corr
+ 
+    def format_ref(self):
+        return self._parent, self._accessor
+ 
+    def __call__(self):
+        if self._series_corr:
+            mean, cov = self._parent.get_average_series_correlated()
+        else:
+            mean, cov = self._parent.get_average()
+        s = self.scale
+        return mean * s, cov * (s * s)
 
 @register_hardware_class("sr865")
 class sr865a(sr860):

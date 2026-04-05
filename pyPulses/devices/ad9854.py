@@ -150,6 +150,14 @@ class ad9854(pyvisaDevice):
             return ad9854_amplitude_channel(self, 'X2', 2, 'X')
         if accessor == 'Y2':
             return ad9854_amplitude_channel(self, 'Y2', 2, 'Y')
+        if accessor == 'X1_unitless':
+            return ad9854_amplitude_unitless_channel(self, 'X1_unitless', 1, 'X')
+        if accessor == 'Y1_unitless':
+            return ad9854_amplitude_unitless_channel(self, 'Y1_unitless', 1, 'Y')
+        if accessor == 'X2_unitless':
+            return ad9854_amplitude_unitless_channel(self, 'X2_unitless', 2, 'X')
+        if accessor == 'Y2_unitless':
+            return ad9854_amplitude_unitless_channel(self, 'Y2_unitless', 2, 'Y')
         if accessor == 'phase':
             return ad9854_phase_channel(self)
         if accessor == 'freq':
@@ -351,6 +359,24 @@ class ad9854_amplitude_channel(ScalarChannelAdapter):
 
     def set_output(self, value: float):
         self._parent.set_amplitude(self.chip, self.chan, value)
+
+class ad9854_amplitude_unitless_channel(ScalarChannelAdapter):
+    """
+    ScalarChannelAdapter for ad9854 amplitude in unitless [0, 1] DAC units.
+ 
+    Useful for numerical conditioning when the amplitude range is known
+    and absolute voltage calibration is handled separately.
+    """
+    def __init__(self, parent: 'ad9854', accessor: str, chip: int, chan: str):
+        super().__init__(parent, accessor)
+        self.chip = chip
+        self.chan = chan
+ 
+    def get_output(self) -> float:
+        return self._parent.get_amplitude_unitless(self.chip, self.chan)
+ 
+    def set_output(self, value: float):
+        self._parent.set_amplitude_unitless(self.chip, self.chan, value)
 
 class ad9854_phase_channel(ScalarChannelAdapter):
     def __init__(self, parent: ad9854):

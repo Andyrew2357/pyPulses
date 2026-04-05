@@ -11,6 +11,16 @@ import numpy as np
 import logging
 import json
 
+class _NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy scalars and arrays."""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 @dataclass
 class TDPTContext():
@@ -294,7 +304,7 @@ class TDPTContext():
 
     def save_state_json(self, path: str):
         with open(path, 'w') as f:
-            json.dump(self._serialize_state(), f, indent=2)
+            json.dump(self._serialize_state(), f, indent=2, cls=_NumpyEncoder)
 
     def _serialize_state(self) -> dict:
         result = {

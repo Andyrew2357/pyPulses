@@ -252,8 +252,8 @@ class CapacitanceFilter():
                 _negative_init_params    = _params_to_list(self._negative_init_params),
                 balance_change_Q         = _to_list(self.balance_change_Q),
                 excitation_change_Q      = _to_list(self.excitation_change_Q),
-                Xamp                     = self.Xamp,
-                Yamp                     = self.Yamp,
+                Xamp                     = float(self.Xamp),
+                Yamp                     = float(self.Yamp),
                 kfilter_x                = self.kfilter.x.tolist() if self.kfilter else None,
                 kfilter_P                = self.kfilter.P.tolist() if self.kfilter else None,
             )
