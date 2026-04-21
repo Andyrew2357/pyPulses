@@ -97,9 +97,9 @@ def cap_measure(ctx: 'CapContext', use_matrix: bool = False) -> CapMeasureResult
         absA2 = X**2 + Y**2
         dV = np.array([(X * LX + Y * LY) / absA2, (-Y * LX + X * LY) / absA2])
 
-    V0_eff = np.array([V_now.real, V_now.imag]) + dV
-    Cex = ctx.Cstd * V0_eff[0] / ctx.Vex
-    Closs = ctx.Cstd * V0_eff[1] / ctx.Vex
+    V0_eff = np.array([V_now.real, V_now.imag]) - dV
+    Cex = -ctx.Cstd * V0_eff[0] / ctx.Vex
+    Closs = -ctx.Cstd * V0_eff[1] / ctx.Vex
 
     measure_result = CapMeasureResult(
         Cex = Cex,

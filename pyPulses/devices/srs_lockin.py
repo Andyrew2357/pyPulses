@@ -741,7 +741,6 @@ class sr860(SRSLockin):
                 print("Failed to set up data acquisition while deserializing.")
 
     def resolve(self, accessor: str):
-        from .channel_adapter import LockInChannelAdapter, RescaleChannelAdapter
  
         _lockin_accessors = {
             'get_average':       (False, 1.0),

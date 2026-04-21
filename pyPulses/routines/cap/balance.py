@@ -372,8 +372,8 @@ def _make_result(
     P: np.ndarray,
     ctx: 'CapContext',
 ) -> CapBalanceResult:
-    Cex   = ctx.Cstd * xb / ctx.Vex
-    Closs = ctx.Cstd * yb / ctx.Vex
+    Cex   = -ctx.Cstd * xb / ctx.Vex
+    Closs = -ctx.Cstd * yb / ctx.Vex
     return CapBalanceResult(
         status = status,
         n_iter = n_iter,

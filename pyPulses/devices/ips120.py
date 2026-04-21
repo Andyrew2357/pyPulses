@@ -21,6 +21,7 @@ class ips120(pyvisaDevice):
     max_B = 10.0  # T
 
     heater_wait_time = 7 # s
+    stabilize_wait_time = 10 # s  pause before/after heater switching to let field stabilize
 
     B_tol_match = 1e-5  # T (Used when matching output and persistent)
     B_tol_assertive = 1e-4  # T (Used in _goto_B and set_B)
@@ -47,36 +48,36 @@ class ips120(pyvisaDevice):
         super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
     class parm(IntEnum):
-        OUTPUT_CURRENT      = 0,    # A
-        OUTPUT_VOLTAGE      = 1,    # V
-        MAGNET_CURRENT      = 2,    # A
-        SET_CURRENT         = 5,    # A
-        SWEEP_RATE          = 6,    # A / min
-        OUTPUT_FIELD        = 7,    # T
-        SET_FIELD           = 8,    # T
-        FIELD_SWEEP_RATE    = 9,    # T / min
-        VOLTAGE_LIMIT       = 15,   # V
-        PERSISTENT_CURRENT  = 16,   # A
-        TRIP_CURRENT        = 17,   # A
-        MAGNET_FIELD        = 18,   # T
-        TRIP_FIELD          = 19,   # T
-        SWITCH_CURRENT      = 20,   # mA
-        SAFE_LIMIT_POS      = 21,   # A
-        SAFE_LIMIT_NEG      = 22,   # A
-        LEAD_RESISTANCE     = 23,   # mOhm
-        MAGNET_INDUCTANCE   = 24    # H
+        OUTPUT_CURRENT      = 0  # A
+        OUTPUT_VOLTAGE      = 1  # V
+        MAGNET_CURRENT      = 2  # A
+        SET_CURRENT         = 5  # A
+        SWEEP_RATE          = 6  # A / min
+        OUTPUT_FIELD        = 7  # T
+        SET_FIELD           = 8  # T
+        FIELD_SWEEP_RATE    = 9  # T / min
+        VOLTAGE_LIMIT       = 15 # V
+        PERSISTENT_CURRENT  = 16 # A
+        TRIP_CURRENT        = 17 # A
+        MAGNET_FIELD        = 18 # T
+        TRIP_FIELD          = 19 # T
+        SWITCH_CURRENT      = 20 # mA
+        SAFE_LIMIT_POS      = 21 # A
+        SAFE_LIMIT_NEG      = 22 # A
+        LEAD_RESISTANCE     = 23 # mOhm
+        MAGNET_INDUCTANCE   = 24 # H
 
     class mode(IntEnum):
-        HOLD        = 0,
-        GOTOTARGET  = 1,
-        GOTOZERO    = 2,
+        HOLD        = 0
+        GOTOTARGET  = 1
+        GOTOZERO    = 2
         CLAMP       = 4
 
     class status(IntEnum):
         HEATER  = 7
-        ATREST  = 10,
-        MODE    = 3,
-        SYSTEM  = 0,
+        ATREST  = 10
+        MODE    = 3
+        SYSTEM  = 0
         LIMIT   = 1
 
     """Base level routines"""
@@ -162,7 +163,7 @@ class ips120(pyvisaDevice):
             {'HOLD', 'GOTOTARGET', 'GOTOZERO', 'CLAMP'}.
         """
 
-        return self.mode(self.get_status(self.status.MODE))
+        return self.mode(float(self.get_status(self.status.MODE)))
 
     def _get_output_field(self) -> float | None:
         """Get the output field (not persistent)"""
@@ -258,7 +259,7 @@ class ips120(pyvisaDevice):
             return False
         
         wait_time = self.heater_wait_time
-        self.info(f"Setting heater to H{int(state)} abd waiting {wait_time:.4f} s")
+        self.info(f"Setting heater to H{int(state)} and waiting {wait_time:.4f} s")
         self._send_cmd(f"H{int(state)}")
         time.sleep(wait_time)
         return True
@@ -319,21 +320,37 @@ class ips120(pyvisaDevice):
         self._set_mode(self.mode.GOTOTARGET)
         time.sleep(0.05)
         self._wait_until_at_rest()
+
+        # Poll R7 (output field) directly until target is reached, matching MATLAB
+        while True:
+            Bout = self._get_output_field()
+            if Bout is not None and abs(Bout - B) <= self.B_tol_assertive:
+                break
+            self.info(f"Waiting to reach target; output field = {Bout:.6f} T, target = {B} T")
+            time.sleep(5.0)
+
+        self.info("Output field at target; pausing to stabilize before heater off")
+        time.sleep(self.stabilize_wait_time)
+
         self._set_mode(self.mode.HOLD)
 
     def _ramp_to_zero(self):
-        """ramp the current in the leads to 0"""
+        """Ramp the current in the leads to 0"""
 
-        self._set_target_field(0.0)
-        self._set_mode(self.mode.GOTOTARGET)
+        self._set_mode(self.mode.GOTOZERO)
         time.sleep(0.05)
         self._wait_until_at_rest()
+
+        # Poll output field directly until it reads zero, matching MATLAB behavior
+        while True:
+            Bout = self._get_output_field()
+            if Bout is None or abs(Bout) <= self.B_tol_assertive:
+                break
+            self.info(f"Waiting for lead current to reach zero; currently {Bout:.6f} T")
+            time.sleep(3.0)
+
         self._set_mode(self.mode.HOLD)
         self.info("Ramped lead current to 0")
-
-        Bout = self._get_output_field()
-        if abs(Bout) > self.B_tol_assertive:
-            self.warn(f"Marginal current still remaining in leads: {Bout:.6f} T")
 
     """User level methods"""
 
@@ -378,8 +395,21 @@ class ips120(pyvisaDevice):
             )
             return False
 
-        # Set the current in the leads to 0
-        if abs(self._get_output_field()) != 0:
+        # Pause to let persistent field stabilize after heater off
+        self.info(f"Heater off; pausing {self.stabilize_wait_time} s to stabilize")
+        time.sleep(self.stabilize_wait_time)
+
+        # Verify persistent field matches target (R18)
+        Bper = self._get_persistent_field()
+        if Bper is not None and abs(Bper - B) > self.B_tol_assertive:
+            self.warn(
+                f"Persistent field {Bper:.6f} T differs from target {B:.6f} T "
+                f"after heater off"
+            )
+
+        # Ramp leads to zero
+        if self._get_output_field() is not None and \
+                abs(self._get_output_field()) > self.B_tol_assertive:
             self._ramp_to_zero()
 
         return True
