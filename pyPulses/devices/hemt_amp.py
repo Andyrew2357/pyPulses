@@ -1,8 +1,9 @@
+# TODO THIS ENTIRE THING NEEDS TO BE REWORKED
 
 from .abstract_device import abstractDevice
 from ..utils import curves
-from ..utils.tandem_sweep import ezTandemSweep, SweepResult
-from ..utils.param_sweep_measure import SweepMeasureCut
+from ...legacy.tandem_sweep import ezTandemSweep, SweepResult
+from ...legacy.param_sweep_measure import SweepMeasureCut
 
 # REFACTORED PLOTTING...
 from .plot_sweep import plotSweep # type: ignore

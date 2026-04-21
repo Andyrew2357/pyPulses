@@ -5,7 +5,7 @@ from ..pyPulses.devices.registry import resolve_reference, format_reference
 from ..pyPulses.devices.wfatd import wfAverager, wfBalance, wfCurveData
 from ..pyPulses.devices.pulse_pair import pulsePair
 from ..pyPulses.utils import kalman
-from ..pyPulses.thread_job import _checkpoint
+from .thread_job import _checkpoint
 
 from dataclasses import dataclass
 import numpy as np

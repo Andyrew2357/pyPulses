@@ -1,6 +1,6 @@
 from .balance_parameter import balanceError, balanceKnob
 
-from ..thread_job import _checkpoint
+from ..core.job import checkpoint
 
 import time
 import logging
@@ -120,7 +120,7 @@ class lstsqBalance():
         return np.array([c.get_val() for c in self.controls], dtype=float)
 
     def measure_error_parms(self) -> np.ndarray:
-        _checkpoint()
+        checkpoint()
 
         self.log(f"Measuring error parameters...")
         self.pre_callback(self)

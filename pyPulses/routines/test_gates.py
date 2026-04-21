@@ -1,10 +1,12 @@
+# TODO THIS ENTIRE THING NEEDS TO BE REWORKED 
+
 """
 Get an estimate of the safe gating range by iterative convex polygon expansion
 """
 
-from ..utils.tandem_sweep import SweepResult, ezTandemSweep
+from ...legacy.tandem_sweep import SweepResult, ezTandemSweep
 from ..utils.getsetter import getSetter
-from ..plotting.recorder import Recorder, Line, Polygon
+from ...legacy.plotting.recorder import Recorder, Line, Polygon
 
 import json
 import numpy as np

@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, IO, List, Optional, Tuple, Union
 
-from ..pyPulses.utils.tandem_sweep import tandemSweep
+from .tandem_sweep import tandemSweep
 
 def set_swept_params(setters    : List[Callable[[float], Any]], 
                      prev       : np.ndarray,

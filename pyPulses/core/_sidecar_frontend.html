@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sidecar</title>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@2/MathJax.js?config=TeX-AMS-MML_SVG"></script>
+  <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist@2.27.0/plotly.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #1a1a2e;
+           color: #cdd6f4; padding: 8px; overflow-x: hidden; }
+
+    /* Control bar */
+    #ctrl { display: flex; align-items: center; gap: 8px;
+            padding: 6px 10px; background: #16213e;
+            border-radius: 6px; margin-bottom: 8px; }
+    #ctrl button {
+      padding: 4px 14px; border: none; border-radius: 4px;
+      cursor: pointer; font-size: 13px; font-weight: 600;
+      transition: opacity .15s;
+    }
+    #ctrl button:disabled { opacity: .35; cursor: default; }
+    #btn-pause  { background: #f9e2af; color: #1e1e2e; }
+    #btn-resume { background: #a6e3a1; color: #1e1e2e; }
+    #btn-stop   { background: #f38ba8; color: #1e1e2e; }
+    #job-status { font-size: 12px; color: #a6adc8; margin-left: auto; }
+    #status     { font-size: 11px; color: #585b70; margin-left: 8px; }
+
+    /* Frames */
+    #frames { display: flex; flex-direction: column; width: 100%; }
+    .frame-grid { display: grid; grid-template-columns: repeat(var(--cols, 1), 1fr); gap: 8px; }
+    .frame-divider {
+      border: none;
+      border-top: 1px solid #313244;
+      margin: 8px 0;
+    }
+
+    /* Pane */
+    .pane       { background: #16213e; border-radius: 6px; padding: 6px;
+                  display: flex; flex-direction: column; }
+
+    .plot-wrap { width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="ctrl">
+    <button id="btn-pause"  onclick="jobCmd('pause')">⏸ Pause</button>
+    <button id="btn-resume" onclick="jobCmd('resume')">▶ Resume</button>
+    <button id="btn-stop"   onclick="jobCmd('stop')">⏹ Stop</button>
+    <span id="job-status">No job</span>
+    <span id="status">connecting…</span>
+  </div>
+  <div id="frames"></div>
+
+<script>
+'use strict';
+
+const POLL_MS = 250;
+const COLORS  = [
+  '#89b4fa','#f38ba8','#a6e3a1','#f9e2af',
+  '#cba6f7','#94e2d5','#fab387','#89dceb',
+];
+
+// pane name -> {el, plotlyEl, plotWrap, frameIdx, lastVersion, zLocal}
+const panes = {};
+// frame index -> {gridEl, cols}
+const frames = {};
+// Whether the very first poll has happened yet
+let firstPoll = true;
+
+// ---------------------------------------------------------------------------
+// Job control
+// ---------------------------------------------------------------------------
+
+async function jobCmd(action) {
+  try {
+    await fetch('/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action}),
+    });
+  } catch(e) { console.warn('control error', e); }
+}
+
+function updateJobUI(job) {
+  const s      = document.getElementById('job-status');
+  const pause  = document.getElementById('btn-pause');
+  const resume = document.getElementById('btn-resume');
+  const stop   = document.getElementById('btn-stop');
+
+  if (!job || job.status === 'none') {
+    s.textContent   = 'No job running';
+    pause.disabled  = true;
+    resume.disabled = true;
+    stop.disabled   = true;
+  } else {
+    s.textContent   = `Job: ${job.status}`;
+    pause.disabled  = (job.status === 'paused' || job.status === 'stopped');
+    resume.disabled = (job.status !== 'paused');
+    stop.disabled   = (job.status === 'stopped');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Frame management
+// ---------------------------------------------------------------------------
+
+function getOrCreateFrame(frameIdx, cols) {
+  if (frames[frameIdx]) {
+    frames[frameIdx].cols = cols;
+    frames[frameIdx].gridEl.style.setProperty('--cols', cols);
+    return frames[frameIdx];
+  }
+
+  const container = document.getElementById('frames');
+
+  // Thin divider before every frame except the first
+  if (Object.keys(frames).length > 0) {
+    const hr = document.createElement('hr');
+    hr.className = 'frame-divider';
+    container.appendChild(hr);
+  }
+
+  const gridEl = document.createElement('div');
+  gridEl.className = 'frame-grid';
+  container.appendChild(gridEl);
+
+  frames[frameIdx] = {gridEl, cols};
+  gridEl.style.setProperty('--cols', cols);
+
+  return frames[frameIdx];
+}
+
+// ---------------------------------------------------------------------------
+// Pane management
+// ---------------------------------------------------------------------------
+
+function paneWidth(frameIdx) {
+  const f     = frames[frameIdx];
+  if (!f) return 380;
+  const cols  = f.cols || 1;
+  const gridW = f.gridEl.clientWidth || 500;
+  return Math.floor((gridW - 8 * (cols - 1)) / cols) - 20;
+}
+
+function getOrCreatePane(name, frameIdx) {
+  if (panes[name]) return panes[name];
+
+  const f = frames[frameIdx];
+  if (!f) return null;
+
+  const el = document.createElement('div');
+  el.className = 'pane';
+
+  const plotWrap = document.createElement('div');
+  plotWrap.className = 'plot-wrap';
+  el.appendChild(plotWrap);
+
+  f.gridEl.appendChild(el);
+
+  panes[name] = {el, plotlyEl: null, plotWrap, frameIdx,
+                 lastVersion: -1, zLocal: null, userZoomed: false};
+
+  return panes[name];
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function colorWithOpacity(cssColor, opacity) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 1;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = cssColor;
+  ctx.fillRect(0, 0, 1, 1);
+  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+  return `rgba(${r},${g},${b},${opacity.toFixed(2)})`;
+}
+
+async function copyPlotToClipboard(plotlyEl) {
+  try {
+    const url  = await Plotly.toImage(plotlyEl, {format: 'png'});
+    const blob = await (await fetch(url)).blob();
+    await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+  } catch(e) {
+    console.warn('Clipboard write failed:', e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Line pane renderer (Plotly)
+// ---------------------------------------------------------------------------
+
+function renderLinePane(name, cfg, data, frameIdx) {
+  const entry      = panes[name];
+  const w          = paneWidth(frameIdx);
+  const h          = Math.round(w * 0.55);
+  const maxHistory = cfg.max_history || 0;
+
+  const hasY2 = cfg.lines.some(l => l.secondary_y);
+
+  const current    = data.current || data;
+  const history    = data.history || [];
+  const baseColors = cfg.lines.map((l, i) => l.color || COLORS[i % COLORS.length]);
+
+  // One trace per line per slot — each with its own x array.
+  const traces = [];
+  for (let slot = 0; slot <= maxHistory; slot++) {
+    const isCurrent = slot === 0;
+    const src       = isCurrent ? current : (history[slot - 1] || null);
+    const opacity   = isCurrent ? 1.0 : 1.0 - slot / (maxHistory + 1);
+    for (let li = 0; li < cfg.lines.length; li++) {
+      const l  = cfg.lines[li];
+      const ch = src ? (src[l.channel] || null) : null;
+      traces.push({
+        x         : ch ? ch.x : [],
+        y         : ch ? ch.y : [],
+        type      : 'scatter',
+        mode      : 'lines',
+        yaxis     : l.secondary_y ? 'y2' : 'y',
+        line      : { color: isCurrent ? baseColors[li]
+                                       : colorWithOpacity(baseColors[li], opacity),
+                      width: isCurrent ? 2 : 1 },
+        showlegend: isCurrent && cfg.lines.length > 1,
+        name      : isCurrent ? (l.label || l.channel) : null,
+        hoverinfo : 'x+y',
+      });
+    }
+  }
+
+  const axisStyle = {
+    color        : '#a6adc8',
+    gridcolor    : '#313244',
+    linecolor    : '#313244',
+    zerolinecolor: '#313244',
+    tickfont     : {color: '#a6adc8', size: 10},
+  };
+
+  const titleStyle = {color: '#a6adc8', size: 11};
+  const layout = {
+    width        : w,
+    height       : h,
+    paper_bgcolor: '#16213e',
+    plot_bgcolor : '#16213e',
+    margin       : {l: 45, r: hasY2 ? 45 : 10, t: 28, b: 36},
+    title        : {text: name, font: titleStyle, x: 0.5, xanchor: 'center'},
+    xaxis        : {...axisStyle, type: cfg.xscale  === 'log' ? 'log' : '-',
+                    title: {text: cfg.xlabel || '', font: titleStyle, standoff: 4}},
+    yaxis        : {...axisStyle, type: cfg.yscale  === 'log' ? 'log' : '-',
+                    title: {text: cfg.ylabel || '', font: titleStyle, standoff: 4}},
+    yaxis2       : {...axisStyle, type: cfg.yscale2 === 'log' ? 'log' : '-',
+                    overlaying: 'y', side: 'right', showgrid: false,
+                    title: {text: cfg.ylabel2 || '', font: titleStyle, standoff: 4}},
+    showlegend   : cfg.lines.length > 1,
+    legend       : {font: {color: '#cdd6f4', size: 10}, bgcolor: 'rgba(0,0,0,0)'},
+    dragmode     : 'zoom',
+    font         : {color: '#a6adc8'},
+  };
+
+  const modeBarButtons = [[
+    'zoom2d', 'pan2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d',
+    'toImage',
+    {
+      name : 'Copy to clipboard',
+      icon : Plotly.Icons.camera,
+      click: (gd) => copyPlotToClipboard(gd),
+      title: 'Copy PNG to clipboard',
+    },
+  ]];
+
+  const config = {
+    responsive          : false,
+    scrollZoom          : false,
+    modeBarButtons,
+    displaylogo         : false,
+    toImageButtonOptions: {format: 'png', filename: name},
+  };
+
+  if (!entry.plotlyEl) {
+    const plotlyEl = document.createElement('div');
+    entry.plotWrap.appendChild(plotlyEl);
+    entry.plotlyEl = plotlyEl;
+    Plotly.newPlot(plotlyEl, traces, layout, config);
+
+    plotlyEl.on('plotly_relayout', (update) => {
+      if (!update) return;
+      // Reset-axes button sends autorange: true
+      const isReset = update['xaxis.autorange'] || update['yaxis.autorange']
+                   || update.autosize;
+      if (isReset) {
+        entry.userZoomed = false;
+      } else if (update['xaxis.range[0]'] !== undefined ||
+                 update['yaxis.range[0]'] !== undefined ||
+                 update['xaxis.range']    !== undefined ||
+                 update['yaxis.range']    !== undefined) {
+        entry.userZoomed = true;
+      }
+    });
+
+  } else {
+
+    if (entry.userZoomed) {
+      const cur = entry.plotlyEl.layout;
+      if (cur.xaxis && cur.xaxis.range) {
+        layout.xaxis.range    = cur.xaxis.range;
+        layout.xaxis.autorange = false;
+      }
+      if (cur.yaxis && cur.yaxis.range) {
+        layout.yaxis.range    = cur.yaxis.range;
+        layout.yaxis.autorange = false;
+      }
+      if (cur.yaxis2 && cur.yaxis2.range) {
+        layout.yaxis2.range    = cur.yaxis2.range;
+        layout.yaxis2.autorange = false;
+      }
+    }
+
+    Plotly.react(entry.plotlyEl, traces, layout, config);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Heatmap pane renderer (Plotly)
+// ---------------------------------------------------------------------------
+
+function renderHeatmapPane(name, cfg, data, frameIdx) {
+  const entry = panes[name];
+
+  // Skip render if nothing changed since last poll
+  if (entry.lastVersion === data.version) return;
+
+  // --- Maintain local z array ---
+
+  // Full array included → initialize or replace
+  if (data.z) {
+    entry.zLocal = data.z.map(row => [...row]);
+  }
+
+  // If we still have no local array we can't render yet
+  if (!entry.zLocal) return;
+
+  // Apply deltas on top of local copy
+  for (const [r, c, val] of (data.updates || [])) {
+    entry.zLocal[r][c] = val;
+  }
+
+  entry.lastVersion = data.version;
+
+  // --- Render ---
+
+  const w = paneWidth(frameIdx);
+  const h = Math.round(w * 0.85);
+
+  const zForPlotly = entry.zLocal.map(row =>
+    row.map(v => (v === null || (typeof v === 'number' && isNaN(v))) ? null : v)
+  );
+
+  const axisStyle = {
+    color        : '#a6adc8',
+    gridcolor    : '#313244',
+    linecolor    : '#313244',
+    zerolinecolor: '#313244',
+    tickfont     : {color: '#a6adc8', size: 10},
+  };
+  const titleStyle = {color: '#a6adc8', size: 11};
+
+  // Explicit reversed y range — computed once, used by layout and reset handler
+  const yCoords = cfg.y_coords;
+  const nRows   = cfg.shape[0];
+  const yRange  = yCoords
+    ? [yCoords[yCoords.length - 1], yCoords[0]]
+    : [nRows - 0.5, -0.5];
+
+  if (!entry.plotlyEl) {
+    const trace = {
+      z           : zForPlotly,
+      type        : 'heatmap',
+      colorscale  : cfg.colorscale,
+      reversescale: cfg.reversescale,
+      zmin        : data.zmin,
+      zmax        : data.zmax,
+      zauto       : false,
+      x           : cfg.x_coords || undefined,
+      y           : cfg.y_coords || undefined,
+      hoverongaps : false,
+      colorbar    : {
+        tickfont : {color: '#a6adc8', size: 10},
+        titlefont: {color: '#a6adc8', size: 11},
+      },
+    };
+
+    const layout = {
+      width        : w,
+      height       : h,
+      paper_bgcolor: '#16213e',
+      plot_bgcolor : '#16213e',
+      margin       : {l: 50, r: 20, t: 28, b: 40},
+      title        : {text: name, font: titleStyle, x: 0.5, xanchor: 'center'},
+      xaxis        : {...axisStyle,
+                       title: {text: cfg.xlabel || '', font: titleStyle, standoff: 4}},
+      yaxis        : {...axisStyle,
+                       title: {text: cfg.ylabel || '', font: titleStyle, standoff: 4},
+                       range: yRange, autorange: false},
+      font         : {color: '#a6adc8'},
+    };
+
+    const modeBarButtons = [[
+      'zoom2d', 'pan2d', 'zoomIn2d', 'zoomOut2d',
+      'autoScale2d', 'resetScale2d', 'toImage',
+      {
+        name : 'Copy to clipboard',
+        icon : Plotly.Icons.camera,
+        click: (gd) => copyPlotToClipboard(gd),
+        title: 'Copy PNG to clipboard',
+      },
+    ]];
+
+    const plotlyEl = document.createElement('div');
+    entry.plotWrap.appendChild(plotlyEl);
+    entry.plotlyEl = plotlyEl;
+
+    Plotly.newPlot(plotlyEl, [trace], layout, {
+      responsive  : false,
+      scrollZoom  : false,
+      displaylogo : false,
+      modeBarButtons,
+      toImageButtonOptions: {format: 'png', filename: name},
+    });
+
+    // Reset-axes button sets autorange:true, losing the reversed range.
+    // Catch it and re-apply.
+    plotlyEl.on('plotly_relayout', function(update) {
+      if (!update || plotlyEl._fixingYAxis) return;
+      if (update['yaxis.autorange'] || update.autosize) {
+        plotlyEl._fixingYAxis = true;
+        Plotly.relayout(plotlyEl, {
+          'yaxis.range': yRange,
+          'yaxis.autorange': false,
+        }).then(function() {
+          plotlyEl._fixingYAxis = false;
+        });
+      }
+    });
+
+  } else {
+    Plotly.restyle(entry.plotlyEl, {
+      z   : [zForPlotly],
+      zmin: data.zmin,
+      zmax: data.zmax,
+    }, [0]);
+  }
+}
+
+// Dispatcher — add new pane types here
+const RENDERERS = { line: renderLinePane, heatmap: renderHeatmapPane };
+
+// ---------------------------------------------------------------------------
+// Poll loop
+// ---------------------------------------------------------------------------
+
+async function poll() {
+  try {
+    const fullFlag = firstPoll ? '?full=1' : '';
+    firstPoll = false;
+
+    const r     = await fetch('/state' + fullFlag);
+    const state = await r.json();
+
+    updateJobUI(state.job);
+
+    let totalPts = 0;
+
+    // Build complete set of pane names the server currently knows about
+    const allServerPanes = new Set(
+      (state.frames || []).flatMap(f => Object.keys(f.panes || {}))
+    );
+    // Remove any frontend pane not in server state
+    for (const [name, entry] of Object.entries(panes)) {
+      if (!allServerPanes.has(name)) {
+        entry.el.remove();
+        delete panes[name];
+      }
+    }
+
+    for (const frameData of (state.frames || [])) {
+      const frameIdx = frameData.frame;
+      const cols     = frameData.layout ? frameData.layout.cols : 1;
+
+      getOrCreateFrame(frameIdx, cols);
+
+      for (const [name, pane] of Object.entries(frameData.panes || {})) {
+        getOrCreatePane(name, frameIdx);
+        const renderer = RENDERERS[pane.type];
+        if (renderer) renderer(name, pane.config, pane.data, frameIdx);
+
+        // Point counting for status line
+        const pdata = (pane.data || {});
+        if (pane.type === 'line') {
+          const cur = pdata.current || pdata;
+          for (const d of Object.values(cur)) {
+            if (d && d.x) totalPts += d.x.length;
+          }
+        } else if (pane.type === 'heatmap') {
+          // Count non-null cells in local z
+          const entry = panes[name];
+          if (entry && entry.zLocal) {
+            for (const row of entry.zLocal) {
+              for (const v of row) {
+                if (v !== null && !(typeof v === 'number' && isNaN(v))) totalPts++;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    document.getElementById('status').textContent =
+      `${totalPts} pts  •  ${new Date().toLocaleTimeString()}`;
+
+  } catch(e) {
+    document.getElementById('status').textContent = 'server unreachable';
+  }
+  setTimeout(poll, POLL_MS);
+}
+
+poll();
+</script>
+</body>
+</html>

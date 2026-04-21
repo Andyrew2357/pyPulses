@@ -29,6 +29,7 @@ from .pcm1704 import pcm1704
 from .pid_dcbox import PIDbox
 from .pulse_pair import pulsePair
 from .srs_lockin import (sr830, sr844, sr850, sr860, sr865a)
+from .sweepable_channel import SweepableChannel, SweepConfig
 from .wfatd import wfAverager, wfBalance, wfJump, wfSlope
 
 __all__ = [
@@ -66,6 +67,8 @@ __all__ = [
     "sr850",
     "sr860",
     "sr865a",
+    "SweepableChannel",
+    "SweepConfig",
     "TrivialCalibration",
     "wfAverager", 
     "wfBalance", 

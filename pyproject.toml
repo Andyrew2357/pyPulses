@@ -33,12 +33,6 @@ dependencies = [
     "zhinst-toolkit"
 ]
 
-[project.optional-dependencies]
-plotting = [
-    "anywidget",
-    "plotly"
-]
-
 [project.urls]
 repository = "https://github.com/Andyrew2357/pyPulses.git"
 
@@ -50,17 +44,12 @@ requires = [
 ]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = [
-    "pyPulses", 
-    "pyPulses.devices", 
-    "pyPulses.plotting",
-    "pyPulses.routines",
-    "pyPulses.utils"
-]
+[tool.setuptools.packages.find]
+include = ["pyPulses*"]
 
 [tool.setuptools.package-data]
-example = [
+"*" = [
+    "*.html",
     "*.json",
     "*.npy"
 ]

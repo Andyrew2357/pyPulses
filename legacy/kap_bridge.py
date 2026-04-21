@@ -1,4 +1,4 @@
-from ..pyPulses.thread_job import _checkpoint
+from .thread_job import _checkpoint
 from ..pyPulses.utils.kalman import kalman
 from .cap_utils import balanceCapBridgeTwoPoint, TwoPointCapBalance
 

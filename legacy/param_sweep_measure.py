@@ -11,9 +11,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Tuple
 
 from .tandem_sweep import tandemSweep
-from .getsetter import getSetter
-from ..plotting.recorder import SweepRecorder
-from ..thread_job import _checkpoint, ThreadJob
+from ..pyPulses.utils.getsetter import getSetter
+from .plotting.recorder import SweepRecorder
+from .thread_job import _checkpoint, ThreadJob
 
 def _get_data_str(coords: np.ndarray, data: np.ndarray, 
                  now: datetime.datetime | None) -> str:

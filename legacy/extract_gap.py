@@ -20,7 +20,7 @@ See my notes on gap extraction for a clearer explanation of the math involved.
 import numpy as np
 import os
 from typing import List, Tuple
-from ..utils import curves
+from ..pyPulses.utils import curves
 
 def _pad_z(a: np.ndarray) -> np.ndarray:
     """Pad zeros along the final axis"""

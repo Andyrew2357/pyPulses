@@ -1,5 +1,5 @@
 from .param_sweep_measure import SweepMeasureArbitraryIterator
-from ..thread_job import ThreadJob
+from .thread_job import ThreadJob
 
 import logging
 import datetime
