@@ -243,8 +243,8 @@ def cap_balance_three_point(
 
     The algorithm follows the Ashoori thesis three-point procedure.
     The kap_bridge sign convention is used throughout:
-        V0.real  -> capacitive component  -> Cex  = Cstd * V0.real / Vex
-        V0.imag  -> lossy component       -> Closs = Cstd * V0.imag / Vex
+        V0.real  -> capacitive component  -> Cex = -Cstd * V0.real / Vex
+        V0.imag  -> lossy component       -> Closs = -Cstd * V0.imag / Vex
 
     Parameters
     ----------
@@ -369,16 +369,16 @@ def cap_balance_three_point(
     C_meas[4:6, 4:6] = Lcov[:, :, 2]
     P = fudge * J @ C_meas @ J.T
 
-    Cex = Cstd * Vc0 / Vex
-    Closs = Cstd * Vr0 / Vex
+    Cex = -Cstd * Vc0 / Vex
+    Closs = -Cstd * Vr0 / Vex
     in_range = abs(V0) <= Vstd_range
 
     error = None
     if in_range and move_to_balance:
         V0_set = _set_Vstd_complex(Vstd, Theta, V0, wait=wait)
         V0 = V0_set
-        Cex = Cstd * V0.real / Vex
-        Closs = Cstd * V0.imag / Vex
+        Cex = -Cstd * V0.real / Vex
+        Closs = -Cstd * V0.imag / Vex
         mean_err, _ = _sample_lockin(lockin_call, samples)
         error = (float(mean_err[0]), float(mean_err[1]))
         if logger:
@@ -490,14 +490,14 @@ def cap_balance_two_point(
     Cex = None
     Closs = None
     if in_range:
-        Cex = Cstd * V0.real / Vex
-        Closs = Cstd * V0.imag / Vex
+        Cex = -Cstd * V0.real / Vex
+        Closs = -Cstd * V0.imag / Vex
 
     if in_range and move_to_balance:
         V0_set = _set_Vstd_complex(Vstd, Theta, V0, wait=wait)
         V0 = V0_set
-        Cex = Cstd * V0.real / Vex
-        Closs = Cstd * V0.imag / Vex
+        Cex = -Cstd * V0.real / Vex
+        Closs = -Cstd * V0.imag / Vex
         if logger:
             logger.info(
                 f"Two-point: moved to V0={V0.real:.5e}+{V0.imag:.5e}i. "
