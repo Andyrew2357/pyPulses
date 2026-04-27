@@ -4,6 +4,7 @@ from .cap_filter import CapFilter
 from .context import CapContext
 from .config import CAP_INIT_P_MULT_THREE_POINT, CAP_INIT_P_MULT_TWO_POINT
 from ...devices.channel_adapter import ScalarChannel, LockInChannel
+from ...core.sidecar import LinePane, LineConfig, Sidecar
 
 from dataclasses import dataclass
 from typing import Callable, Tuple
@@ -162,9 +163,37 @@ class CapInitialFilterConfig():
     
 """Internal helpers"""
 
+def _setup_lockin_pane(frame: int = 0) -> LinePane | None:
+    """
+    Set up a sidecar LinePane for live lock-in monitoring during balance.
+    Returns the pane, or None if no sidecar is active.
+    """
+
+    sidecar = Sidecar.instance()
+    if sidecar is None:
+        return None
+
+    sidecar.clear_panes(frame=frame)
+
+    pane = LinePane(
+        name='balance lock-in',
+        lines=[
+            LineConfig('LX'),
+            LineConfig('LY', secondary_y=True),
+        ],
+        x='n',
+        xlabel='sample',
+        ylabel='$L_X$ (V)',
+        ylabel2='$L_Y$ (V)',
+    )
+    sidecar.add_pane(pane, frame=frame)
+    return pane
+
 def _sample_lockin(
     lockin_call: Callable[[], tuple],
     samples: int,
+    pane: LinePane | None =None,
+    sample_offset: int = 0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Call lockin_call `samples` times and return the grand mean and its
@@ -193,6 +222,14 @@ def _sample_lockin(
         m, c = lockin_call()
         means.append(np.asarray(m, dtype=float).reshape(2))
         covs.append(np.asarray(c, dtype=float).reshape(2, 2))
+        
+        if pane is not None:
+            pane.update(None, {
+                'n': sample_offset + _,
+                'LX': float(m[0]),
+                'LY': float(m[1]),
+            })
+
     mean = np.mean(means, axis=0)
     cov = np.sum(covs, axis=0) / (samples ** 2)
     return mean, cov
@@ -231,8 +268,11 @@ def cap_balance_three_point(
     fudge: float = CAP_INIT_P_MULT_THREE_POINT,
     wait: float = 3.0,
     move_to_balance: bool = True,
+    robust_error: bool = False,
     ignore_range_warning: bool = False,
     logger: logging.Logger | None = None,
+    plot: bool = False,
+    frame: int = 0,
 ) -> ThreePointBalanceResult:
     """
     Perform a three-point AC bridge balance.
@@ -269,9 +309,16 @@ def cap_balance_three_point(
         Seconds to wait after setting Vstd before sampling.
     move_to_balance : bool
         If True and status is good, move Vstd to V0 after solving.
+    robust_error : bool default=True
+        Whether to take samples when finding the residual balance error
     ignore_range_warning : bool
         If True, allow Vstd to exceed 2 V rms during measurement.
     logger : Logger, optional
+    plot : bool, default=False
+        Whether to plot lock-in readings during the initialization
+    frame : int, default=0
+        Which frame to use for plotting
+    
 
     Returns
     -------
@@ -301,6 +348,10 @@ def cap_balance_three_point(
                 A_matrix=np.zeros((2, 2)), P=np.eye(2),
                 error=None, Vex=Vex, Cstd=Cstd,
             )
+        
+    # Set up the pane for plotting, if needed
+    pane = _setup_lockin_pane(frame=frame) if (plot and samples > 1) else None
+    sample_count = 0    
 
     # Three measurement points (nominal). Actual values are read back from
     # hardware after setting and used for all subsequent calculations.
@@ -317,7 +368,9 @@ def cap_balance_three_point(
     for n, Vpt in enumerate(pts_nominal):
         V_actual = _set_Vstd_complex(Vstd, Theta, Vpt, wait=wait)
         V_set.append(V_actual)
-        mean, cov = _sample_lockin(lockin_call, samples)
+        mean, cov = _sample_lockin(lockin_call, samples, 
+                                   pane=pane, sample_offset=sample_count)
+        sample_count += samples
         L[:, n] = mean
         Lcov[:, :, n] = cov
         if logger:
@@ -379,13 +432,18 @@ def cap_balance_three_point(
         V0 = V0_set
         Cex = -Cstd * V0.real / Vex
         Closs = -Cstd * V0.imag / Vex
-        mean_err, _ = _sample_lockin(lockin_call, samples)
+
+        nerr = samples if robust_error else 1
+        mean_err, _ = _sample_lockin(lockin_call, nerr,
+                                     pane=pane, sample_offset=sample_count)
         error = (float(mean_err[0]), float(mean_err[1]))
+        
         if logger:
             logger.info(
                 f"Moved to balance V0={V0.real:.5e}+{V0.imag:.5e}i. "
                 f"Residual: LX={error[0]:.5e}  LY={error[1]:.5e}"
             )
+
     elif not in_range and logger:
         logger.warning(
             f"Balance point |V0|={abs(V0):.5e} exceeds "
@@ -425,6 +483,8 @@ def cap_balance_two_point(
     fudge: float = CAP_INIT_P_MULT_TWO_POINT,
     move_to_balance: bool = True,
     logger: logging.Logger | None = None,
+    plot: bool = False,
+    frame: int = 0,
 ) -> TwoPointBalanceResult:
     """
     Perform a two-point AC bridge balance.
@@ -458,11 +518,19 @@ def cap_balance_two_point(
     move_to_balance : bool
         If True and status is good, move Vstd to V0.
     logger : Logger, optional
+    plot : bool, default=False
+        Whether to plot lock-in readings during the initialization
+    frame : int, default=0
+        Which frame to use for plotting
 
     Returns
     -------
     TwoPointBalanceResult
     """
+
+    pane = _setup_lockin_pane(frame=frame) if (plot and samples > 1) else None
+    sample_count = 0
+
     if Vi is None:
         r0  = float(Vstd())
         th0 = float(Theta())
@@ -470,11 +538,14 @@ def cap_balance_two_point(
     else:
         Vi = _set_Vstd_complex(Vstd, Theta, Vi, wait=wait)
 
-    Li_mean, Li_cov = _sample_lockin(lockin_call, samples)
+    Li_mean, Li_cov = _sample_lockin(lockin_call, samples,
+                                     pane=pane, sample_offset=sample_count)
+    sample_count += samples
     Li = complex(Li_mean[0], Li_mean[1])
 
     Vf = _set_Vstd_complex(Vstd, Theta, Vi + dVstd, wait=wait)
-    Lf_mean, Lf_cov = _sample_lockin(lockin_call, samples)
+    Lf_mean, Lf_cov = _sample_lockin(lockin_call, samples,
+                                     pane=pane, sample_offset=sample_count)
     Lf = complex(Lf_mean[0], Lf_mean[1])
 
     A_c = (Lf - Li) / (Vf - Vi)
@@ -600,6 +671,7 @@ def cap_initialize(
     small_step: Tuple[float, float] = (0.01, 0.01),
     large_step: Tuple[float, float] = (0.94, 0.94),
     ignore_range_warning: bool = False,
+    robust_error: bool = False,
  
     # Two-point options
     dVstd: complex | None = None,
@@ -610,6 +682,8 @@ def cap_initialize(
     samples: int   = 5,
     wait: float | None = None,
     move_to_balance: bool  = True,
+    plot: bool = False,
+    frame: int = 0,
 ) -> CapInitialFilterConfig:
     """
     Convenience wrapper that runs a full initialization pass from a CapContext.
@@ -630,6 +704,8 @@ def cap_initialize(
         Three-point only. (dvc, dvr) as fractions of Vstd_range.
     ignore_range_warning : bool
         Three-point only. Skip the amplitude safety check.
+    robust_error : bool default=True
+        Whether to take samples when finding the residual balance error
     dVstd : complex, optional
         Two-point only. Vstd step. Required if method='two_point'.
     Vi : complex, optional
@@ -642,6 +718,10 @@ def cap_initialize(
         Wait time after setting Vstd. Defaults to ctx.settle_time.
     move_to_balance : bool
         Whether to move Vstd to V0 after solving.
+    plot : bool, default=False
+        Whether to plot lock-in readings during the initialization
+    frame : int, default=0
+        Which frame to use for plotting
  
     Returns
     -------
@@ -665,8 +745,11 @@ def cap_initialize(
             samples = samples,
             wait = wait,
             move_to_balance = move_to_balance,
+            robust_error = robust_error,
             ignore_range_warning = ignore_range_warning,
             logger = ctx.logger,
+            plot = plot,
+            frame = frame,
         )
     elif method == 'two_point':
         if fudge is None:
@@ -691,6 +774,8 @@ def cap_initialize(
             fudge = fudge,
             move_to_balance = move_to_balance,
             logger = ctx.logger,
+            plot = plot,
+            frame = frame,
         )
     else:
         raise ValueError(f"Unknown method '{method}'. Use 'three_point' or 'two_point'.")

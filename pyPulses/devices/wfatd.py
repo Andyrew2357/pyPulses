@@ -4,6 +4,11 @@ purpose of balancing away error parameters using feedback control. `wfatd`
 refers to `waveform averaging in the time domain`. 
 """
 
+from __future__ import annotations
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ..core.sidecar import LinePane, Sidecar
+
 from ..routines.balance_parameter import balanceError
 from ..utils import curves
 
@@ -56,6 +61,10 @@ class wfAverager(abstractDevice):
         self._views: List['wfAveragerView'] = []
         
         self._supported_balances: List['wfBalance'] = []
+
+        self._sidecar_pane: 'LinePane | None' = None
+        self._sidecar_channel: str = 'Q(t)'
+        self._sidecar_annotations: bool = True
     
     def add_view(self, view: 'wfAveragerView'):
         self._views.append(view)
@@ -89,6 +98,75 @@ class wfAverager(abstractDevice):
         self._unprocessed_curve = self._unprocessed_curve.astype(np.float32)
         self._curve = self._curve.astype(np.float32)
         self._t = self._t.astype(np.float32)
+
+        self._notify_sidecar()
+
+    def configure_sidecar(self,
+        channel: str = 'curve',
+        name: str | None = None,
+        xlabel: str = 't [s]',
+        ylabel: str = 'Q [V]',
+        annotations: bool = True,
+        frame: int = 1,
+        **kwargs
+    ) -> 'Sidecar | None':
+        """
+        Create a LinePane for this averager's waveform output and attach it to
+        the session sidecar. After every take_curve() call the pane is updated
+        with the current processed curve and, optionally, balance annotations.
+
+        Parameters
+        ----------
+        channel : str
+            Channel name used internally by the pane. Default 'curve'.
+        name : str or None
+            Pane title. Defaults to this averager's registry id, or 'waveform'.
+        xlabel, ylabel : str
+            Axis labels for the pane.
+        annotations : bool, default True
+            If True, balance annotations are recomputed and overlaid after each
+            curve. Set False to skip annotation overhead in time-critical loops.
+        frame : int, default 1
+            Sidecar frame to place the pane in. Default 1 keeps waveform plots
+            separate from the runner's scan panes in frame 0.
+        kwargs : dict
+            Additional arguments passed to the `LineConfig`.
+            
+        Returns the Sidecar, or None if no sidecar is running.
+        """
+        
+        from ..core.sidecar import Sidecar, LinePane, LineConfig
+
+        sidecar = Sidecar.instance()
+        if sidecar is None:
+            return None
+
+        pane_name = name or getattr(self, '_registry_id', None) or 'waveform'
+        pane = LinePane(
+            name=pane_name,
+            lines=[LineConfig(channel=channel, **kwargs)],
+            x='t',
+            xlabel=xlabel,
+            ylabel=ylabel,
+        )
+        sidecar.add_pane(pane, frame=frame)
+
+        self._sidecar_pane = pane
+        self._sidecar_channel = channel
+        self._sidecar_annotations = annotations
+        return sidecar
+
+    def _notify_sidecar(self) -> None:
+        if self._sidecar_pane is None:
+            return
+        if self._sidecar_annotations:
+            from ..core.sidecar import AnnotationRecorder
+            recorder = AnnotationRecorder()
+            self.plot_annotations(recorder)
+            ann = recorder.annotations
+        else:
+            ann = None
+        self._sidecar_pane.set_line(self._sidecar_channel, self._t, self._curve, ann)
 
     def get_curve(self) -> Tuple[np.ndarray, np.ndarray]:
         return self._t, self._curve

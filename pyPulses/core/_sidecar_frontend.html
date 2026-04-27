@@ -204,8 +204,33 @@ function renderLinePane(name, cfg, data, frameIdx) {
   const history    = data.history || [];
   const baseColors = cfg.lines.map((l, i) => l.color || COLORS[i % COLORS.length]);
 
-  // One trace per line per slot — each with its own x array.
   const traces = [];
+
+  // Annotation traces — quiet overlays with no legend entry or hover.
+  for (let slot = 0; slot <= maxHistory; slot++) {
+    const isCurrent = slot === 0;
+    const src       = isCurrent ? current : (history[slot - 1] || null);
+    const slotOp    = isCurrent ? 1.0 : 1.0 - slot / (maxHistory + 1);
+    for (let li = 0; li < cfg.lines.length; li++) {
+      const l  = cfg.lines[li];
+      const ch = src ? (src[l.channel] || null) : null;
+      for (const ann of (ch ? (ch.annotations || []) : [])) {
+        traces.push({
+          x         : ann.x,
+          y         : ann.y,
+          type      : 'scatter',
+          mode      : 'lines',
+          yaxis     : ann.yaxis || 'y',
+          line      : { color: ann.color, width: ann.width, dash: ann.dash },
+          opacity   : ann.alpha * slotOp,
+          showlegend: false,
+          hoverinfo : 'skip',
+        });
+      }
+    }
+  }
+ 
+  // Data traces — one per line per slot, each with its own x array.
   for (let slot = 0; slot <= maxHistory; slot++) {
     const isCurrent = slot === 0;
     const src       = isCurrent ? current : (history[slot - 1] || null);

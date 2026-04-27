@@ -179,11 +179,17 @@ class DatabaseLogger:
         
         scan = runner.scan
         measurement = runner.measurement
-        dims = runner.scan.dimensions
 
-        dim_names = [f'dim{i}' for i in range(len(dims))]
-        shape = dims.tolist()
-        coord_names = scan.coord_names
+        if scan is not None:
+            dims = scan.dimensions
+            dim_names = [f'dim{i}' for i in range(len(dims))]
+            shape = dims.tolist()
+            coord_names = scan.coord_names
+        else:
+            dim_names = ['dim0']
+            shape = None
+            coord_names = []
+
         data_names = measurement.col_names
 
         instance = cls(
@@ -204,14 +210,15 @@ class DatabaseLogger:
         })
 
         # Per-coordinate metadata from SweepableChannels
-        for ch in scan.channels:
-            attrs = {}
-            if ch.long_name is not None:
-                attrs['long_name'] = ch.long_name
-            if ch.unit is not None:
-                attrs['unit'] = ch.unit
-            if attrs:
-                instance.set_variable_attrs(ch.name, attrs)
+        if scan is not None:
+            for ch in scan.channels:
+                attrs = {}
+                if ch.long_name is not None:
+                    attrs['long_name'] = ch.long_name
+                if ch.unit is not None:
+                    attrs['unit'] = ch.unit
+                if attrs:
+                    instance.set_variable_attrs(ch.name, attrs)
 
         # Per-measurement metadata from Query objects
         col_long_names = measurement.col_long_names

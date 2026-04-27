@@ -211,8 +211,9 @@ class LinePane(Pane):
  
         # Current line data: channel -> {'x': [], 'y': []}
         self._current: Dict[str, Dict[str, list]] = {
-            lc.channel: {'x': [], 'y': []} for lc in lines
+            lc.channel: {'x': [], 'y': [], 'annotations': []} for lc in lines
         }
+
         # History: deque of snapshots, index 0 = most recent, -1 = oldest
         # Each snapshot is a dict channel -> {'x': [...], 'y': [...]}
         from collections import deque
@@ -237,6 +238,39 @@ class LinePane(Pane):
                 if len(d['x']) > self.max_points:
                     d['x'] = d['x'][-self.max_points:]
                     d['y'] = d['y'][-self.max_points:]
+
+    def set_line(self,
+            channel: str,
+            xs: np.ndarray,
+            ys: np.ndarray,
+            annotations: list[dict] | None = None,
+        ) -> None:
+            """
+            Replace the data for a single channel entirely.
+
+            Unlike update(), which appends one point at a time, set_line replaces
+            the channel's x and y arrays wholesale. Intended for waveform data
+            where the full curve is available at once.
+
+            Parameters
+            ----------
+            channel : str
+                Must match one of the channel names from the LineConfig list.
+            xs, ys : array-like
+                New x and y data for this channel.
+            annotations : list of dicts, optional
+                Annotation traces produced by an AnnotationRecorder. Rendered as
+                quiet (no legend entry, no hover) Plotly scatter traces.
+            """
+            if channel not in self._current:
+                raise KeyError(
+                    f"Unknown channel {channel!r}. Known: {list(self._current)}"
+                )
+            with self._lock:
+                d = self._current[channel]
+                d['x'] = [float(v) for v in xs]
+                d['y'] = [float(v) for v in ys]
+                d['annotations'] = list(annotations) if annotations is not None else []
  
     def clear(self) -> None:
         with self._lock:
@@ -244,7 +278,8 @@ class LinePane(Pane):
                 # Snapshot current into history if it has any data
                 if any(len(d['x']) > 0 for d in self._current.values()):
                     self._history.appendleft(
-                        {ch: {'x': list(d['x']), 'y': list(d['y'])}
+                        {ch: {'x': list(d['x']), 'y': list(d['y']),
+                              'annotations': list(d['annotations'])}
                          for ch, d in self._current.items()}
                     )
             for d in self._current.values():
@@ -281,6 +316,68 @@ class LinePane(Pane):
                 for snapshot in self._history
             ]
         return out
+    
+class AnnotationRecorder:
+    """
+    A minimal stand-in for matplotlib.axes.Axes that records annotation
+    calls as JSON-serializable dicts for the sidecar frontend.
+
+    Pass an instance to wfAverager.plot_annotations() or any wfBalance
+    plot_annotations() method, then pass the resulting .annotations list
+    to LinePane.set_line().
+
+    Parameters
+    ----------
+    yaxis : str
+        Plotly y-axis reference ('y' or 'y2') for all annotations produced
+        by this recorder. Defaults to 'y'.
+
+    Example
+    -------
+        recorder = AnnotationRecorder()
+        averager.plot_annotations(recorder)
+        pane.set_line('curve', t, curve, annotations=recorder.annotations)
+    """
+
+    _DASH_MAP = {
+        'solid'  : 'solid',
+        '-'      : 'solid',
+        'dashed' : 'dash',
+        '--'     : 'dash',
+        'dotted' : 'dot',
+        ':'      : 'dot',
+        'dashdot': 'dashdot',
+        '-.'     : 'dashdot',
+    }
+
+    def __init__(self, yaxis: str = 'y'):
+        self._yaxis = yaxis
+        self.annotations: list[dict] = []
+
+    def _record(self, x, y, **kwargs) -> None:
+        color = kwargs.get('color', kwargs.get('c', '#a6adc8'))
+        alpha = float(kwargs.get('alpha', 1.0))
+        width = float(kwargs.get('linewidth', kwargs.get('lw', 1.5)))
+        ls    = kwargs.get('linestyle', kwargs.get('ls', 'solid'))
+        dash  = self._DASH_MAP.get(str(ls), 'solid')
+        self.annotations.append({
+            'x'    : [float(v) for v in x],
+            'y'    : [float(v) if v is not None else None for v in y],
+            'color': str(color),
+            'alpha': alpha,
+            'width': width,
+            'dash' : dash,
+            'yaxis': self._yaxis,
+        })
+
+    def plot(self, x, y, *args, **kwargs):
+        """Record a line plot call. Positional format strings are ignored."""
+        self._record(x, y, **kwargs)
+        return []
+
+    def vlines(self, x, ymin, ymax, **kwargs):
+        """Record a vertical line as a two-point segment."""
+        self._record([x, x], [ymin, ymax], **kwargs)
 
 
 class HeatmapPane(Pane):
@@ -292,7 +389,7 @@ class HeatmapPane(Pane):
 
     Data is transmitted as deltas: each poll drains the list of cells written
     since the last poll.  A full z array is included on first serialize,
-    after clear(), and when the frontend requests ``?full=1``.
+    after clear(), and when the frontend requests `?full=1`.
 
     Parameters
     ----------

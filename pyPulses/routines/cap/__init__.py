@@ -3,7 +3,7 @@ pyPulses.routines.cap
 =====================
 Penetration capacitance measurement routines.
 
-Two measurement modes are supported, both operating on a `CapContext`:
+Three measurement modes are supported, all operating on a `CapContext`:
 
 Off-balance (`cap_measure`)
     The bridge is held at the most recent balance point. The lock-in reading
@@ -14,6 +14,12 @@ On-balance (`cap_balance`)
     Iteratively re-balances Vstd at each phase-space point using the Kalman
     filter's gain estimate and the extrapolator's predicted starting point.
     Updates the filter with each (dL, dv) observation.
+
+Differential balance (`differential_balance`)
+    Nulls compressibility features along a 1D cut by measuring lock-in readings 
+    through the excitation and complementary gates separately, then computing a 
+    complex ratio gamma that sets the complementary amplitude and phase. 
+    Independent of the Kalman filter machinery.
 
 Typical usage
 -------------
@@ -44,6 +50,15 @@ Typical usage
     # On-balance measurement at each phase-space point
     result = cap.cap_balance(ctx)
 
+    # Differential balance along a 1D cut
+    result = cap.differential_balance(
+        ctx        = ctx,
+        scan       = scan_1d,
+        Vex_amp    = lockin.resolve('Vex_amp'),
+        Vexp_amp   = lockin.resolve('Vexp_amp'),
+        Vexp_phase = lockin.resolve('Vexp_phase'),
+    )
+
     # Save / restore state
     ctx.save_state_json('cap_state.json')
     ctx.load_state_json('cap_state.json')
@@ -53,11 +68,12 @@ Typical usage
 
 Result dataclasses
 ------------------
-    cap.CapMeasureResult       — off-balance measurement result
-    cap.CapBalanceResult       — on-balance measurement result
-    cap.ThreePointBalanceResult — result of three-point initial balance
-    cap.TwoPointBalanceResult   — result of two-point initial balance
-    cap.CapInitialFilterConfig  — result of cap_initialize / cap_initialize_filter
+    cap.CapMeasureResult            — off-balance measurement result
+    cap.CapBalanceResult            — on-balance measurement result
+    cap.ThreePointBalanceResult     — result of three-point initial balance
+    cap.TwoPointBalanceResult       — result of two-point initial balance
+    cap.CapInitialFilterConfig      — result of cap_initialize / cap_initialize_filter
+    cap.DifferentialBalanceResult   — result of differential_balance
 
 Context, filter, and extrapolator
 ----------------------------------
@@ -103,6 +119,9 @@ from .initialize import (
 from .measure import cap_measure, CapMeasureResult
 from .balance import cap_balance, CapBalanceResult
 
+# Differential balance
+from .differential import differential_balance, DifferentialBalanceResult
+
 __all__ = [
     # Config
     'PROCESS_NOISE_COEFF',
@@ -126,4 +145,7 @@ __all__ = [
     'CapMeasureResult',
     'cap_balance',
     'CapBalanceResult',
+    # Differential balance
+    'differential_balance',
+    'DifferentialBalanceResult',
 ]

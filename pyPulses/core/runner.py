@@ -71,8 +71,8 @@ class Runner:
     """
 
     def __init__(self,
-        scan: ScanBase,
-        measurement: Measurement,
+        scan: ScanBase | None = None,
+        measurement: Measurement = None,
         retain_return: bool = True,
         timestamp: bool = True,
         start_idx: np.ndarray | None = None,
@@ -108,7 +108,19 @@ class Runner:
 
     def run_threaded(self) -> Job:
         """Run in a background thread, returning a Job with controls."""
+        if self.scan is None:
+            raise RuntimeError(
+                "No scan attached to this Runner. "
+                "Use record_threaded() for chart recorder mode."
+            )
         return Job(self.run).start()
+
+    def record_threaded(self,
+        npoints: int | None = None,
+        timeout: float | None = None,
+    ) -> Job:
+        """Record in a background thread, returning a Job with controls."""
+        return Job(self.record, npoints=npoints, timeout=timeout).start()
 
     """Main loop"""
 
@@ -123,6 +135,12 @@ class Runner:
             Only returned if retain_return is True.
         """
         from .sidecar import Sidecar
+
+        if self.scan is None:
+            raise RuntimeError(
+                "No scan attached to this Runner. "
+                "Use record() for chart recorder mode."
+            )
 
         dims = self.scan.dimensions
         n_meas = self.measurement.num_cols
@@ -183,6 +201,77 @@ class Runner:
 
         if self.retain_return:
             return result
+
+    """Chart Recorder"""
+    def record(self,
+        npoints: int | None = None,
+        timeout: float | None = None,
+    ) -> np.ndarray | None:
+        """
+        Chart recorder mode: measure repeatedly without moving hardware.
+
+        Takes measurements in a loop, notifying observers and the sidecar
+        at each point. Stops after npoints measurements, after timeout
+        seconds, or whichever comes first. At least one of npoints or
+        timeout must be provided.
+
+        Parameters
+        ----------
+        npoints : int, optional
+            Maximum number of points to record.
+        timeout : float, optional
+            Maximum wall-clock seconds to record.
+
+        Returns
+        -------
+        ndarray or None
+            Shape (N, num_cols) where N is the number of points actually
+            taken. Only returned if retain_return is True.
+        """
+        from .sidecar import Sidecar
+
+        if npoints is None and timeout is None:
+            raise ValueError("At least one of npoints or timeout must be provided.")
+
+        n_meas = self.measurement.num_cols
+        rows: list[np.ndarray] = []
+        points_taken = 0
+        start_time = time.time()
+
+        while True:
+            checkpoint()
+
+            if npoints is not None and points_taken >= npoints:
+                break
+            if timeout is not None and (time.time() - start_time) >= timeout:
+                break
+
+            now = datetime.datetime.now() if self.timestamp else None
+            idx = np.array([points_taken])
+
+            measured_arr = self.measurement.measure(idx, {}, now)
+
+            if self.retain_return:
+                rows.append(measured_arr)
+
+            measured_dict: Dict[str, float] = dict(
+                zip(self.measurement.col_names, measured_arr)
+            )
+
+            for obs in self._observers:
+                obs(idx, {}, measured_dict, now)
+
+            if self.plot:
+                sidecar = Sidecar.instance()
+                if sidecar is not None:
+                    sidecar(idx, {}, measured_dict, now)
+
+            points_taken += 1
+
+        if self.retain_return:
+            if rows:
+                return np.stack(rows, axis=0)
+            return np.empty((0, n_meas), dtype=float)
 
     """Utilities"""
 
@@ -265,15 +354,19 @@ class Runner:
         if sidecar is None:
             return
 
+        # In chart recorder mode, default x to first measurement column
+        if x is None and self.scan is not None:
+            if not self.scan.coord_names:
+                raise ValueError("Scan has no coordinates; cannot determine x axis.")
+            x = self.scan.coord_names[0]
+        elif x is None:
+            if not self.measurement.col_names:
+                raise ValueError("Measurement has no columns; cannot determine x axis.")
+            x = self.measurement.col_names[0]
+
         # Enable plot mode
         self.plot = True
         self._sidecar_clear_on_new_line = clear_on_new_line
-
-        # Determine x axis
-        if x is None:
-            if not self.scan.coord_names:
-                raise ValueError("Scan has no coordinates — cannot determine x axis.")
-            x = self.scan.coord_names[0]
 
         col_names = self.measurement.col_names
         col_long_names = self.measurement.col_long_names
@@ -284,8 +377,10 @@ class Runner:
             name: {'long_name': ln, 'unit': u}
             for name, ln, u in zip(col_names, col_long_names, col_units)
         }
-        for ch in self.scan.channels:
-            meta[ch.name] = {'long_name': ch.long_name, 'unit': ch.unit}
+
+        if self.scan is not None:
+            for ch in self.scan.channels:
+                meta[ch.name] = {'long_name': ch.long_name, 'unit': ch.unit}
 
         def _label(name: str) -> str:
             m = meta.get(name, {})
