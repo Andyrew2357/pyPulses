@@ -4,9 +4,9 @@ if not find_and_load_gpib():
     # print("WARNING: The GPIB library was not found or loaded correctly.")
     # print("If you wish to use GPIB instruments, make sure NI488.2 is installed.")
 
-from .ad5764 import ad5764
-from .ad5791 import ad5791
-from .ad9854 import ad9854
+from .ashoorilab.ad5764 import ad5764
+from .ashoorilab.ad5791 import ad5791
+from .ashoorilab.ad9854 import ad9854
 from .attenuator import FixedAttenuator
 from .calibrated_channel import CalibratedChannel, PolarityCalibratedChannel
 from .calibration import PolynomialCalibration, TrivialCalibration
@@ -25,7 +25,7 @@ from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
 from .keithley2700 import keithley2700
 from .mso44 import mso44
-from .pcm1704 import pcm1704
+from .ashoorilab.pcm1704 import pcm1704
 from .pid_dcbox import PIDbox
 from .pulse_pair import pulsePair
 from .srs_lockin.lockin import (sr830, sr844, sr850, sr860, sr865a)
