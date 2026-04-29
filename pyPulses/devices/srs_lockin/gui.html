@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SRS Lock-in</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0d1117;
+  --surface: #161b22;
+  --panel:   #1c2128;
+  --section: #21262d;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #8b949e;
+  --accent:  #58a6ff;
+  --ok:      #3fb950;
+  --err:     #f85149;
+  --x-col:   #58c4f5;
+  --y-col:   #f5a623;
+  --r-col:   #3fb950;
+  --t-col:   #bc8cff;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 12px;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+#header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#model-name {
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--accent);
+  letter-spacing: 0.12em;
+  flex: 1;
+}
+
+.dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.dot.connected    { background: var(--ok);  box-shadow: 0 0 6px var(--ok); }
+.dot.disconnected { background: var(--muted); }
+.dot.error        { background: var(--err); }
+
+#status-label { color: var(--muted); font-size: 11px; }
+
+/* ── Main grid ── */
+#main {
+  display: grid;
+  grid-template-columns: 230px 1fr 230px;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Side panels ── */
+.side-panel {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#right-panel { border-left: 1px solid var(--border); border-right: none; }
+
+/* ── Center panel ── */
+#center-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  gap: 6px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* ── Sections ── */
+.section {
+  background: var(--section);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.section-hdr {
+  background: var(--border);
+  padding: 3px 8px;
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+/* ── Widgets ── */
+.widget-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  min-height: 27px;
+  gap: 6px;
+}
+.widget-row:last-child { border-bottom: none; }
+
+.wlabel {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.wctl { display: flex; align-items: center; gap: 4px; }
+
+select, input[type="number"] {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-family: inherit;
+  font-size: 11px;
+  width: 112px;
+  text-align: right;
+  transition: border-color 0.15s;
+}
+select:focus, input[type="number"]:focus {
+  outline: none; border-color: var(--accent);
+}
+
+.unit { color: var(--muted); font-size: 10px; }
+
+/* ── Toggle switch ── */
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 38px; height: 20px;
+  flex-shrink: 0;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.track {
+  position: absolute; inset: 0;
+  background: var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.track::after {
+  content: '';
+  position: absolute;
+  width: 16px; height: 16px;
+  left: 2px; top: 2px;
+  background: var(--muted);
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+.toggle input:checked + .track { background: var(--accent); }
+.toggle input:checked + .track::after {
+  transform: translateX(18px); background: #fff;
+}
+
+/* ── Readouts ── */
+#readouts {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.readout {
+  background: var(--section);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  text-align: right;
+}
+
+.ro-lbl {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  display: block;
+  margin-bottom: 2px;
+}
+.ro-val {
+  font-size: 15px;
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
+  display: block;
+  white-space: nowrap;
+}
+
+#ro-x .ro-lbl, #ro-x .ro-val { color: var(--x-col); }
+#ro-y .ro-lbl, #ro-y .ro-val { color: var(--y-col); }
+#ro-r .ro-lbl, #ro-r .ro-val { color: var(--r-col); }
+#ro-t .ro-lbl, #ro-t .ro-val { color: var(--t-col); }
+
+/* ── Plot ── */
+#plot { flex: 1; min-height: 0; }
+
+/* ── Poll controls ── */
+#poll-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+#poll-btn {
+  background: var(--section);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 12px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+#poll-btn.live {
+  background: var(--ok);
+  color: var(--bg);
+  border-color: var(--ok);
+}
+
+#poll-ms { width: 64px; text-align: right; }
+
+/* ── Aux outputs ── */
+#aux-section input[type="number"] { width: 88px; }
+
+/* ── Auto buttons ── */
+.auto-row {
+  display: flex;
+  gap: 5px;
+  padding: 7px 8px;
+  flex-wrap: wrap;
+}
+
+.auto-btn {
+  background: var(--section);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  flex: 1;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+.auto-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Flash animations ── */
+@keyframes ok-flash  { 50% { box-shadow: 0 0 0 2px var(--ok); } }
+@keyframes err-flash { 50% { box-shadow: 0 0 0 2px var(--err); } }
+.flash-ok  { animation: ok-flash  0.5s ease; }
+.flash-err { animation: err-flash 0.5s ease; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <span id="model-name">SRS LOCK-IN</span>
+  <span class="dot disconnected" id="status-dot"></span>
+  <span id="status-label">Disconnected</span>
+</div>
+
+<div id="main">
+
+  <!-- LEFT: Signal path -->
+  <div class="side-panel" id="left-panel">
+    <div class="section" id="sec-input"></div>
+    <div class="section" id="sec-gain"></div>
+    <div class="section" id="sec-filters"></div>
+  </div>
+
+  <!-- CENTER: Display -->
+  <div id="center-panel">
+    <div id="readouts">
+      <div class="readout" id="ro-x"><span class="ro-lbl">X</span><span class="ro-val" id="val-x">—</span></div>
+      <div class="readout" id="ro-y"><span class="ro-lbl">Y</span><span class="ro-val" id="val-y">—</span></div>
+      <div class="readout" id="ro-r"><span class="ro-lbl">R</span><span class="ro-val" id="val-r">—</span></div>
+      <div class="readout" id="ro-t"><span class="ro-lbl">θ</span><span class="ro-val" id="val-t">—</span></div>
+    </div>
+    <div id="plot"></div>
+    <div id="poll-row">
+      <button id="poll-btn" onclick="togglePoll()">▶ LIVE</button>
+      <input type="number" id="poll-ms" value="500" min="100" max="10000" step="100">
+      <span class="unit">ms</span>
+      <span id="poll-rate" style="color:var(--muted);font-size:10px;margin-left:4px;"></span>
+    </div>
+    <div class="section" id="aux-section"></div>
+  </div>
+
+  <!-- RIGHT: Reference + auto -->
+  <div class="side-panel" id="right-panel">
+    <div class="section" id="sec-reference"></div>
+    <div class="section" id="sec-sineout"></div>
+    <div class="section" id="sec-auto"></div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+const WS_URL = `ws://localhost:__WS_PORT__`;
+
+// ── Widget metadata ────────────────────────────────────────────────────────
+
+const LABELS = {
+  reference_phase          : 'Phase',
+  internal_reference       : 'Int Reference',
+  reference_frequency      : 'Frequency',
+  detection_harmonic       : 'Harmonic',
+  reference_trigger        : 'Ext Trigger',
+  reference_input_impedance: 'Ref Impedance',
+  sine_output_amplitude    : 'Sine Amplitude',
+  sine_output_offset       : 'DC Offset',
+  input_configuration      : 'Configuration',
+  input_shield_grounded    : 'Shield Ground',
+  input_coupling_DC        : 'DC Coupling',
+  input_mode_current       : 'Current Mode',
+  input_range              : 'Input Range',
+  current_gain             : 'Current Gain',
+  line_notch_filter        : 'Notch Filter',
+  input_sensitivity        : 'Sensitivity',
+  time_constant            : 'Time Constant',
+  low_pass_filter_slope    : 'Filter Slope',
+  sync_filter_state        : 'Sync Filter',
+};
+
+const BOOL_METHODS = new Set([
+  'internal_reference', 'input_shield_grounded', 'input_coupling_DC',
+  'input_mode_current', 'sync_filter_state',
+]);
+
+const INT_METHODS = new Set(['detection_harmonic']);
+
+// Which methods have a unit label shown next to the input
+const UNITS = {
+  reference_phase    : '°',
+  reference_frequency: 'Hz',
+  detection_harmonic : '',
+  sine_output_amplitude: 'V',
+  sine_output_offset : 'V',
+};
+
+// Section definitions: {containerId, header, methods[]}
+const LEFT_SECTIONS = [
+  { id: 'sec-input',   hdr: 'INPUT',
+    methods: ['input_configuration','input_shield_grounded','input_coupling_DC',
+              'input_mode_current','input_range'] },
+  { id: 'sec-gain',    hdr: 'GAIN',
+    methods: ['input_sensitivity','current_gain'] },
+  { id: 'sec-filters', hdr: 'FILTERS',
+    methods: ['time_constant','low_pass_filter_slope','sync_filter_state','line_notch_filter'] },
+];
+
+const RIGHT_SECTIONS = [
+  { id: 'sec-reference', hdr: 'REFERENCE',
+    methods: ['reference_phase','internal_reference','reference_frequency',
+              'detection_harmonic','reference_trigger','reference_input_impedance'] },
+  { id: 'sec-sineout',   hdr: 'SINE OUT',
+    methods: ['sine_output_amplitude','sine_output_offset'] },
+];
+
+const AUTO_LABELS = {
+  auto_phase: 'Auto Phase',
+  auto_gain : 'Auto Gain',
+  auto_range: 'Auto Range',
+};
+
+// ── State ──────────────────────────────────────────────────────────────────
+
+let ws   = null;
+let caps = null;
+let state = {};
+let readings = [];        // [{ts, x, y, r, t}]
+let polling  = false;
+const MAX_READINGS = 400;
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen  = () => setStatus('connected');
+  ws.onclose = () => { setStatus('disconnected'); setTimeout(connect, 2000); };
+  ws.onerror = () => setStatus('error');
+  ws.onmessage = e => handleMsg(JSON.parse(e.data));
+}
+
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify(msg));
+}
+
+function handleMsg(msg) {
+  switch (msg.type) {
+    case 'capabilities': onCapabilities(msg); break;
+    case 'state':        onState(msg.data);   break;
+    case 'ack':          onAck(msg.method, msg.value); break;
+    case 'ack_aux':      onAckAux(msg.idx, msg.value); break;
+    case 'reading':      onReading(msg);      break;
+    case 'error':        onError(msg.method, msg.message); break;
+    case 'called':       onCalled(msg.method); break;
+  }
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────
+
+function onCapabilities(msg) {
+  caps = msg;
+  document.getElementById('model-name').textContent = caps.model + '  Lock-in Amplifier';
+
+  for (const sec of LEFT_SECTIONS)  renderSection(sec);
+  for (const sec of RIGHT_SECTIONS) renderSection(sec);
+  renderAuto();
+  renderAux();
+}
+
+function renderSection(sec) {
+  const el = document.getElementById(sec.id);
+  const methods = sec.methods.filter(m => caps.supported.includes(m));
+  if (!methods.length) { el.style.display = 'none'; return; }
+
+  el.innerHTML = `<div class="section-hdr">${sec.hdr}</div>` +
+    methods.map(m => widgetHTML(m)).join('');
+
+  // Attach listeners after inserting into DOM
+  for (const m of methods) {
+    const ctrl = el.querySelector(`[data-method="${m}"]`);
+    if (!ctrl) continue;
+    if (ctrl.type === 'checkbox') {
+      ctrl.addEventListener('change', () => send({type:'set', method:m, value:ctrl.checked}));
+    } else if (ctrl.tagName === 'SELECT') {
+      ctrl.addEventListener('change', () => {
+        const raw = ctrl.value;
+        const val = caps.discrete[m] ? parseFloat(raw) : raw;
+        send({type:'set', method:m, value:val});
+      });
+    } else {
+      // number input: send on blur or Enter
+      const sendVal = () => {
+        const val = INT_METHODS.has(m) ? parseInt(ctrl.value) : parseFloat(ctrl.value);
+        if (!isNaN(val)) send({type:'set', method:m, value:val});
+      };
+      ctrl.addEventListener('change', sendVal);
+    }
+  }
+}
+
+function widgetHTML(method) {
+  const label = LABELS[method] || method;
+  const unit  = UNITS[method] ?? '';
+  let control = '';
+
+  if (BOOL_METHODS.has(method)) {
+    control = `<label class="toggle">
+      <input type="checkbox" data-method="${method}">
+      <span class="track"></span>
+    </label>`;
+
+  } else if (caps.discrete[method]) {
+    const opts = caps.discrete[method].map(v => {
+      const unit = method.includes('time') ? 's' : 'V';
+      return `<option value="${v}">${fmtSI(v, unit)}</option>`;
+    }).join('');
+    control = `<select data-method="${method}">${opts}</select>`;
+
+  } else if (caps.options[method]) {
+    const opts = caps.options[method]
+      .map(o => `<option value="${o}">${o}</option>`).join('');
+    control = `<select data-method="${method}">${opts}</select>`;
+
+  } else {
+    const step = INT_METHODS.has(method) ? '1' : 'any';
+    control = `<input type="number" data-method="${method}" step="${step}">`;
+  }
+
+  const unitSpan = unit ? `<span class="unit">${unit}</span>` : '';
+  return `<div class="widget-row">
+    <span class="wlabel">${label}</span>
+    <div class="wctl">${control}${unitSpan}</div>
+  </div>`;
+}
+
+function renderAuto() {
+  const el = document.getElementById('sec-auto');
+  if (!caps.actions || !caps.actions.length) { el.style.display = 'none'; return; }
+  el.innerHTML = `<div class="section-hdr">AUTO</div><div class="auto-row">` +
+    caps.actions.map(m =>
+      `<button class="auto-btn" data-action="${m}" onclick="sendCall('${m}')">${AUTO_LABELS[m]||m}</button>`
+    ).join('') + '</div>';
+}
+
+function renderAux() {
+  const el = document.getElementById('aux-section');
+  if (!caps.aux_channels || !caps.aux_channels.length) { el.style.display='none'; return; }
+  el.innerHTML = `<div class="section-hdr">AUX OUTPUTS</div>` +
+    caps.aux_channels.map(ch => `
+      <div class="widget-row">
+        <span class="wlabel">Out ${ch}</span>
+        <div class="wctl">
+          <input type="number" id="aux-${ch}" step="0.001" min="-10.5" max="10.5"
+            onchange="send({type:'set_aux', idx:${ch}, value:parseFloat(this.value)})">
+          <span class="unit">V</span>
+        </div>
+      </div>`
+    ).join('');
+}
+
+// ── State management ───────────────────────────────────────────────────────
+
+function onState(data) {
+  state = data;
+  for (const [method, value] of Object.entries(data)) {
+    if (method === 'aux_output') {
+      for (const [ch, val] of (value || [])) {
+        const el = document.getElementById(`aux-${ch}`);
+        if (el && val !== null) el.value = val.toFixed(4);
+      }
+    } else {
+      setWidget(method, value);
+    }
+  }
+}
+
+function onAck(method, value) {
+  state[method] = value;
+  setWidget(method, value);
+  flashMethod(method, 'ok');
+}
+
+function onAckAux(idx, value) {
+  const el = document.getElementById(`aux-${idx}`);
+  if (el) { el.value = value.toFixed(4); flash(el, 'ok'); }
+}
+
+function onError(method, message) {
+  console.error(`${method}: ${message}`);
+  flashMethod(method, 'err');
+  // Revert widget to last known good state
+  if (state[method] !== undefined) setWidget(method, state[method]);
+}
+
+function onCalled(method) {
+  const btn = document.querySelector(`[data-action="${method}"]`);
+  if (btn) flash(btn, 'ok');
+}
+
+function setWidget(method, value) {
+  if (value === null || value === undefined) return;
+  const el = document.querySelector(`[data-method="${method}"]`);
+  if (!el) return;
+
+  if (el.type === 'checkbox') {
+    el.checked = !!value;
+  } else if (el.tagName === 'SELECT' && caps && caps.discrete[method]) {
+    // Match to nearest discrete value
+    const vals = caps.discrete[method].map(Number);
+    const nearest = vals.reduce((a, b) =>
+      Math.abs(b - value) < Math.abs(a - value) ? b : a
+    );
+    el.value = String(nearest);
+  } else {
+    el.value = value;
+  }
+}
+
+// ── Live readings & plot ───────────────────────────────────────────────────
+
+function onReading(msg) {
+  readings.push(msg);
+  if (readings.length > MAX_READINGS) readings.shift();
+
+  document.getElementById('val-x').textContent = fmtSI(msg.x, 'V');
+  document.getElementById('val-y').textContent = fmtSI(msg.y, 'V');
+  document.getElementById('val-r').textContent = fmtSI(msg.r, 'V');
+  document.getElementById('val-t').textContent = msg.t.toFixed(3) + '°';
+
+  const t0   = readings[0].ts;
+  const times = readings.map(r => +(r.ts - t0).toFixed(3));
+
+  Plotly.react('plot', [
+    { x: times, y: readings.map(r => r.x), name: 'X',
+      line: {color: '#58c4f5', width: 1.5}, mode: 'lines' },
+    { x: times, y: readings.map(r => r.y), name: 'Y',
+      line: {color: '#f5a623', width: 1.5}, mode: 'lines' },
+  ], plotLayout, {displayModeBar: false});
+}
+
+// ── Poll controls ──────────────────────────────────────────────────────────
+
+function togglePoll() {
+  polling = !polling;
+  const btn      = document.getElementById('poll-btn');
+  const interval = parseFloat(document.getElementById('poll-ms').value) / 1000;
+  if (polling) {
+    btn.textContent = '⏸ LIVE';
+    btn.classList.add('live');
+    send({type: 'poll_start', interval});
+  } else {
+    btn.textContent = '▶ LIVE';
+    btn.classList.remove('live');
+    send({type: 'poll_stop'});
+    document.getElementById('poll-rate').textContent = '';
+  }
+}
+
+document.getElementById('poll-ms').addEventListener('change', function() {
+  const interval = parseFloat(this.value) / 1000;
+  if (polling) send({type: 'poll_interval', interval});
+});
+
+// ── Misc actions ───────────────────────────────────────────────────────────
+
+function sendCall(method) { send({type:'call', method}); }
+
+function setStatus(s) {
+  document.getElementById('status-dot').className  = `dot ${s}`;
+  document.getElementById('status-label').textContent =
+    s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function flashMethod(method, cls) {
+  const el = document.querySelector(`[data-method="${method}"]`);
+  if (el) flash(el, cls);
+}
+
+function flash(el, cls) {
+  el.classList.remove('flash-ok', 'flash-err');
+  void el.offsetWidth; // reflow to restart animation
+  el.classList.add(`flash-${cls}`);
+  setTimeout(() => el.classList.remove(`flash-${cls}`), 550);
+}
+
+// ── Plot ───────────────────────────────────────────────────────────────────
+
+const plotLayout = {
+  paper_bgcolor: '#0d1117',
+  plot_bgcolor : '#0d1117',
+  margin  : {l: 52, r: 8, t: 8, b: 36},
+  xaxis: {
+    title: {text: 't (s)', font: {size: 11}},
+    color: '#8b949e', gridcolor: '#21262d',
+    zeroline: false, tickfont: {size: 10},
+  },
+  yaxis: {
+    color: '#8b949e', gridcolor: '#21262d',
+    zeroline: true, zerolinecolor: '#30363d',
+    tickfont: {size: 10},
+  },
+  legend: {
+    bgcolor: 'rgba(0,0,0,0)',
+    font: {color: '#8b949e', size: 11},
+    x: 0, y: 1, xanchor: 'left', yanchor: 'top',
+  },
+  font: {color: '#8b949e', family: 'JetBrains Mono, Courier New, monospace'},
+};
+
+Plotly.newPlot('plot',
+  [
+    {x:[], y:[], name:'X', line:{color:'#58c4f5', width:1.5}, mode:'lines'},
+    {x:[], y:[], name:'Y', line:{color:'#f5a623', width:1.5}, mode:'lines'},
+  ],
+  plotLayout,
+  {displayModeBar: false, responsive: true}
+);
+
+// ── SI formatting ──────────────────────────────────────────────────────────
+
+function fmtSI(v, unit = 'V') {
+  if (v === null || v === undefined) return '—';
+  const abs = Math.abs(v);
+  const tiers = [
+    [1,    ''],
+    [1e-3, 'm'],
+    [1e-6, 'µ'],
+    [1e-9, 'n'],
+    [1e-12,'p'],
+  ];
+  for (const [scale, prefix] of tiers) {
+    if (abs >= scale * 0.9995) {
+      const n = v / scale;
+      const s = Math.abs(n) < 10
+        ? n.toPrecision(4)
+        : n.toFixed(1);
+      return `${s} ${prefix}${unit}`;
+    }
+  }
+  return `${v.toExponential(2)} ${unit}`;
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+
+connect();
+</script>
+</body>
+</html>

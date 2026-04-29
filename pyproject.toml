@@ -30,6 +30,7 @@ dependencies = [
     "PyQT5",
     "PyVISA>=1.14",
     "PyVISA-py>=0.7",
+    "websockets",
     "zhinst-toolkit"
 ]
 

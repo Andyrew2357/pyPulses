@@ -12,14 +12,14 @@ too quickly. Regardless, I've tested it to be very marginally faster this way,
 so I'll stick with this
 """
 
-from ..utils.curves import MonotonicPiecewiseLinear
+from ...utils.curves import MonotonicPiecewiseLinear
 
-from .abstract_device import abstractDevice
-from .channel_adapter import ScalarChannelAdapter
-from .registry import register_hardware_class, HardwareRegistry
+from ..abstract_device import abstractDevice
+from ..channel_adapter import ScalarChannelAdapter
+from ..registry import register_hardware_class, HardwareRegistry
 
 try:
-    from .subroutines.pcm1704_driver import PCM1704Driver # type: ignore
+    from ..subroutines.pcm1704_driver import PCM1704Driver # type: ignore
 except ImportError:
     class PCM1704Driver():
         def __init__(*args, **kwargs):
