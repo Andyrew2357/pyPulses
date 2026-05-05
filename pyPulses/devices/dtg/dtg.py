@@ -2,8 +2,8 @@
 Instrument control for 5000 series Tektronix data timing generators.
 """
 
-from .pyvisa_device import pyvisaDevice
-from .registry import register_hardware_class
+from ..pyvisa_device import pyvisaDevice
+from ..registry import register_hardware_class
 from .dtg_utils import *
 
 import base64

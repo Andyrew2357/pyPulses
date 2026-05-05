@@ -1,6 +1,6 @@
-from .pyvisa_device import pyvisaDevice
-from .channel_adapter import ScalarChannelAdapter
-from .registry import register_hardware_class
+from ..pyvisa_device import pyvisaDevice
+from ..channel_adapter import ScalarChannelAdapter
+from ..registry import register_hardware_class
 
 import pyvisa.constants
 import numpy as np

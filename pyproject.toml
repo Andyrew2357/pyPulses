@@ -27,7 +27,11 @@ dependencies = [
     "nidaqmx",
     "numpy>=2.0",
     "pyserial>=3.5",
-    "PyQT5",
+    "pyusb",
+    # Provides libusb-1.0.dll on Windows so pyusb can find it without
+    # a manual DLL installation.  On Linux/macOS the system libusb is
+    # used instead and this package is not installed.
+    "libusb-package; sys_platform == 'win32'",
     "PyVISA>=1.14",
     "PyVISA-py>=0.7",
     "websockets",
@@ -52,5 +56,12 @@ include = ["pyPulses*"]
 "*" = [
     "*.html",
     "*.json",
-    "*.npy"
+    "*.npy",
+]
+# FastFlight2 FPGA bitstreams and DSP firmware (vendored from Signal
+# Recovery; see firmware/README.md for provenance).
+"pyPulses.devices.fastflight2" = [
+    "firmware/*.rbf",
+    "firmware/*.bin",
+    "firmware/README.md",
 ]

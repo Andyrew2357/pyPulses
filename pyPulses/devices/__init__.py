@@ -12,9 +12,9 @@ from .calibrated_channel import CalibratedChannel, PolarityCalibratedChannel
 from .calibration import PolynomialCalibration, TrivialCalibration
 from .calibrate_pulse_shaper import PulseShaperCalibration, PulseShaperCalibrationResult
 from .cryomagnetics_4G import cryomagnetics4G
-from .dtg import dtg5274
-from .dtg_comp_pair import dtgCompPair
-from .fastflight2 import FastFlight2
+from .dtg.dtg import dtg5274
+from .dtg.dtg_comp_pair import dtgCompPair
+from .fastflight2.fastflight2 import FastFlight2
 # from .hemt_amp import HEMTCommonSource
 from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel, 
                     hf2liOscillator, hf2liOutputChannel)
@@ -26,7 +26,7 @@ from .keithley2450 import keithley2450
 from .keithley2700 import keithley2700
 from .mso44 import mso44
 from .ashoorilab.pcm1704 import pcm1704
-from .pid_dcbox import PIDbox
+from .ashoorilab.pid_dcbox import PIDbox
 from .pulse_pair import pulsePair
 from .srs_lockin.lockin import (sr830, sr844, sr850, sr860, sr865a)
 from .sweepable_channel import SweepableChannel, SweepConfig

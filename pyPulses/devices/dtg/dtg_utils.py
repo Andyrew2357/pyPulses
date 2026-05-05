@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import List
 from bitarray import bitarray
 
-from .pyvisa_device import pyvisaDevice
+from ..pyvisa_device import pyvisaDevice
 
 @dataclass
 class dtgChannel:

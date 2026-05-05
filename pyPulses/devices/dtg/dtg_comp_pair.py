@@ -5,8 +5,8 @@ DTG channels in software to make them behave in the appropriate manner
 
 from .dtg import DTG
 from .dtg_utils import dtgChannel
-from .abstract_device import abstractDevice
-from .registry import (
+from ..abstract_device import abstractDevice
+from ..registry import (
     register_device_class, 
     format_reference, 
     DeferredReference,

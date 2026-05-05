@@ -5,8 +5,8 @@ that a 64-bit python has to interface with a 32 bit server for it to function.
 I have made efforts to reduce the overhead from this arrangement.
 """
 
-from .fastflight2_utils import FastFlight64
-from .fastflight_scopeview import FFScopeView
+from ..fastflight2_utils import FastFlight64
+from ...legacy.fastflight_scopeview import FFScopeView
 from .abstract_device import abstractDevice
 from .registry import register_hardware_class, HardwareRegistry
 

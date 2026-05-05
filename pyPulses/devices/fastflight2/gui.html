@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FastFlight2</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:       #1a1a1f;
+    --surface:  #24242b;
+    --border:   #38384a;
+    --accent:   #5b8ef5;
+    --accent2:  #7ec8a0;
+    --danger:   #e05c5c;
+    --warning:  #e8a44a;
+    --text:     #dcdce8;
+    --muted:    #7a7a96;
+    --input-bg: #1a1a1f;
+    --radius:   6px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Header ─────────────────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; font-weight: 600; color: var(--accent); }
+  .spacer { flex: 1; }
+
+  /* ── Status badges ───────────────────────────────────────────────────── */
+  .badge {
+    padding: 3px 9px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .badge.active   { background: #2d4a2d; border-color: var(--accent2); color: var(--accent2); }
+  .badge.alert    { background: #4a2222; border-color: var(--danger);  color: var(--danger);  }
+  .badge.warn     { background: #4a3820; border-color: var(--warning); color: var(--warning); }
+
+  #conn-badge { }
+  #acq-badge  { }
+
+  /* ── Layout ─────────────────────────────────────────────────────────── */
+  .layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ─────────────────────────────────────────────────────────── */
+  aside {
+    width: 240px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .section {
+    border-bottom: 1px solid var(--border);
+    padding: 10px 12px;
+  }
+  .section h2 {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .field { margin-bottom: 7px; }
+  .field label {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-bottom: 3px;
+  }
+  .field input[type=number],
+  .field select {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 4px 7px;
+    font-size: 12px;
+    outline: none;
+    transition: border-color .1s;
+  }
+  .field input[type=number]:focus,
+  .field select:focus { border-color: var(--accent); }
+
+  .field.checkbox {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 7px;
+  }
+  .field.checkbox label {
+    margin: 0;
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  input[type=checkbox] {
+    accent-color: var(--accent);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+  }
+
+  /* ── Buttons ─────────────────────────────────────────────────────────── */
+  .btn-row {
+    display: flex;
+    gap: 6px;
+    padding: 10px 12px;
+    flex-wrap: wrap;
+  }
+  button {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .1s, border-color .1s, color .1s;
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) { background: var(--border); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary  {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  button.primary:hover:not(:disabled) { background: #7aaaff; border-color: #7aaaff; }
+  button.danger   {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #fff;
+  }
+  button.danger:hover:not(:disabled)  { background: #e87070; }
+  button.apply {
+    background: #2d4a2d;
+    border-color: var(--accent2);
+    color: var(--accent2);
+  }
+  button.apply:hover:not(:disabled) { background: #3a5e3a; }
+
+  /* ── Chart area ──────────────────────────────────────────────────────── */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .chart-wrap {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+  }
+  .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+
+  /* ── Status bar ──────────────────────────────────────────────────────── */
+  .statusbar {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    padding: 5px 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 11px;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+  .statusbar span b { color: var(--text); }
+  #overload-badge, #underload-badge {
+    padding: 1px 7px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    color: var(--muted);
+    transition: all .15s;
+  }
+  #overload-badge.active  { background:#4a2222; border-color:var(--danger); color:var(--danger); }
+  #underload-badge.active { background:#4a3820; border-color:var(--warning); color:var(--warning); }
+
+  /* ── Display options ─────────────────────────────────────────────────── */
+  .disp-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+  .disp-row select {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 3px 6px;
+    font-size: 11px;
+    outline: none;
+  }
+  .disp-row label { display: flex; align-items: center; gap: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>FastFlight2</h1>
+  <span class="badge" id="conn-badge">Connecting…</span>
+  <span class="badge" id="acq-badge">Idle</span>
+  <div class="spacer"></div>
+  <span class="badge" id="overload-badge">OVL</span>
+  <span class="badge" id="underload-badge">UNL</span>
+</header>
+
+<div class="layout">
+
+  <!-- ── Sidebar ───────────────────────────────────────────────────────── -->
+  <aside>
+
+    <!-- Acquisition controls -->
+    <div class="btn-row">
+      <button class="primary" id="btn-single">Single</button>
+      <button id="btn-cont">Continuous</button>
+      <button class="danger" id="btn-stop" disabled>Stop</button>
+    </div>
+
+    <!-- Protocol settings -->
+    <div class="section">
+      <h2>Protocol</h2>
+
+      <div class="field">
+        <label>Record Length (µs)</label>
+        <input type="number" id="s-record-length" min="0.004" max="300000" step="1">
+      </div>
+
+      <div class="field">
+        <label>Time Per Point</label>
+        <select id="s-tpp">
+          <option value="0.25">250 ps</option>
+          <option value="0.5">500 ps</option>
+          <option value="1.0">1 ns</option>
+          <option value="2.0">2 ns</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Records / Spectrum</label>
+        <input type="number" id="s-rps" min="1" max="65535" step="1">
+      </div>
+
+      <div class="field">
+        <label>Voltage Offset (V)</label>
+        <input type="number" id="s-voffset" min="-0.25" max="0.25" step="0.001">
+      </div>
+
+      <div class="field">
+        <label>Time Offset (ns)</label>
+        <input type="number" id="s-toffset" min="16" max="655360" step="16">
+      </div>
+
+      <div class="field">
+        <label>Compression</label>
+        <select id="s-compression">
+          <option value="1">Lossless</option>
+          <option value="0">Peak Only</option>
+          <option value="2">Stick</option>
+        </select>
+      </div>
+
+      <div class="field checkbox">
+        <input type="checkbox" id="s-pe">
+        <label for="s-pe">Precision Enhancer</label>
+      </div>
+
+      <div class="field checkbox">
+        <input type="checkbox" id="s-cns">
+        <label for="s-cns">Correlated Noise Subtraction</label>
+      </div>
+    </div>
+
+    <!-- Trigger settings -->
+    <div class="section">
+      <h2>Trigger</h2>
+
+      <div class="field">
+        <label>Threshold (V)</label>
+        <input type="number" id="s-thresh" min="-2.5" max="2.5" step="0.01">
+      </div>
+
+      <div class="field checkbox">
+        <input type="checkbox" id="s-rising">
+        <label for="s-rising">Rising Edge</label>
+      </div>
+
+      <div class="field checkbox">
+        <input type="checkbox" id="s-ext">
+        <label for="s-ext">External Trigger</label>
+      </div>
+
+      <div class="field checkbox">
+        <input type="checkbox" id="s-enable-high">
+        <label for="s-enable-high">Enable High</label>
+      </div>
+    </div>
+
+    <!-- Apply button -->
+    <div class="btn-row">
+      <button class="apply" id="btn-apply">Apply Settings</button>
+    </div>
+
+  </aside>
+
+  <!-- ── Chart area ────────────────────────────────────────────────────── -->
+  <main>
+
+    <div class="disp-row">
+      <label>X axis:
+        <select id="d-xunit">
+          <option value="ns">ns</option>
+          <option value="us">µs</option>
+          <option value="ms">ms</option>
+        </select>
+      </label>
+      <label>Y axis:
+        <select id="d-ymode">
+          <option value="counts">Counts</option>
+          <option value="norm">Normalised</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="d-autoscale" checked> Autoscale Y</label>
+    </div>
+
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+    </div>
+
+    <div class="statusbar">
+      <span>Points: <b id="st-points">—</b></span>
+      <span>Elapsed: <b id="st-elapsed">—</b> s</span>
+      <span>TPP: <b id="st-tpp">—</b></span>
+      <span>Records: <b id="st-rps">—</b></span>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ── WebSocket ────────────────────────────────────────────────────────────
+const WS_PORT = __WS_PORT__;
+let ws = null;
+let reconnectTimer = null;
+
+function connect() {
+  ws = new WebSocket(`ws://localhost:${WS_PORT}`);
+
+  ws.onopen = () => {
+    setConnected(true);
+    ws.send(JSON.stringify({type: 'get_state'}));
+  };
+
+  ws.onclose = () => {
+    setConnected(false);
+    reconnectTimer = setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+
+  ws.onmessage = e => {
+    try { handle(JSON.parse(e.data)); } catch(_) {}
+  };
+}
+
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify(msg));
+}
+
+// ── Message handling ──────────────────────────────────────────────────────
+function handle(msg) {
+  switch (msg.type) {
+    case 'state':    applyState(msg);    break;
+    case 'spectrum': applySpectrum(msg); break;
+    case 'status':   applyStatus(msg);   break;
+    case 'error':    showError(msg.message); break;
+  }
+}
+
+// ── State ─────────────────────────────────────────────────────────────────
+function applyState(s) {
+  // Protocol
+  setVal('s-record-length', +(s.record_length / 1000).toPrecision(6));  // ns→µs
+  setVal('s-tpp',           s.tpp);
+  setVal('s-rps',           s.records_per_spectrum);
+  setVal('s-voffset',       s.voltage_offset);
+  setVal('s-toffset',       s.time_offset);
+  setVal('s-compression',   s.compression);
+  setChecked('s-pe',        s.precision_enhancer);
+  setChecked('s-cns',       s.correlated_subtraction);
+  // Trigger
+  setVal('s-thresh',        s.trigger_threshold);
+  setChecked('s-rising',    s.trigger_rising);
+  setChecked('s-ext',       s.external_trigger);
+  setChecked('s-enable-high', s.trigger_enable_high);
+  // Acquisition
+  applyStatus(s);
+}
+
+function applyStatus(s) {
+  const acq = s.acquiring;
+  el('btn-single').disabled = acq;
+  el('btn-cont').disabled   = acq;
+  el('btn-stop').disabled   = !acq;
+
+  const badge = el('acq-badge');
+  if (acq) {
+    badge.textContent = s.mode === 'continuous' ? 'Continuous' : 'Acquiring';
+    badge.className = 'badge active';
+  } else {
+    badge.textContent = 'Idle';
+    badge.className = 'badge';
+  }
+}
+
+// ── Chart ─────────────────────────────────────────────────────────────────
+const ctx = document.getElementById('chart').getContext('2d');
+Chart.defaults.color = '#7a7a96';
+Chart.defaults.borderColor = '#38384a';
+
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{
+      label: 'Spectrum',
+      data: [],
+      borderColor: '#5b8ef5',
+      backgroundColor: 'rgba(91,142,245,0.08)',
+      borderWidth: 1,
+      pointRadius: 0,
+      fill: true,
+      tension: 0,
+    }]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        callbacks: {
+          title: items => `t = ${items[0].label}`,
+          label: item => `counts: ${Math.round(item.raw)}`,
+        }
+      }
+    },
+    scales: {
+      x: {
+        type: 'category',
+        ticks: {
+          maxTicksLimit: 10,
+          maxRotation: 0,
+        },
+        title: { display: true, text: 'Time (ns)' }
+      },
+      y: {
+        beginAtZero: true,
+        title: { display: true, text: 'Counts' }
+      }
+    }
+  }
+});
+
+// ── Spectrum data ─────────────────────────────────────────────────────────
+let lastSpectrum = null;
+
+function applySpectrum(msg) {
+  lastSpectrum = msg;
+
+  // Overload / underload badges
+  setBadge('overload-badge',  msg.overload,  'alert');
+  setBadge('underload-badge', msg.underload, 'warn');
+
+  // Status bar
+  el('st-points').textContent  = msg.n_points.toLocaleString();
+  el('st-elapsed').textContent = msg.elapsed.toFixed(3);
+  el('st-tpp').textContent     = msg.tpp_ns + ' ns';
+  el('st-rps').textContent     = msg.records_per_spectrum.toLocaleString();
+
+  renderChart(msg);
+}
+
+function renderChart(msg) {
+  const xunit = el('d-xunit').value;
+  const ymode = el('d-ymode').value;
+  const auto  = el('d-autoscale').checked;
+
+  const divisors = {ns: 1, us: 1000, ms: 1e6};
+  const div = divisors[xunit] || 1;
+
+  const labels = msg.t_ns.map(t => (t / div).toPrecision(4));
+  let   data   = msg.data;
+
+  if (ymode === 'norm') {
+    const mx = Math.max(...data, 1);
+    data = data.map(v => v / mx);
+  }
+
+  chart.data.labels               = labels;
+  chart.data.datasets[0].data     = data;
+  chart.options.scales.x.title.text = `Time (${xunit})`;
+  chart.options.scales.y.title.text = ymode === 'norm' ? 'Normalised' : 'Counts';
+
+  if (auto) {
+    delete chart.options.scales.y.min;
+    delete chart.options.scales.y.max;
+  }
+
+  chart.update('none');
+}
+
+// Re-render if display options change without a new spectrum arriving
+['d-xunit','d-ymode','d-autoscale'].forEach(id =>
+  el(id).addEventListener('change', () => { if (lastSpectrum) renderChart(lastSpectrum); })
+);
+
+// ── Buttons ───────────────────────────────────────────────────────────────
+el('btn-single').addEventListener('click', () => send({type: 'acquire_single'}));
+el('btn-cont').addEventListener('click',   () => send({type: 'acquire_start'}));
+el('btn-stop').addEventListener('click',   () => send({type: 'acquire_stop'}));
+
+el('btn-apply').addEventListener('click', () => {
+  const msg = {
+    type: 'apply_settings',
+    // Protocol (convert µs back to ns for record_length)
+    record_length:          parseFloat(el('s-record-length').value) * 1000,
+    tpp:                    parseFloat(el('s-tpp').value),
+    records_per_spectrum:   parseInt(el('s-rps').value, 10),
+    voltage_offset:         parseFloat(el('s-voffset').value),
+    time_offset:            parseFloat(el('s-toffset').value),
+    compression:            parseInt(el('s-compression').value, 10),
+    precision_enhancer:     el('s-pe').checked,
+    correlated_subtraction: el('s-cns').checked,
+    // Trigger
+    trigger_threshold:      parseFloat(el('s-thresh').value),
+    trigger_rising:         el('s-rising').checked,
+    external_trigger:       el('s-ext').checked,
+    trigger_enable_high:    el('s-enable-high').checked,
+  };
+  send(msg);
+});
+
+// ── Connection badge ──────────────────────────────────────────────────────
+function setConnected(ok) {
+  const b = el('conn-badge');
+  b.textContent = ok ? 'Connected' : 'Disconnected';
+  b.className   = ok ? 'badge active' : 'badge alert';
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function el(id) { return document.getElementById(id); }
+
+function setVal(id, v) {
+  const e = el(id);
+  if (e && document.activeElement !== e) e.value = v;
+}
+
+function setChecked(id, v) {
+  const e = el(id);
+  if (e) e.checked = !!v;
+}
+
+function setBadge(id, active, cls) {
+  const e = el(id);
+  if (!e) return;
+  e.className = active ? `badge ${cls}` : 'badge';
+}
+
+function showError(msg) {
+  console.error('FF2 error:', msg);
+  // Could be surfaced as a toast; keep it simple for now.
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>
