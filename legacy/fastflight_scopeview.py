@@ -1,4 +1,4 @@
-from ..pyPulses.fastflight2_utils import FastFlight64
+from ..pyPulses.fastflight2_utils_2 import FastFlight64
 
 import sys
 import time

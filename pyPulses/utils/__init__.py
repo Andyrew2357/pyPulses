@@ -8,7 +8,6 @@ from .getsetter import getSetter
 from .kalman import kalman
 from .rootfinder import RootFinderState, RootFinderStatus
 from .send_mail import sendMail
-from . import stats
 
 __all__ = [
     "balance1d",
@@ -25,6 +24,5 @@ __all__ = [
     "kalman",
     "RootFinderState",
     "RootFinderStatus",
-    "stats",
     "sendMail",
 ]

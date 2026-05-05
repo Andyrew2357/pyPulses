@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 try:
     import libusb_package
-    libusb_package.get_library_handle()  # registers the bundled DLL
+    libusb_package.get_libusb1_backend() # registers the bundled DLL
 except ImportError:
     pass  # not on Windows, or user has system libusb — either is fine
 
