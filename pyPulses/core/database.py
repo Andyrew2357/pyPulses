@@ -430,8 +430,10 @@ class DatabaseLogger:
         """Flush any buffered rows and close the database connection."""
         if self.use_buffer:
             self._flush()
+        self._cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self._cur.execute("PRAGMA journal_mode=DELETE")
         self._conn.close()
-
+        
     def __enter__(self) -> 'DatabaseLogger':
         return self
 
