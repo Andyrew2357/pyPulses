@@ -13,7 +13,9 @@ maintainers = [
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python",
-  "Operating System :: OS Dependent",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
   "Intended Audience :: Science/Research"
 ]
 requires-python = ">=3.10"
@@ -24,7 +26,6 @@ dependencies = [
     "ipywidgets",
     "matplotlib",
     "mkdocs",
-    "nidaqmx",
     "numpy>=2.0",
     "pyserial>=3.5",
     "pyusb",
@@ -45,7 +46,6 @@ repository = "https://github.com/Andyrew2357/pyPulses.git"
 requires = [
     "setuptools>=61",
     "wheel",
-    "pybind11>=2.6"
 ]
 build-backend = "setuptools.build_meta"
 

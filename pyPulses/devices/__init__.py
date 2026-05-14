@@ -1,9 +1,3 @@
-from .nivisa_utils import find_and_load_gpib
-if not find_and_load_gpib():
-    pass # Commented out pedantic warning
-    # print("WARNING: The GPIB library was not found or loaded correctly.")
-    # print("If you wish to use GPIB instruments, make sure NI488.2 is installed.")
-
 from .ashoorilab.ad5764 import ad5764
 from .ashoorilab.ad5791 import ad5791
 from .ashoorilab.ad9854 import ad9854

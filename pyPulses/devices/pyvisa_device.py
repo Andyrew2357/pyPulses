@@ -4,7 +4,6 @@ Base class for VISA-controlled instruments.
 
 from .registry import HardwareRegistry
 from .abstract_device import abstractDevice
-from .nivisa_utils import visa_dll
 
 import pyvisa
 import pyvisa.constants
@@ -174,7 +173,7 @@ class pyvisaDevice(abstractDevice):
             interface_type = 'OTHER'
         
         # Open resource
-        rm = pyvisa.ResourceManager(visa_dll)
+        rm = pyvisa.ResourceManager()
         self.device = rm.open_resource(resource_name)
         
         # Common configuration
