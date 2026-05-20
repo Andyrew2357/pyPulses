@@ -37,11 +37,11 @@ class CalibratedChannel(abstractDevice):
 
     def __init__(self,
         hardware: ScalarChannel | DeferredReference,
-        calibration: CalibrationModel | None,
-        control_min: float,
-        control_max: float,
-        output_min: float,
-        output_max: float,
+        calibration: CalibrationModel | None = None,
+        control_min: float | None = None,
+        control_max: float | None = None,
+        output_min: float | None = None,
+        output_max: float | None = None,
         attenuator: Attenuator | DeferredReference | None = None,
         attenuator_active: bool = True,
         registry_id: str | None = None,
@@ -52,15 +52,19 @@ class CalibratedChannel(abstractDevice):
         DeviceRegistry.register(self, registry_id=registry_id)
 
         self._hw = hardware
-        self._calibration = calibration
+        if calibration is None:
+            from .calibration import TrivialCalibration
+            self._calibration = TrivialCalibration()
+        else:
+            self._calibration = calibration
         self._attenuator = attenuator
         self._attenuator_active = attenuator_active
 
         # control and output rails
-        self._c_min = control_min
-        self._c_max = control_max
-        self._o_min = output_min
-        self._o_max = output_max
+        self._c_min = control_min if control_min is not None else -np.inf
+        self._c_max = control_max if control_max is not None else np.inf
+        self._o_min = output_min if output_min is not None else -np.inf
+        self._o_max = output_max if output_max is not None else np.inf
 
         # attenuator settings
         self._attenuator_mode = AttenuatorMode.PASSIVE

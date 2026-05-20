@@ -5,14 +5,69 @@ Uses PyUSB (libusb) instead of NI-DAQmx.
 Platform setup
 --------------
 Linux:
-        # /etc/udev/rules.d/99-usb6501.rules
-        SUBSYSTEM=="usb", ATTR{idVendor}=="3923", ATTR{idProduct}=="718a", MODE="0666"
-
-    Then: sudo udevadm control --reload-rules && sudo udevadm trigger
+    Create /etc/udev/rules.d/99-usb6501.rules containing::
+ 
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="3923", ATTRS{idProduct}=="718a", \\
+            SYMLINK+="usb6501_%n", MODE="0666"
+ 
+    Then reload udev without rebooting::
+ 
+        sudo udevadm control --reload-rules && sudo udevadm trigger
+ 
+    Replug the device after reloading.  The ``%n`` in the SYMLINK token
+    expands to the kernel device minor number so that multiple USB-6501s
+    on the same host get distinct symlinks (e.g. ``/dev/usb6501_1``).
+ 
+    Note: use ``SUBSYSTEMS`` (plural) and ``ATTRS`` (plural) — these traverse
+    the full device hierarchy.  The singular forms ``SUBSYSTEM``/``ATTR``
+    only match the innermost sysfs node and may silently fail to match USB
+    devices on some kernel versions.
 
 Windows:
     Use Zadig (https://zadig.akeo.ie) to replace the NI driver for "NI USB-6501"
     with WinUSB or libusb-win32.  Only needs to be done once per machine.
+
+Debugging on Linux
+------------------
+1.  Check the device is visible to the kernel::
+ 
+        lsusb | grep '3923:718a'
+ 
+    If nothing appears the device is not powered or not plugged in.
+ 
+2.  Find the bus and device numbers from ``lsusb`` output, then check
+    the permissions on the underlying node::
+ 
+        ls -l /dev/bus/usb/<BUS>/<DEV>
+ 
+    The node needs to be world-readable/writable (``crw-rw-rw-``) or owned
+    by a group you belong to.  If it shows ``crw-rw-r--`` your udev rule
+    has not applied — see step 3.
+ 
+3.  Simulate rule evaluation to see why a rule did or didn't match::
+ 
+        udevadm test $(udevadm info -q path -n /dev/bus/usb/<BUS>/<DEV>)
+ 
+    Look for ``MODE`` in the output.  If it is not ``0666`` the rule file
+    is not being loaded (check the filename is ``*.rules`` and is in
+    ``/etc/udev/rules.d/``).
+ 
+4.  Dump all attributes the device exposes so you can verify the match
+    keys used in the rule::
+ 
+        udevadm info -a -n /dev/bus/usb/<BUS>/<DEV>
+ 
+5.  If you get a ``USBError: [Errno 13] Access denied`` in Python but the
+    node permissions look correct, a kernel driver (``usbtmc`` or ``usbhid``)
+    may have claimed the interface.  The driver code calls
+    ``detach_kernel_driver`` automatically, but this requires root unless
+    the device node is writable.  Verify with::
+ 
+        cat /sys/bus/usb/devices/<BUS>-<PORT>/driver
+ 
+    If a driver is bound, the udev rule should have taken effect; re-run
+    ``sudo udevadm trigger`` after confirming the rule is correct.
+
 """
 
 try:
@@ -141,6 +196,7 @@ class USB6501(abstractDevice):
         except (NotImplementedError, usb.core.USBError):
             pass  # not applicable on Windows / macOS
 
+        self._dev.reset()
         self._dev.set_configuration()
         usb.util.claim_interface(self._dev, 0)
         self._flush()
@@ -257,12 +313,13 @@ class USB6501(abstractDevice):
 
     def write_sequence(self, port: int, states: List[int]) -> None:
         """
-        Write a sequence of byte values to a port as fast as possible.
-
-        All USB write commands are dispatched *before* any confirmation responses
-        are read.  This pipelines USB host scheduling with device processing and
-        avoids the 10-100 ms per-response penalty of a naive send-then-wait loop.
-
+        Write a sequence of byte values to a port.
+ 
+        Each command is sent and its confirmation response read before the next
+        command is dispatched.  The device's bulk-IN buffer is small enough that
+        sending all commands before reading responses causes it to overflow and
+        stall; fully interleaved I/O avoids this and is fast enough in practice.
+ 
         Parameters
         ----------
         port   : PORT_A, PORT_B, or PORT_C
@@ -270,30 +327,21 @@ class USB6501(abstractDevice):
         """
         if not states:
             return
-
+ 
         p        = self._phys_port(port)
         template = bytearray(self._SET_OUTPUT_CMD)
         template[0x0E] = p
-
-        # Pre-build all command bytes so the send loop is as tight as possible
-        cmds: List[bytes] = []
-        for s in states:
-            cmd = bytearray(template)
-            cmd[0x11] = s & 0xFF
-            cmds.append(bytes(cmd))
-
+ 
         with self._lock:
-            # Dispatch all commands before reading any responses.
-            # The device processes them sequentially while we continue sending.
-            for cmd in cmds:
-                self._dev.write(self.DATA_EP, cmd)
-
-            # Drain all confirmation responses.  Content is always _WRITE_OK_RESP
-            # and carries no data, so we don't verify each one individually.
-            for _ in cmds:
+            for s in states:
+                cmd = bytearray(template)
+                cmd[0x11] = s & 0xFF
+                self._dev.write(self.DATA_EP, bytes(cmd))
                 self._dev.read(self.RESP_EP, 64)
-
+ 
             self._output[p] = states[-1] & 0xFF
+
+
 
     def get_input(self, port: int, mask: int = 0xFF) -> int:
         """Read the current logic level of a port's input pins.

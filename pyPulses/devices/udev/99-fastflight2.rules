@@ -1,0 +1,14 @@
+# Signal Recovery / ORTEC FastFlight2 repetitive signal averager
+# Vendor: 0x0a2d (EG&G Ortec), Product: 0x0015
+#
+# Install:
+#   sudo cp 99-fastflight2.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Verify (replug device first, then):
+#   lsusb | grep '0a2d:0015'
+#   ls -l /dev/fastflight2*         # symlink created by this rule
+#   udevadm info -a /dev/bus/usb/<BUS>/<DEV> | grep -E 'idVendor|idProduct|MODE'
+
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a2d", ATTRS{idProduct}=="0015", \
+    SYMLINK+="fastflight2", MODE="0666"

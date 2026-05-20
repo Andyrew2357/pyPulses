@@ -23,7 +23,7 @@ try:
 except ImportError:
     raise ImportError("websockets package required: pip install websockets")
 
-_FRONTEND_PATH = Path(__file__).parent / 'fastflight2_gui.html'
+_FRONTEND_PATH = Path(__file__).parent / 'gui.html'
 
 # Maximum number of points sent to the frontend chart.
 # The browser doesn't benefit from more than this, and it keeps WebSocket
@@ -241,13 +241,13 @@ class FastFlight2GUI:
         thread to apply between spectra.
         """
         from .fastflight2 import FastFlight2Protocol
-
+ 
         ff = self._instrument
-
+ 
         # --- Protocol fields ---
         proto = FastFlight2Protocol.from_dict(ff.protocol.to_dict())
         changed = False
-
+ 
         if 'record_length' in msg:
             proto.record_length = float(msg['record_length'])
             changed = True
@@ -272,10 +272,10 @@ class FastFlight2GUI:
         if 'compression' in msg:
             proto.compression = int(msg['compression'])
             changed = True
-
+ 
         if changed:
             self._pending_protocol = proto
-
+ 
         # --- Trigger fields ---
         trigger = {}
         if 'trigger_threshold' in msg:
@@ -286,16 +286,23 @@ class FastFlight2GUI:
             trigger['enable_high'] = bool(msg['trigger_enable_high'])
         if 'external_trigger' in msg:
             trigger['external'] = bool(msg['external_trigger'])
-
+ 
         if trigger:
             self._pending_trigger = trigger
-
+ 
         if changed or trigger:
             self._settings_changed.set()
+ 
+        # If not currently acquiring, apply settings immediately so the UI
+        # gets an accurate echo (including any quantisation of record_length
+        # etc.).  If acquiring, leave them staged for the acquisition thread
+        # to apply between spectra — but don't echo state yet, because
+        # ff.protocol still holds the old values and echoing it would
+        # overwrite the user's fields with the previous settings.
+        if not self._acq_running:
+            self._apply_pending_settings()
+            self._send(self._state_msg())
 
-        # Echo confirmed state back so the UI can update quantised values
-        # (e.g. record_length gets quantised by stuff()).
-        self._send(self._state_msg())
 
     # -----------------------------------------------------------------------
     # Acquisition loop
@@ -332,13 +339,13 @@ class FastFlight2GUI:
     def _acquisition_loop(self):
         """
         Main acquisition loop run in its own thread.
-
+ 
           1. start_acquisition() — includes clear_buffer()
           2. get_spectrum()      — blocks; no instrument lock held
           3. stop_acquisition()
           4. apply pending settings if any
           5. repeat or exit
-
+ 
         The instrument lock (_acq_lock) is held only for the brief
         start/stop moments, not during the blocking get_spectrum() call.
         This allows settings to be staged at any time and applied cleanly
@@ -347,38 +354,39 @@ class FastFlight2GUI:
         ff  = self._instrument
         out = np.zeros(ff.MAX_POINTS, dtype=np.uint32)
         n   = 0
-
+ 
         try:
             with self._acq_lock:
                 ff.start_acquisition()
-
+ 
             while self._acq_mode is not None:
                 t0 = time.perf_counter()
-
+ 
                 # --- Blocking spectrum read (no lock) ---
                 try:
                     n = ff.get_spectrum(out)
                 except Exception as exc:
                     self._send({'type': 'error', 'message': str(exc)})
                     break
-
+ 
                 elapsed = time.perf_counter() - t0
-
+ 
                 # --- Stop, apply settings, restart (brief lock) ---
                 with self._acq_lock:
                     ff.stop_acquisition()
                     if self._settings_changed.is_set():
                         self._apply_pending_settings()
+                        self._send(self._state_msg())
                     if self._acq_mode is not None:
                         ff.start_acquisition()
-
+ 
                 # --- Send spectrum to all connected clients ---
                 self._send_spectrum(out, n, elapsed)
-
+ 
                 # Single-shot mode: exit after first spectrum.
                 if self._acq_mode == 'single':
                     self._acq_mode = None
-
+ 
         finally:
             try:
                 with self._acq_lock:
@@ -387,6 +395,7 @@ class FastFlight2GUI:
                 pass
             self._acq_running = False
             self._send({'type': 'status', 'acquiring': False, 'mode': None})
+
 
     def _send_spectrum(self, data: np.ndarray, n_points: int, elapsed: float):
         """

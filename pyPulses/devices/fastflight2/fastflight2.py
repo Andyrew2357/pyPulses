@@ -339,8 +339,56 @@ class FastFlight2(abstractDevice):
 
     Notes
     -----
-    On Windows, install the WinUSB driver for the device using Zadig
+    **Linux setup**
+ 
+    Create /etc/udev/rules.d/99-fastflight2.rules containing::
+ 
+        SUBSYSTEMS=="usb", ATTRS{idVendor}=="0a2d", ATTRS{idProduct}=="0015", \\
+            SYMLINK+="fastflight2", MODE="0666"
+ 
+    Then reload udev without rebooting::
+ 
+        sudo udevadm control --reload-rules && sudo udevadm trigger
+ 
+    Replug the device after reloading.
+ 
+    Note: use ``SUBSYSTEMS`` (plural) and ``ATTRS`` (plural) so that the
+    match traverses the full device hierarchy.  The singular forms may
+    silently fail to match on some kernel versions.
+ 
+    **Linux debugging**
+ 
+    1.  Verify the device is visible::
+ 
+            lsusb | grep '0a2d:0015'
+ 
+    2.  Check permissions on the underlying node (bus/dev numbers from
+        ``lsusb``)::
+ 
+            ls -l /dev/bus/usb/<BUS>/<DEV>
+ 
+        Should be ``crw-rw-rw-`` (world read/write).
+ 
+    3.  Simulate udev rule evaluation::
+ 
+            udevadm test $(udevadm info -q path -n /dev/bus/usb/<BUS>/<DEV>)
+ 
+        Check that ``MODE=0666`` appears in the output.
+ 
+    4.  Dump device attributes to verify rule match keys::
+ 
+            udevadm info -a -n /dev/bus/usb/<BUS>/<DEV>
+ 
+    5.  The FastFlight2 uploads FPGA firmware on every cold-start.  If
+        initialisation hangs or raises a ``USBTimeoutError``, confirm
+        ``fpga_directory`` points to the correct folder and all ``.rbf``
+        and ``.bin`` files listed above are present.
+
+    **Windows setup**
+ 
+    Install the WinUSB driver for the device using Zadig
     (https://zadig.akeo.ie/) before instantiating this class.
+
     """
 
     OVERLOAD  = 0x1
@@ -421,6 +469,12 @@ class FastFlight2(abstractDevice):
                     self._dev.detach_kernel_driver(0)
             except Exception as e:
                 self.warn(f"Kernel driver detach skipped: {e}")
+
+        try:
+            self._dev.reset()
+        except usb.core.USBError as e:
+            self.warn(f"reset: {e}  (continuing)")
+
 
         try:
             self._dev.set_configuration()

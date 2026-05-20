@@ -1,0 +1,14 @@
+# NI USB-6501 24-channel digital I/O
+# Vendor: 0x3923 (National Instruments), Product: 0x718A
+#
+# Install:
+#   sudo cp 99-usb6501.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Verify (replug device first, then):
+#   lsusb | grep '3923:718a'
+#   ls -l /dev/usb6501_*            # symlink created by this rule
+#   udevadm info -a /dev/bus/usb/<BUS>/<DEV> | grep -E 'idVendor|idProduct|MODE'
+
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="3923", ATTRS{idProduct}=="718a", \
+    SYMLINK+="usb6501_%n", MODE="0666"

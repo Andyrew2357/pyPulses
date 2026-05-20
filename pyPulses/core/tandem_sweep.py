@@ -236,7 +236,7 @@ def _tandemSweep(
 
 def tandemSweep(
     channels         : List[SweepableChannel],
-    target           : np.ndarray | List[float] | Dict[str, float],
+    target           : float | np.ndarray | List[float] | Dict[str, float],
     min_wait         : float | None = None,
     callback         : Callable[[np.ndarray], Any] | None = None,
     panic_condition  : Callable[..., bool] = lambda *_,**__: False,
@@ -254,7 +254,7 @@ def tandemSweep(
     ----------
     channels : list of SweepableChannel
         Channels to sweep.
-    target : array-like or dict
+    target : float or array-like or dict
         Target values. If a dict, keys must match channel names and missing
         channels are held at their current values. If array-like, must be
         one value per channel.
@@ -289,6 +289,9 @@ def tandemSweep(
     start = np.array([ch.get_output() for ch in channels], dtype=float)
 
     # Resolve target
+    if isinstance(target, float):
+        target = [target for _ in channels]
+
     if isinstance(target, dict):
         names = [ch.name for ch in channels]
         if any(k not in names for k in target):

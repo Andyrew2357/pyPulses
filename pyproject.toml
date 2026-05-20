@@ -65,3 +65,7 @@ include = ["pyPulses*"]
     "firmware/*.bin",
     "firmware/README.md",
 ]
+# udev rules for usb devices (non-windows)
+"pyPulses.devices" = [
+    "udev/*.rules"
+]
