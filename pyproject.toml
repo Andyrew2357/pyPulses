@@ -35,6 +35,7 @@ dependencies = [
     "libusb-package; sys_platform == 'win32'",
     "PyVISA>=1.14",
     "PyVISA-py>=0.7",
+    "pyvisa-py",
     "websockets",
     "zhinst-toolkit"
 ]

@@ -173,7 +173,7 @@ class pyvisaDevice(abstractDevice):
             interface_type = 'OTHER'
         
         # Open resource
-        rm = pyvisa.ResourceManager()
+        rm = pyvisa.ResourceManager('@py')
         self.device = rm.open_resource(resource_name)
         
         # Common configuration
