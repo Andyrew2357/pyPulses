@@ -1,5 +1,6 @@
 from .pyvisa_device import pyvisaDevice
-from .registry import register_hardware_class
+from .registry import register_hardware_class, register_device_class, format_reference, DeferredReference, HardwareRegistry
+from .sweepable_channel import AsyncChannel
 
 import time
 from logging import Logger
@@ -205,6 +206,7 @@ class cryomagnetics4G(pyvisaDevice):
 
             if abs(iout_kG - H_target_kG) < H_tol_kG:
                 break
+            time.sleep(0.5)
 
     def _pause_msg(self, msg: str, t_s: int):
         """Print a waiting message with countdown"""
@@ -308,3 +310,74 @@ if __name__ == '__main__':
 
     print("CALLING get_H")
     print(f"result = {magnet.get_H()}")
+
+
+@register_device_class("CM4GChannel")
+class CM4GChannel(AsyncChannel):
+    """
+    AsyncChannel wrapper for the Cryomagnetics 4G superconducting magnet power supply.
+
+    Parameters
+    ----------
+    magnet : cryomagnetics4G
+        A connected cryomagnetics4G instance registered in HardwareRegistry.
+    name : str, default 'B'
+    long_name : str, default 'Field'
+    unit : str, default 'T'
+    registry_id : str, optional
+    """
+
+    def __init__(self,
+        magnet      : cryomagnetics4G,
+        name        : str        = 'B',
+        long_name   : str        = 'Field',
+        unit        : str        = 'T',
+        registry_id : str | None = None,
+    ):
+        super().__init__(name=name, long_name=long_name, unit=unit,
+                         registry_id=registry_id)
+        self._magnet = magnet
+
+    def _get(self) -> float:
+        return self._magnet.get_H()
+
+    def _set(self, value: float) -> None:
+        self._magnet.sweep_H(value)
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def _serialize_state(self) -> dict:
+        return {
+            'magnet'   : format_reference(self._magnet),
+            'name'     : self.name,
+            'long_name': self.long_name,
+            'unit'     : self.unit,
+        }
+
+    def _deserialize_state(self, state: dict) -> None:
+        if 'magnet' in state:
+            self._magnet = DeferredReference(state['magnet']).unwrap()
+        if 'name' in state:
+            self.name = state['name']
+        if 'long_name' in state:
+            self.long_name = state['long_name']
+        if 'unit' in state:
+            self.unit = state['unit']
+
+    @classmethod
+    def from_config(cls, config: dict) -> 'CM4GChannel':
+        registry_id = config.pop('registry_id', None)
+        magnet_ref  = config.pop('magnet', None)
+
+        instance = cls(
+            magnet      = None,  # resolved in _deserialize_state (pass 2)
+            name        = config.pop('name',      'B'),
+            long_name   = config.pop('long_name', 'Field'),
+            unit        = config.pop('unit',      'T'),
+            registry_id = registry_id,
+        )
+        if magnet_ref is not None:
+            instance._magnet = DeferredReference(magnet_ref)
+        return instance

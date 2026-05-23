@@ -6,8 +6,10 @@ from .registry import (
     format_reference,
     DeferredReference,
     DeviceRegistry,
+    HardwareRegistry,
 )
 
+from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass
 from typing import Any, Dict
 
@@ -27,31 +29,44 @@ class SweepConfig:
     tolerance : float
         Allowed residual error between the requested target and the final
         set point. Defaults to 0 (exact).
+    max_rate : float or None
+        Maximum rate of change in output units per second.
+    settle_time : float
+        Seconds to wait after each step for hardware to settle.
+    async_set : bool
+        If True, _tandemSweep dispatches this channel's set_output call
+        asynchronously at the start of the sweep and awaits it at the end,
+        so that other (sync) channels can move concurrently. The channel
+        must implement set_output_async(). Use AsyncChannel as the base
+        class to get this behaviour automatically.
     """
-    max_step  : float | None = None
-    min_step  : float | None = None
-    tolerance : float        = 0.0
-    max_rate    : float | None = None  # output units per second
-    settle_time : float        = 0.0  # seconds, per-step hardware settling
+    max_step    : float | None = None
+    min_step    : float | None = None
+    tolerance   : float        = 0.0
+    max_rate    : float | None = None
+    settle_time : float        = 0.0
+    async_set   : bool         = False
 
-def to_dict(self) -> Dict[str, Any]:
-    return {
-        'max_step'   : self.max_step,
-        'min_step'   : self.min_step,
-        'tolerance'  : self.tolerance,
-        'max_rate'   : self.max_rate,
-        'settle_time': self.settle_time,
-    }
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'max_step'   : self.max_step,
+            'min_step'   : self.min_step,
+            'tolerance'  : self.tolerance,
+            'max_rate'   : self.max_rate,
+            'settle_time': self.settle_time,
+            'async_set'  : self.async_set,
+        }
 
-@classmethod
-def from_dict(cls, d: Dict[str, Any]) -> 'SweepConfig':
-    return cls(
-        max_step    = d.get('max_step'),
-        min_step    = d.get('min_step'),
-        tolerance   = d.get('tolerance',   0.0),
-        max_rate    = d.get('max_rate'),
-        settle_time = d.get('settle_time', 0.0),
-    )
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> 'SweepConfig':
+        return cls(
+            max_step    = d.get('max_step'),
+            min_step    = d.get('min_step'),
+            tolerance   = d.get('tolerance',   0.0),
+            max_rate    = d.get('max_rate'),
+            settle_time = d.get('settle_time', 0.0),
+            async_set   = d.get('async_set',   False),
+        )
 
 
 @register_device_class("SweepableChannel")
@@ -180,3 +195,77 @@ class SweepableChannel:
             registry_id = registry_id,
         )
         return instance
+
+class AsyncChannel(SweepableChannel):
+    """
+    Abstract base for instruments that own their own internal ramp and must
+    never receive intermediate stepped values from _tandemSweep.
+
+    When _tandemSweep encounters a channel whose SweepConfig has async_set=True,
+    it dispatches set_output_async() once at the very start of the sweep and
+    awaits the result only after all sync channels have finished moving. This
+    allows slow instruments (primarily superconducting magnet power supplies)
+    to ramp concurrently with fast channels sweeping back to the start of the
+    next scan line.
+
+    The SweepConfig is hard-coded here and must not be overridden, since the
+    async dispatch contract depends on async_set=True and the absence of any
+    step constraints.
+
+    The single-worker executor serializes concurrent set_output_async() calls:
+    submitting a new target before the previous completes will queue rather
+    than overlap.
+
+    Subclasses
+    ----------
+    Subclasses must implement _get() and _set(), and should be decorated with
+    @register_device_class so they participate in serialization. They must also
+    implement _serialize_state, _deserialize_state, and from_config following
+    the DeviceRegistry pattern: _serialize_state stores format_reference of the
+    underlying instrument; from_config stores a DeferredReference which is
+    resolved in _deserialize_state during the second deserialization pass.
+    """
+
+    _ASYNC_CONFIG = SweepConfig(
+        max_step    = None,
+        min_step    = None,
+        tolerance   = 0.0,
+        async_set   = True,
+    )
+
+    def __init__(self,
+        name        : str | None = None,
+        long_name   : str | None = None,
+        unit        : str | None = None,
+        registry_id : str | None = None,
+    ):
+        # Pass channel=None; get/set_output are overridden below and
+        # self._channel is never accessed on AsyncChannel instances.
+        super().__init__(
+            channel     = None,
+            config      = self._ASYNC_CONFIG,
+            name        = name,
+            long_name   = long_name,
+            unit        = unit,
+            registry_id = registry_id,
+        )
+        self._executor = ThreadPoolExecutor(max_workers=1)
+
+    def _get(self) -> float:
+        raise NotImplementedError
+
+    def _set(self, value: float) -> None:
+        raise NotImplementedError
+
+    def get_output(self) -> float:
+        return self._get()
+
+    def set_output(self, value: float) -> None:
+        self._set(value)
+
+    def set_output_async(self, value: float) -> Future:
+        """Submit _set to the executor and return a Future."""
+        return self._executor.submit(self._set, value)
+
+    def __del__(self):
+        self._executor.shutdown(wait=False)

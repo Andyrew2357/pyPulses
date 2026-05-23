@@ -635,7 +635,7 @@ class RackState:
                         f"Registry ID '{reg_id}' exists in both HardwareRegistry and "
                         f"DeviceRegistry; the DeviceRegistry entry will be used."
                     )
-                sources[reg_id] = obj
+                sources[reg_id] = obj.resolve() if isinstance(obj, Alias) else obj
 
         injected: list[str] = []
         for reg_id, obj in sources.items():
@@ -811,4 +811,51 @@ class DeferredReference:
         raise RuntimeError(
             f"Attempted to set '{name}' on unresolved DeferredReference('{self._ref}'). "
             f"Did you forget to call unwrap() in _deserialize_state()?"
+        )
+    
+@register_device_class("Alias")
+class Alias:
+    """
+    A named alias for any resolvable registry reference.
+
+    Lets users assign a human-readable name in DeviceRegistry that maps to
+    an existing hardware channel or device — e.g. 'trigger' -> 'DTG->1C1'.
+    Participates in serialization so the alias survives a round-trip.
+    inject_into_namespace injects the resolved target under the alias name,
+    so the user's variable refers directly to the underlying object.
+
+    Parameters
+    ----------
+    ref : str
+        A reference string in the format accepted by resolve_reference,
+        e.g. 'DTG->1C1' or 'ips120_0'.
+    registry_id : str, optional
+        The alias name to register under, e.g. 'trigger'.
+    """
+
+    def __init__(self, ref: str, registry_id: str | None = None):
+        self._ref = ref
+        if registry_id is not None:
+            DeviceRegistry.register(self, registry_id=registry_id)
+
+    def resolve(self):
+        """Resolve and return the aliased object."""
+        return resolve_reference(self._ref)
+
+    @property
+    def ref(self) -> str:
+        return self._ref
+
+    def _serialize_state(self) -> dict:
+        return {'ref': self._ref}
+
+    def _deserialize_state(self, state: dict) -> None:
+        if 'ref' in state:
+            self._ref = state['ref']
+
+    @classmethod
+    def from_config(cls, config: dict) -> 'Alias':
+        return cls(
+            ref         = config.pop('ref'),
+            registry_id = config.pop('registry_id', None),
         )

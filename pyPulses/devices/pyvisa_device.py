@@ -8,7 +8,6 @@ from .abstract_device import abstractDevice
 import pyvisa
 import pyvisa.constants
 import re
-import functools
 import time
 from threading import Lock
 from typing import Dict, Any
@@ -35,9 +34,13 @@ class pyvisaDevice(abstractDevice):
     """
     Base class for instruments controlled via PyVISA.
     
-    Handles connection management, retry logic, and rate limiting.
+    Handles connection management and rate limiting. A single lock (_device_lock)
+    is held across every I/O operation so that concurrent threads cannot
+    interleave reads and writes on the same instrument bus.
+
     Subclasses should define their default pyvisa_config and implement
-    device-specific methods.
+    device-specific methods. Retry logic belongs at the command level in
+    subclasses, where the semantics of each command are understood.
     
     Parameters
     ----------
@@ -73,16 +76,13 @@ class pyvisaDevice(abstractDevice):
         self.pyvisa_config = self.DEFAULT_PYVISA_CONFIG.copy()
         self.pyvisa_config.update(kwargs)
         self.pyvisa_config['resource_name'] = resource_name
-        
-        # Retry and rate limit settings
-        self.retry_settings = {
-            'max_retries': self.pyvisa_config.pop('max_retries', 1),
-            'retry_delay': self.pyvisa_config.pop('retry_delay', 0.1),
-            'retry_exceptions': self.pyvisa_config.pop('retry_exceptions', (pyvisa.VisaIOError,)),
-            'min_interval': self.pyvisa_config.pop('min_interval', 0.0),
-        }
-        self._rate_limit_locks = {}
-        self._last_called = {}
+
+        # Minimum interval between I/O operations (seconds)
+        self._min_interval: float = self.pyvisa_config.pop('min_interval', 0.0)
+
+        # Single lock serializing all I/O on this instrument
+        self._device_lock = Lock()
+        self._last_called: float = 0.0
         
         # Connection state
         self.device = None
@@ -109,25 +109,15 @@ class pyvisaDevice(abstractDevice):
     """
     
     def _serialize_state(self) -> Dict[str, Any]:
-        """Serialize connection config and retry settings."""
+        """Serialize connection config."""
         config = self.pyvisa_config.copy()
-        config.update({
-            'max_retries': self.retry_settings['max_retries'],
-            'retry_delay': self.retry_settings['retry_delay'],
-            'min_interval': self.retry_settings['min_interval'],
-        })
-        # Note: retry_exceptions can't be JSON serialized, skip it
+        config['min_interval'] = self._min_interval
         return config
 
     def _deserialize_state(self, state: Dict[str, Any]) -> None:
         """Restore settings from serialized state."""
-        # Update retry settings if present
-        if 'max_retries' in state:
-            self.retry_settings['max_retries'] = state['max_retries']
-        if 'retry_delay' in state:
-            self.retry_settings['retry_delay'] = state['retry_delay']
         if 'min_interval' in state:
-            self.retry_settings['min_interval'] = state['min_interval']
+            self._min_interval = state['min_interval']
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "pyvisaDevice":
@@ -142,15 +132,12 @@ class pyvisaDevice(abstractDevice):
         registry_id = config.pop('registry_id')
         resource_name = config.pop('resource_name')
         
-        # Create instance
-        instance = cls(
+        return cls(
             resource_name=resource_name,
             registry_id=registry_id,
-            skip_connect=False,  # Do connect when deserializing
+            skip_connect=False,
             **config
         )
-        
-        return instance
 
     """
     -------------------------------------------------------------------------
@@ -271,96 +258,62 @@ class pyvisaDevice(abstractDevice):
 
     """
     -------------------------------------------------------------------------
-    Retry/rate-limit decorator and settings
-    -------------------------------------------------------------------------
-    """
-
-    @staticmethod
-    def retry_and_rate_limit(method):
-        """
-        Decorator that retries and rate-limits instance methods, reading 
-        settings from self.retry_settings.
-        """
-        @functools.wraps(method)
-        def wrapper(self, *args, **kwargs):
-            # Extract instance settings
-            settings = getattr(self, "retry_settings", {})
-            max_retries = settings.get("max_retries", 3)
-            retry_exceptions = settings.get("retry_exceptions", (pyvisa.VisaIOError,))
-            retry_delay = settings.get("retry_delay", 0.1)
-            min_interval = settings.get("min_interval", 0.0)
-
-            # Rate limiting: lock to ensure global timing across threads
-            lock = self._rate_limit_locks.setdefault(method.__name__, Lock())
-            with lock:
-                last_called = self._last_called.setdefault(method.__name__, 0.0)
-                elapsed = time.time() - last_called
-                if elapsed < min_interval:
-                    time.sleep(min_interval - elapsed)
-                self._last_called[method.__name__] = time.time()
-
-            # Retry logic
-            for attempt in range(max_retries):
-                try:
-                    return method(self, *args, **kwargs)
-                except retry_exceptions as e:
-                    self.warn(f"{method.__name__} failed (attempt {attempt+1}): {e}")
-                    if attempt == max_retries - 1:
-                        raise
-                    time.sleep(retry_delay)
-
-        return wrapper
-    
-    def set_retry_params(self, max_retries=None, retry_delay=None, min_interval=None):
-        """Update retry settings."""
-        if max_retries is not None:
-            self.retry_settings["max_retries"] = max_retries
-        if retry_delay is not None:
-            self.retry_settings["retry_delay"] = retry_delay
-        if min_interval is not None:
-            self.retry_settings["min_interval"] = min_interval
-
-    """
-    -------------------------------------------------------------------------
     Communication methods
     -------------------------------------------------------------------------
     """
 
-    @retry_and_rate_limit
+    def _enforce_rate_limit(self):
+        """
+        Sleep if needed to respect the minimum inter-operation interval.
+        Must be called while holding _device_lock.
+        """
+        if not self._min_interval:
+            return
+        elapsed = time.time() - self._last_called
+        if elapsed < self._min_interval:
+            time.sleep(self._min_interval - elapsed)
+        self._last_called = time.time()
+
     def write(self, *args, **kwargs):
-        self.debug(f"Writing: {args[0]}")
-        return self.device.write(*args, **kwargs)
+        with self._device_lock:
+            self._enforce_rate_limit()
+            self.debug(f"Writing: {args[0]}")
+            return self.device.write(*args, **kwargs)
 
-    @retry_and_rate_limit
     def write_raw(self, *args, **kwargs):
-        self.debug(f"Writing raw: {args[0]}")
-        return self.device.write_raw(*args, **kwargs)
+        with self._device_lock:
+            self._enforce_rate_limit()
+            self.debug(f"Writing raw: {args[0]}")
+            return self.device.write_raw(*args, **kwargs)
 
-    @retry_and_rate_limit
     def read(self, *args, **kwargs):
-        response = self.device.read(*args, **kwargs)
-        self.debug(f"Read: {response}")
-        return response
+        with self._device_lock:
+            self._enforce_rate_limit()
+            response = self.device.read(*args, **kwargs)
+            self.debug(f"Read: {response}")
+            return response
 
-    @retry_and_rate_limit
     def read_raw(self, *args, **kwargs):
-        response = self.device.read_raw(*args, **kwargs)
-        self.debug(f"Read raw: {response}")
-        return response
+        with self._device_lock:
+            self._enforce_rate_limit()
+            response = self.device.read_raw(*args, **kwargs)
+            self.debug(f"Read raw: {response}")
+            return response
 
-    @retry_and_rate_limit
     def query(self, *args, **kwargs):
-        self.debug(f"Querying: {args[0]}")
-        start = time.time()
-        result = self.device.query(*args, **kwargs)
-        elapsed = time.time() - start
-        self.debug(f"Response: {result.strip()} (in {elapsed:.3f}s)")
-        return result
-    
-    @retry_and_rate_limit
+        with self._device_lock:
+            self._enforce_rate_limit()
+            self.debug(f"Querying: {args[0]}")
+            start = time.time()
+            result = self.device.query(*args, **kwargs)
+            self.debug(f"Response: {result.strip()} (in {time.time() - start:.3f}s)")
+            return result
+
     def flush(self, *args, **kwargs):
-        self.debug(f"Flushing: {args}")
-        return self.device.flush(*args, **kwargs)
+        with self._device_lock:
+            self._enforce_rate_limit()
+            self.debug(f"Flushing: {args}")
+            return self.device.flush(*args, **kwargs)
 
 
 """

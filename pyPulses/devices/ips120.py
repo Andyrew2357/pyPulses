@@ -1,5 +1,6 @@
 from .pyvisa_device import pyvisaDevice
-from .registry import register_hardware_class
+from .registry import register_hardware_class, register_device_class, format_reference, DeferredReference, HardwareRegistry
+from .sweepable_channel import AsyncChannel
 
 import time
 from enum import IntEnum
@@ -447,3 +448,73 @@ class ips120(pyvisaDevice):
 
         self._send_cmd(f"T{rate:.4f}")
         self.info(f"Set ramp rate to {rate:.4f} T/m")
+
+@register_device_class("IPS120Channel")
+class IPS120Channel(AsyncChannel):
+    """
+    AsyncChannel wrapper for the Oxford IPS120 superconducting magnet power supply.
+
+    Parameters
+    ----------
+    magnet : ips120
+        A connected ips120 instance registered in HardwareRegistry.
+    name : str, default 'B'
+    long_name : str, default R'$B$'
+    unit : str, default 'T'
+    registry_id : str, optional
+    """
+
+    def __init__(self,
+        magnet      : ips120,
+        name        : str        = 'B',
+        long_name   : str        = R'$B$',
+        unit        : str        = 'T',
+        registry_id : str | None = None,
+    ):
+        super().__init__(name=name, long_name=long_name, unit=unit,
+                         registry_id=registry_id)
+        self._magnet = magnet
+
+    def _get(self) -> float:
+        return self._magnet.get_B()
+
+    def _set(self, value: float) -> None:
+        self._magnet.set_B(value)
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def _serialize_state(self) -> dict:
+        return {
+            'magnet'   : format_reference(self._magnet),
+            'name'     : self.name,
+            'long_name': self.long_name,
+            'unit'     : self.unit,
+        }
+
+    def _deserialize_state(self, state: dict) -> None:
+        if 'magnet' in state:
+            self._magnet = DeferredReference(state['magnet']).unwrap()
+        if 'name' in state:
+            self.name = state['name']
+        if 'long_name' in state:
+            self.long_name = state['long_name']
+        if 'unit' in state:
+            self.unit = state['unit']
+
+    @classmethod
+    def from_config(cls, config: dict) -> 'IPS120Channel':
+        registry_id = config.pop('registry_id', None)
+        magnet_ref  = config.pop('magnet', None)
+
+        instance = cls(
+            magnet      = None,  # resolved in _deserialize_state (pass 2)
+            name        = config.pop('name', 'B'),
+            long_name   = config.pop('long_name', R'$B$'),
+            unit        = config.pop('unit', 'T'),
+            registry_id = registry_id,
+        )
+        if magnet_ref is not None:
+            instance._magnet = DeferredReference(magnet_ref)
+        return instance

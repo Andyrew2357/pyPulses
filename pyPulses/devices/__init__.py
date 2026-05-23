@@ -5,7 +5,7 @@ from .attenuator import FixedAttenuator
 from .calibrated_channel import CalibratedChannel, PolarityCalibratedChannel
 from .calibration import PolynomialCalibration, TrivialCalibration
 from .calibrate_pulse_shaper import PulseShaperCalibration, PulseShaperCalibrationResult
-from .cryomagnetics_4G import cryomagnetics4G
+from .cryomagnetics_4G import cryomagnetics4G, CM4GChannel
 from .dtg.dtg import dtg5274
 from .dtg.dtg_comp_pair import dtgCompPair
 from .fastflight2.fastflight2 import FastFlight2
@@ -13,7 +13,7 @@ from .fastflight2.fastflight2 import FastFlight2
 from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel, 
                     hf2liOscillator, hf2liOutputChannel)
 from .hp34401a import hp34401a
-from .ips120 import ips120
+from .ips120 import ips120, IPS120Channel
 from .keithley2000 import keithley2000
 from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
@@ -31,6 +31,7 @@ __all__ = [
     "ad5791",
     "ad9854",
     "cryomagnetics4G",
+    "CM4GChannel",
     "CalibratedChannel",
     "dtgCompPair",
     "dtg5274",
@@ -44,6 +45,7 @@ __all__ = [
     "hf2liOutputChannel",
     "hp34401a",
     "ips120",
+    "IPS120Channel",
     "keithley2000",
     "keithley2400",
     "keithley2450",
@@ -69,5 +71,3 @@ __all__ = [
     "wfJump", 
     "wfSlope"
 ]
-
-visa_dll = 'C:/Windows/System32/visa64.dll'
