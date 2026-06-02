@@ -44,7 +44,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-from .job import Control, Job
+from .job import Control, JobQueue
 
 def _json_response(handler: BaseHTTPRequestHandler, data: Any) -> None:
     payload = json.dumps(data).encode()
@@ -554,7 +554,11 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self.path == '/control':
             body = _read_body(self)
-            self.server._sidecar._handle_control(body.get('action', ''))
+            self.server._sidecar._handle_control(
+                body.get('action', ''),
+                job_id    = body.get('job_id'),
+                new_index = body.get('new_index'),
+            )
             _json_response(self, {'ok': True})
         else:
             self.send_response(404)
@@ -593,10 +597,6 @@ class Sidecar:
         # frames: frame_index -> {pane_name: Pane}  (ordered dicts)
         self._frames: Dict[int, Dict[str, Pane]] = {0: {}}
         self._lock = threading.Lock()
-
-        # Job control
-        self._control: Control | None = None
-        self._job_status: str = 'none'
 
         # HTTP server
         self._server = HTTPServer(('localhost', port), _Handler)
@@ -690,58 +690,45 @@ class Sidecar:
 
     """Job control"""
 
-    def register_job(self, job: Job) -> 'Sidecar':
-        """
-        Register a Job so the browser pause/resume/stop buttons act on it.
+    def _job_view(self, job) -> dict:
+        """Serialize a Job for the frontend."""
+        if job is None:
+            return None
+        return {
+            'name'       : job.name,
+            'state'      : job.state.value,
+            'elapsed'    : round(job.elapsed, 1),
+            'queued_for' : round(job.queued_for, 1),
+            'is_paused'  : job.is_paused,
+            'id'         : id(job),   # stable within session, used for cancel
+        }
 
-        Only one job may be registered at a time. Deregisters automatically
-        when the job finishes, stops, or errors. Returns self for chaining.
-        """
-        if not isinstance(job, Job):
-            raise TypeError("job must be a Job instance")
+    def _handle_control(self,
+        action: str,
+        job_id: int | None = None,
+        new_index: int | None = None,
+    ) -> None:
+        from .job import JobQueue
+        q = JobQueue.instance()
 
-        with self._lock:
-            if self._control is not None and self._job_status == 'running':
-                raise RuntimeError(
-                    "A job is already registered. "
-                    "Wait for it to finish or stop it first."
-                )
-            self._control = job.control
-            self._job_status = 'running'
-
-        def _on_finish(j, result):
-            with self._lock:
-                self._control = None
-                self._job_status = 'none'
-
-        def _on_stop(j):
-            with self._lock:
-                self._job_status = 'stopped'
-
-        def _on_error(j, tb):
-            with self._lock:
-                self._control = None
-                self._job_status = 'none'
-
-        job.on_finish.append(_on_finish)
-        job.on_stop.append(_on_stop)
-        job.on_error.append(_on_error)
-        return self
-
-    def _handle_control(self, action: str) -> None:
-        with self._lock:
-            ctrl = self._control
-            if ctrl is None:
+        if action in ('pause', 'resume', 'stop'):
+            cur = q.current
+            if cur is None:
                 return
-            if action == 'pause':
-                ctrl.pause()
-                self._job_status = 'paused'
-            elif action == 'resume':
-                ctrl.resume()
-                self._job_status = 'running'
-            elif action == 'stop':
-                ctrl.stop()
-                self._job_status = 'stopped'
+            getattr(cur, action)()
+
+        elif action == 'cancel' and job_id is not None:
+            j = q.find_pending(job_id)
+            if j is not None:
+                q.cancel(j)
+
+        elif action == 'move' and job_id is not None and new_index is not None:
+            j = q.find_pending(job_id)
+            if j is not None:
+                q.move(j, int(new_index))
+
+        elif action == 'clear_pending':
+            q.clear_pending()
 
     """Observer interface"""
 
@@ -772,8 +759,10 @@ class Sidecar:
         cols = min(self._max_cols, max(1, ceil(sqrt(n))))
         rows = ceil(n / cols) if cols > 0 else 1
         return {'rows': rows, 'cols': cols}
-
+    
     def _get_state(self, force_full: bool = False) -> dict:
+        q = JobQueue.instance()
+
         with self._lock:
             frames_out = []
             for idx in sorted(self._frames.keys()):
@@ -781,16 +770,19 @@ class Sidecar:
                 if not frame_panes:
                     continue
                 frames_out.append({
-                    'frame': idx,
+                    'frame' : idx,
                     'layout': self._get_layout(len(frame_panes)),
-                    'panes': {
+                    'panes' : {
                         name: pane.serialize(force_full=force_full)
                         for name, pane in frame_panes.items()
                     },
                 })
-            job = {'status': self._job_status}
 
-        return {'frames': frames_out, 'job': job}
+        return {
+            'frames' : frames_out,
+            'job'    : self._job_view(q.current),
+            'pending': [self._job_view(j) for j in q.pending],
+        }
 
     """Opening the browser"""
     

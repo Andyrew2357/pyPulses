@@ -8,7 +8,7 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, sans-serif; background: #1a1a2e;
-           color: #cdd6f4; padding: 8px; overflow-x: hidden; }
+          color: #cdd6f4; padding: 8px; overflow-x: hidden; }
 
     /* Control bar */
     #ctrl { display: flex; align-items: center; gap: 8px;
@@ -23,8 +23,65 @@
     #btn-pause  { background: #f9e2af; color: #1e1e2e; }
     #btn-resume { background: #a6e3a1; color: #1e1e2e; }
     #btn-stop   { background: #f38ba8; color: #1e1e2e; }
-    #job-status { font-size: 12px; color: #a6adc8; margin-left: auto; }
-    #status     { font-size: 11px; color: #585b70; margin-left: 8px; }
+    #status     { font-size: 11px; color: #585b70; margin-left: auto; }
+
+    /* Queue strip */
+    #queue {
+      display: flex; flex-direction: column; gap: 4px;
+      padding: 6px 10px; background: #16213e;
+      border-radius: 6px; margin-bottom: 8px;
+      font-size: 12px;
+    }
+    #queue-header {
+      display: flex; align-items: center;
+      font-size: 11px; color: #585b70; text-transform: uppercase;
+      letter-spacing: 0.5px; padding: 0 4px;
+    }
+    #clear-pending-btn {
+      margin-left: auto; background: none; border: none;
+      color: #585b70; cursor: pointer; font-size: 11px;
+      padding: 2px 6px; border-radius: 3px;
+    }
+    #clear-pending-btn:hover { color: #f38ba8; background: #1a1a2e; }
+
+    .qrow {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 6px; border-radius: 4px;
+      background: #1a1a2e;
+      transition: background .1s, opacity .1s;
+    }
+    .qrow.current { background: #213a5e; }
+    .qrow .name { font-weight: 600; color: #cdd6f4; }
+    .qrow .meta { color: #a6adc8; margin-left: auto;
+                  font-variant-numeric: tabular-nums; }
+    .qrow .state {
+      font-size: 10px; padding: 1px 6px; border-radius: 3px;
+      background: #313244; color: #a6adc8; text-transform: uppercase;
+      letter-spacing: 0.4px; font-weight: 600;
+    }
+    .qrow .state.running  { background: #a6e3a1; color: #1e1e2e; }
+    .qrow .state.paused   { background: #f9e2af; color: #1e1e2e; }
+    .qrow .state.pending  { background: #585b70; color: #cdd6f4; }
+    .qrow .state.stopped  { background: #f38ba8; color: #1e1e2e; }
+    .qrow .state.errored  { background: #f38ba8; color: #1e1e2e; }
+    .qrow .state.finished { background: #94e2d5; color: #1e1e2e; }
+
+    .reorder-btn {
+      background: none; border: 1px solid #45475a; color: #6c7086;
+      border-radius: 3px; padding: 1px 6px; font-size: 10px;
+      cursor: pointer; line-height: 1; min-width: 20px;
+    }
+    .reorder-btn:hover:not(:disabled) { border-color: #89b4fa; color: #89b4fa; }
+    .reorder-btn:disabled { opacity: 0.3; cursor: default; }
+
+    .cancel-btn {
+      background: none; border: 1px solid #45475a; color: #6c7086;
+      border-radius: 3px; padding: 1px 7px; font-size: 11px;
+      cursor: pointer; line-height: 1;
+    }
+    .cancel-btn:hover { border-color: #f38ba8; color: #f38ba8; }
+
+    #queue-empty { color: #585b70; font-style: italic; padding: 4px 6px; }
 
     /* Frames */
     #frames { display: flex; flex-direction: column; width: 100%; }
@@ -47,9 +104,19 @@
     <button id="btn-pause"  onclick="jobCmd('pause')">⏸ Pause</button>
     <button id="btn-resume" onclick="jobCmd('resume')">▶ Resume</button>
     <button id="btn-stop"   onclick="jobCmd('stop')">⏹ Stop</button>
-    <span id="job-status">No job</span>
     <span id="status">connecting…</span>
   </div>
+
+  <div id="queue">
+    <div id="queue-header">
+      <span>Job queue</span>
+      <button id="clear-pending-btn"
+              onclick="jobCmd('clear_pending')"
+              style="display:none">Clear pending</button>
+    </div>
+    <div id="queue-rows"></div>
+  </div>
+
   <div id="frames"></div>
 
 <script>
@@ -68,37 +135,185 @@ const frames = {};
 // Whether the very first poll has happened yet
 let firstPoll = true;
 
+// Drag/drop state for queue reordering
+let dragState       = null;   // {jobId} of the row being dragged
+let optimisticOrder = null;   // [jobId,...] applied until server catches up
+
 // ---------------------------------------------------------------------------
-// Job control
+// Job / queue control
 // ---------------------------------------------------------------------------
 
-async function jobCmd(action) {
+async function jobCmd(action, extra) {
   try {
     await fetch('/control', {
-      method: 'POST',
+      method : 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action}),
+      body   : JSON.stringify({action, ...(extra || {})}),
     });
   } catch(e) { console.warn('control error', e); }
 }
 
-function updateJobUI(job) {
-  const s      = document.getElementById('job-status');
-  const pause  = document.getElementById('btn-pause');
-  const resume = document.getElementById('btn-resume');
-  const stop   = document.getElementById('btn-stop');
+function fmtTime(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  const h   = Math.floor(s / 3600);
+  const m   = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+    : `${m}:${String(sec).padStart(2,'0')}`;
+}
 
-  if (!job || job.status === 'none') {
-    s.textContent   = 'No job running';
-    pause.disabled  = true;
-    resume.disabled = true;
-    stop.disabled   = true;
-  } else {
-    s.textContent   = `Job: ${job.status}`;
-    pause.disabled  = (job.status === 'paused' || job.status === 'stopped');
-    resume.disabled = (job.status !== 'paused');
-    stop.disabled   = (job.status === 'stopped');
+function updateControlButtons(cur) {
+  const pauseBtn  = document.getElementById('btn-pause');
+  const resumeBtn = document.getElementById('btn-resume');
+  const stopBtn   = document.getElementById('btn-stop');
+
+  if (!cur) {
+    pauseBtn.disabled = resumeBtn.disabled = stopBtn.disabled = true;
+    return;
   }
+  pauseBtn.disabled  = (cur.state !== 'running');
+  resumeBtn.disabled = (cur.state !== 'paused');
+  stopBtn.disabled   = (cur.state !== 'running' && cur.state !== 'paused');
+}
+
+function applyOptimisticOrder(pending) {
+  if (!optimisticOrder) return pending;
+  const ids       = pending.map(j => j.id);
+  const sameOrder = optimisticOrder.length === ids.length
+                    && optimisticOrder.every((id, i) => id === ids[i]);
+  if (sameOrder) { optimisticOrder = null; return pending; }
+
+  const byId = new Map(pending.map(j => [j.id, j]));
+  const out  = [];
+  for (const id of optimisticOrder) {
+    if (byId.has(id)) { out.push(byId.get(id)); byId.delete(id); }
+  }
+  for (const j of pending) if (byId.has(j.id)) out.push(j);
+  return out;
+}
+
+function clearDropMarkers() {
+  for (const el of document.querySelectorAll('.qrow.drop-above, .qrow.drop-below')) {
+    el.classList.remove('drop-above', 'drop-below');
+  }
+}
+
+function buildQueueRow(job, isCurrent, pendingIndex, pendingCount) {
+  const row = document.createElement('div');
+  row.className     = 'qrow ' + (isCurrent ? 'current' : 'pending');
+  row.dataset.jobId = String(job.id);
+
+  const grip = document.createElement('span');
+  grip.className   = 'grip';
+  grip.textContent = '⋮⋮';
+  row.appendChild(grip);
+
+  const state = document.createElement('span');
+  state.className   = 'state ' + (job.state || 'pending');
+  state.textContent = job.state || 'pending';
+  row.appendChild(state);
+
+  const name = document.createElement('span');
+  name.className   = 'name';
+  name.textContent = job.name || '(unnamed job)';
+  row.appendChild(name);
+
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  if (isCurrent) {
+    const t = fmtTime(job.elapsed);
+    meta.textContent = job.is_paused ? `paused at ${t}` : t;
+  } else {
+    meta.textContent = `queued ${fmtTime(job.queued_for)}`;
+  }
+  row.appendChild(meta);
+
+  if (!isCurrent) {
+    // Reorder buttons
+    const up = document.createElement('button');
+    up.className   = 'reorder-btn';
+    up.textContent = '▲';
+    up.title       = 'Move up';
+    up.disabled    = (pendingIndex === 0);
+    up.onclick     = (ev) => {
+      ev.stopPropagation();
+      jobCmd('move', {job_id: job.id, new_index: pendingIndex - 1});
+    };
+    row.appendChild(up);
+
+    const down = document.createElement('button');
+    down.className   = 'reorder-btn';
+    down.textContent = '▼';
+    down.title       = 'Move down';
+    down.disabled    = (pendingIndex === pendingCount - 1);
+    down.onclick     = (ev) => {
+      ev.stopPropagation();
+      jobCmd('move', {job_id: job.id, new_index: pendingIndex + 1});
+    };
+    row.appendChild(down);
+
+    const x = document.createElement('button');
+    x.className   = 'cancel-btn';
+    x.textContent = '✕';
+    x.title       = 'Cancel';
+    x.onclick     = (ev) => {
+      ev.stopPropagation();
+      jobCmd('cancel', {job_id: job.id});
+    };
+    row.appendChild(x);
+  }
+
+  return row;
+}
+
+let _queueSignature = null;
+
+function renderQueue(state) {
+  const cur     = state.job || null;
+  const pending = state.pending || [];
+
+  updateControlButtons(cur);
+
+  const container = document.getElementById('queue-rows');
+  const clearBtn  = document.getElementById('clear-pending-btn');
+  clearBtn.style.display = pending.length > 0 ? '' : 'none';
+
+  // Structural signature: anything that affects which DOM nodes exist
+  // or what classes / disabled states they have. The timer text is
+  // intentionally excluded so it can be patched in place without
+  // disturbing :hover, focus, etc.
+  const sig = JSON.stringify({
+    cur     : cur ? {id: cur.id, state: cur.state, name: cur.name} : null,
+    pending : pending.map(p => ({id: p.id, state: p.state, name: p.name})),
+  });
+
+  if (sig !== _queueSignature) {
+    _queueSignature = sig;
+    container.innerHTML = '';
+
+    if (!cur && pending.length === 0) {
+      const e = document.createElement('div');
+      e.id = 'queue-empty';
+      e.textContent = 'No jobs';
+      container.appendChild(e);
+      return;
+    }
+
+    if (cur) container.appendChild(buildQueueRow(cur, true, -1, pending.length));
+    pending.forEach((p, i) =>
+      container.appendChild(buildQueueRow(p, false, i, pending.length)));
+  }
+
+  // Patch timers in place — runs every poll, no DOM churn
+  const setMeta = (id, text) => {
+    const row  = container.querySelector(`.qrow[data-job-id="${id}"]`);
+    const meta = row && row.querySelector('.meta');
+    if (meta && meta.textContent !== text) meta.textContent = text;
+  };
+
+  if (cur) setMeta(cur.id, fmtTime(cur.elapsed));
+  pending.forEach(p => setMeta(p.id, `queued ${fmtTime(p.queued_for)}`));
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +707,7 @@ async function poll() {
     const r     = await fetch('/state' + fullFlag);
     const state = await r.json();
 
-    updateJobUI(state.job);
+    renderQueue(state);
 
     let totalPts = 0;
 
