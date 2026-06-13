@@ -375,6 +375,22 @@ class ips120(pyvisaDevice):
                 f"Requested field is larger than maximum allowed; clipped to {B} T"
             )
 
+        # If we arrive here in driven mode (heater on, leads energized), we
+        # must transition to persistence mode safely before proceeding.
+        # _exit_driven_mode ramps leads to match coil, turns off heater, and
+        # waits for the switch to go superconducting. _goto_B will then match
+        # the (now-persistent) coil field before turning the heater on again.
+        if self.is_heater_on():
+            self.info(
+                "set_B called while in driven mode; transitioning to "
+                "persistence mode before sweeping."
+            )
+            if not self._exit_driven_mode():
+                self.error(
+                    "Failed to exit driven mode safely; aborting set_B."
+                )
+                return False
+
         tries = 0
         while True:
             tries += 1
@@ -449,6 +465,129 @@ class ips120(pyvisaDevice):
         self._send_cmd(f"T{rate:.4f}")
         self.info(f"Set ramp rate to {rate:.4f} T/m")
 
+    """Driven Mode"""
+
+    def _exit_driven_mode(self) -> bool:
+        """
+        Safely transition out of driven mode into persistence mode. Ramps the
+        leads to match the coil field (if necessary), then turns off the switch
+        heater and waits for the switch to go superconducting.
+ 
+        This must be called before any persistence-mode operation when the
+        supply may be in driven mode. Turning off the heater with a mismatch
+        between lead current and coil current will cause the coil field to
+        jump, which risks a quench.
+ 
+        If the heater is already off, this is a no-op.
+ 
+        Returns
+        -------
+        success : bool
+        """
+        if not self.is_heater_on():
+            self.info("_exit_driven_mode: heater already off; nothing to do.")
+            return True
+ 
+        self.info("_exit_driven_mode: heater is on; transitioning to persistence mode.")
+ 
+        # In driven mode R18 (persistent field) is unreliable; the true coil
+        # field is the output field R7, since the switch is open (normal).
+        # We read it now as the field we will persist.
+        B_coil = self._get_output_field()
+        if B_coil is None:
+            self.error("_exit_driven_mode: could not read output field.")
+            return False
+ 
+        self.info(f"_exit_driven_mode: coil field is {B_coil:.6f} T.")
+ 
+        # Hold and turn heater off. _set_heater will verify that persistent
+        # and output fields agree before sending H0 — since the heater is on,
+        # is_persistent_mode() returns False, so the field-match guard inside
+        # _set_heater is skipped and it proceeds directly to H0.
+        self._set_mode(self.mode.HOLD)
+        if not self._set_heater(False):
+            self.error("_exit_driven_mode: failed to turn off switch heater.")
+            return False
+ 
+        self.info(
+            f"_exit_driven_mode: heater off; pausing {self.stabilize_wait_time} s "
+            f"for switch to go superconducting."
+        )
+        time.sleep(self.stabilize_wait_time)
+ 
+        # Verify the persistent field register now reads the expected value.
+        Bper = self._get_persistent_field()
+        if Bper is None or abs(Bper - B_coil) > self.B_tol_assertive:
+            self.warn(
+                f"_exit_driven_mode: persistent field {Bper:.6f} T does not match "
+                f"expected coil field {B_coil:.6f} T after heater off."
+            )
+ 
+        self.info("_exit_driven_mode: now in persistence mode.")
+        return True
+ 
+    def set_B_driven(self, B: float) -> bool:
+        """
+        Set the field in driven mode. The switch heater is left on and the
+        leads remain energized at the target field. This is faster than
+        persistence mode but puts a heat load on the pulse tube; the caller
+        is responsible for enforcing any field limit (e.g. 4 T) appropriate
+        to the system.
+ 
+        If the supply is currently in persistence mode (heater off), the leads
+        are matched to the coil field and the heater is turned on before
+        ramping. This is the safe entry sequence that prevents a quench from
+        closing the switch onto a mismatched field.
+ 
+        Parameters
+        ----------
+        B : float
+            Target field in T.
+ 
+        Returns
+        -------
+        success : bool
+        """
+ 
+        if abs(B) > self.max_B:
+            B = min(self.max_B, max(-self.max_B, B))
+            self.warn(f"Clipped target field to {B} T.")
+ 
+        self.info(f"set_B_driven: targeting {B:.6f} T.")
+ 
+        # _goto_B unconditionally calls _match_currents before enabling the
+        # heater, which is exactly the safe persistent→driven entry sequence:
+        # ramp leads to coil field, verify match, then close the switch.
+        # If the heater is already on (driven→driven), _match_currents detects
+        # this and skips the matching ramp, proceeding directly to the new
+        # target.
+        self._goto_B(B)
+ 
+        Bout = self._get_output_field()
+        if Bout is None or abs(Bout - B) > self.B_tol_assertive:
+            self.error(
+                f"set_B_driven: output field {Bout} T does not match "
+                f"target {B:.6f} T after ramp."
+            )
+            return False
+ 
+        self.info(
+            f"set_B_driven: at {B:.6f} T; heater on, leads energized."
+        )
+        return True
+ 
+    def get_B_driven(self) -> float | None:
+        """
+        Query the field in driven mode. Reads the output field register R7
+        directly, since R18 (persistent field) is not meaningful while the
+        switch heater is on.
+ 
+        Returns
+        -------
+        B : float or None
+        """
+        return self._get_output_field()
+
 @register_device_class("IPS120Channel")
 class IPS120Channel(AsyncChannel):
     """
@@ -514,6 +653,99 @@ class IPS120Channel(AsyncChannel):
             long_name   = config.pop('long_name', R'$B$'),
             unit        = config.pop('unit', 'T'),
             registry_id = registry_id,
+        )
+        if magnet_ref is not None:
+            instance._magnet = DeferredReference(magnet_ref)
+        return instance
+    
+@register_device_class("IPS120DrivenChannel")
+class IPS120DrivenChannel(AsyncChannel):
+    """
+    AsyncChannel wrapper for the Oxford IPS120 in driven mode. The switch
+    heater is left on between sweeps and the leads remain energized. Sweeps
+    are faster than in persistence mode, but the continuous heat load on the
+    pulse tube limits safe operation to fields below max_driven_B.
+ 
+    Calling _set on this channel while the supply is in persistence mode
+    (heater off) will safely match the leads to the coil before closing the
+    switch, preventing a quench.
+ 
+    Parameters
+    ----------
+    magnet : ips120
+        A connected ips120 instance registered in HardwareRegistry.
+    max_driven_B : float, default 4.0
+        Maximum field magnitude permitted in driven mode (T). Requests
+        exceeding this limit are refused. Set according to the pulse tube
+        heat load limit for the specific system.
+    name : str, default 'B'
+    long_name : str, default R'$B_\mathrm{driven}$'
+    unit : str, default 'T'
+    registry_id : str, optional
+    """
+ 
+    def __init__(self,
+        magnet        : ips120,
+        max_driven_B  : float        = 4.0,
+        name          : str          = 'B',
+        long_name     : str          = R'$B_\mathrm{driven}$',
+        unit          : str          = 'T',
+        registry_id   : str | None   = None,
+    ):
+        super().__init__(name=name, long_name=long_name, unit=unit,
+                         registry_id=registry_id)
+        self._magnet       = magnet
+        self.max_driven_B  = max_driven_B
+ 
+    def _get(self) -> float:
+        return self._magnet.get_B_driven()
+ 
+    def _set(self, value: float) -> None:
+        if abs(value) > self.max_driven_B:
+            self._magnet.warn(
+                f"IPS120DrivenChannel: requested field {value:.4f} T exceeds "
+                f"driven-mode limit of {self.max_driven_B} T; refusing."
+            )
+            return
+        self._magnet.set_B_driven(value)
+ 
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+ 
+    def _serialize_state(self) -> dict:
+        return {
+            'magnet'      : format_reference(self._magnet),
+            'max_driven_B': self.max_driven_B,
+            'name'        : self.name,
+            'long_name'   : self.long_name,
+            'unit'        : self.unit,
+        }
+ 
+    def _deserialize_state(self, state: dict) -> None:
+        if 'magnet' in state:
+            self._magnet = DeferredReference(state['magnet']).unwrap()
+        if 'max_driven_B' in state:
+            self.max_driven_B = state['max_driven_B']
+        if 'name' in state:
+            self.name = state['name']
+        if 'long_name' in state:
+            self.long_name = state['long_name']
+        if 'unit' in state:
+            self.unit = state['unit']
+ 
+    @classmethod
+    def from_config(cls, config: dict) -> 'IPS120DrivenChannel':
+        registry_id = config.pop('registry_id', None)
+        magnet_ref  = config.pop('magnet', None)
+ 
+        instance = cls(
+            magnet       = None,  # resolved in _deserialize_state (pass 2)
+            max_driven_B = config.pop('max_driven_B', 4.0),
+            name         = config.pop('name',      'B'),
+            long_name    = config.pop('long_name', R'$B_\mathrm{driven}$'),
+            unit         = config.pop('unit',      'T'),
+            registry_id  = registry_id,
         )
         if magnet_ref is not None:
             instance._magnet = DeferredReference(magnet_ref)

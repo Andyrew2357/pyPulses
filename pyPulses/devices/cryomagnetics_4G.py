@@ -80,11 +80,21 @@ class cryomagnetics4G(pyvisaDevice):
 
         self.info(f"CM4G: Requested sweep to {H_T} T.")
 
+        # If the switch heater is on we are in driven mode. Transition safely
+        # to persistence mode before proceeding. Attempting to run the
+        # persistence sweep with the heater already on would leave the coil
+        # field undefined at the point where we close the switch, risking a
+        # quench.
         pshtr = self.query("PSHTR?").strip() == '1'
         if pshtr:
-            self.error("Switch heater is on; expected switch heater to be off.")
-            return
-        
+            self.info(
+                "sweep_H: switch heater is on (driven mode); transitioning to "
+                "persistence mode before sweeping."
+            )
+            if not self._exit_driven_mode():
+                self.error("sweep_H: failed to exit driven mode; aborting.")
+                return False
+                    
         imag_ = self.query("IMAG?").strip()
         units = imag_[-2:]
         if not units == 'kG':
@@ -217,6 +227,373 @@ class cryomagnetics4G(pyvisaDevice):
 
         self.info("Finished pause.")
 
+    """Driven Mode"""
+
+    def _enter_driven_mode(self) -> bool:
+        """
+        Safely transition into driven mode. If the heater is already on, this
+        is a no-op. If the heater is off (persistence mode), the leads are
+        ramped to match the coil field before the heater is enabled.
+ 
+        Turning on the switch heater with a mismatch between lead current and
+        coil current will cause the coil field to jump as the switch goes
+        normal, which risks a quench. This method enforces the match before
+        touching the heater.
+ 
+        Returns
+        -------
+        success : bool
+        """
+        pshtr = self.query("PSHTR?").strip() == '1'
+        if pshtr:
+            self.info("_enter_driven_mode: switch heater already on; already in driven mode.")
+            return True
+ 
+        # Heater is off. Read both the coil field (IMAG?) and the lead field
+        # (IOUT?) and ramp leads to match coil if necessary before enabling
+        # the heater.
+        imag_ = self.query("IMAG?").strip()
+        if imag_[-2:] != 'kG':
+            self.error("_enter_driven_mode: IMAG? returned unexpected units.")
+            return False
+        H_coil_kG = float(imag_[:-2])
+ 
+        iout_ = self.query("IOUT?").strip()
+        if iout_[-2:] != 'kG':
+            self.error("_enter_driven_mode: IOUT? returned unexpected units.")
+            return False
+        H_leads_kG = float(iout_[:-2])
+ 
+        self.info(
+            f"_enter_driven_mode: coil = {H_coil_kG:.4f} kG, "
+            f"leads = {H_leads_kG:.4f} kG."
+        )
+ 
+        if abs(H_coil_kG - H_leads_kG) > self.H_tol_kG:
+            self.info(
+                "_enter_driven_mode: lead/coil mismatch; ramping leads to "
+                "match coil before enabling heater."
+            )
+            # Ramp leads toward coil field with switch still cold (FAST).
+            if H_coil_kG > H_leads_kG:
+                if not self._set_sweep_lim(H_leads_kG, H_coil_kG):
+                    self.error("_enter_driven_mode: failed to set sweep limits.")
+                    return False
+                self.write("SWEEP UP FAST")
+            else:
+                if not self._set_sweep_lim(H_coil_kG, H_leads_kG):
+                    self.error("_enter_driven_mode: failed to set sweep limits.")
+                    return False
+                self.write("SWEEP DOWN FAST")
+ 
+            self._wait_for_field(H_coil_kG, self.H_tol_kG)
+ 
+        self._pause_msg("_enter_driven_mode: pausing to stabilize before heater on", 10)
+        self.write("PSHTR ON")
+        self._pause_msg("_enter_driven_mode: waiting for switch to go normal", 15)
+ 
+        pshtr = self.query("PSHTR?").strip() == '1'
+        if not pshtr:
+            self.error("_enter_driven_mode: failed to enable switch heater.")
+            return False
+ 
+        self.info("_enter_driven_mode: switch heater on; now in driven mode.")
+        return True
+ 
+    def _exit_driven_mode(self) -> bool:
+        """
+        Safely transition out of driven mode into persistence mode. If the
+        heater is already off, this is a no-op. If the heater is on, the leads
+        are left at the current field, the heater is turned off, and we wait
+        for the switch to go superconducting.
+ 
+        In driven mode IMAG? reflects the actual coil field (the switch is
+        open/normal so the coil and leads are the same circuit). IOUT? and
+        IMAG? should agree. We turn the heater off directly — there is no
+        mismatch to correct since both registers track the same current while
+        the switch is normal.
+ 
+        Returns
+        -------
+        success : bool
+        """
+        pshtr = self.query("PSHTR?").strip() == '1'
+        if not pshtr:
+            self.info("_exit_driven_mode: switch heater already off; already in persistence mode.")
+            return True
+ 
+        # Read the current field for logging. In driven mode IMAG? and IOUT?
+        # should agree; use IOUT? as the authoritative lead/coil field.
+        iout_ = self.query("IOUT?").strip()
+        if iout_[-2:] != 'kG':
+            self.error("_exit_driven_mode: IOUT? returned unexpected units.")
+            return False
+        H_kG = float(iout_[:-2])
+ 
+        self.info(
+            f"_exit_driven_mode: turning heater off at {H_kG:.4f} kG; "
+            f"field will persist at this value."
+        )
+ 
+        self.write("PSHTR OFF")
+        self._pause_msg("_exit_driven_mode: waiting for switch to go superconducting", 15)
+ 
+        pshtr = self.query("PSHTR?").strip() == '1'
+        if pshtr:
+            self.error("_exit_driven_mode: failed to disable switch heater.")
+            return False
+ 
+        # Verify IMAG? now reports the correct persistent field.
+        imag_ = self.query("IMAG?").strip()
+        if imag_[-2:] != 'kG':
+            self.error("_exit_driven_mode: IMAG? returned unexpected units after heater off.")
+            return False
+        H_persist_kG = float(imag_[:-2])
+ 
+        if abs(H_persist_kG - H_kG) > self.H_tol_kG:
+            self.warn(
+                f"_exit_driven_mode: IMAG? reads {H_persist_kG:.4f} kG after heater off; "
+                f"expected {H_kG:.4f} kG."
+            )
+ 
+        self.info("_exit_driven_mode: switch heater off; now in persistence mode.")
+        return True
+ 
+    def sweep_H_driven(self, H_T: float) -> bool:
+        """
+        Sweep to a field in driven mode. The switch heater is left on and the
+        leads remain energized at the target field. This is faster than
+        persistence mode but puts a heat load on the pulse tube; the caller
+        is responsible for enforcing any field limit appropriate to the system.
+ 
+        If the supply is currently in persistence mode (heater off), the leads
+        are matched to the coil field and the heater is turned on before
+        ramping, preventing a quench from closing the switch onto a mismatched
+        field.
+ 
+        Parameters
+        ----------
+        H_T : float
+            Target field in T.
+ 
+        Returns
+        -------
+        success : bool
+        """
+        H_kG = 10 * H_T
+        self.info(f"CM4G driven: requested sweep to {H_T} T ({H_kG:.4f} kG).")
+ 
+        if not self._enter_driven_mode():
+            self.error("sweep_H_driven: could not enter driven mode safely; aborting.")
+            return False
+ 
+        # At this point the heater is on and leads match the coil. Ramp to
+        # the new target field.
+        iout_ = self.query("IOUT?").strip()
+        H_current_kG = float(iout_[:-2])
+ 
+        if abs(H_current_kG - H_kG) < self.H_tol_kG:
+            self.info("sweep_H_driven: already at requested field.")
+            return True
+ 
+        if H_kG > H_current_kG:
+            if not self._set_verify("ULIM", H_kG, self.H_tol_kG):
+                self.error("sweep_H_driven: failed to set upper limit.")
+                return False
+            self.write("SWEEP UP")
+        else:
+            if not self._set_verify("LLIM", H_kG, self.H_tol_kG):
+                self.error("sweep_H_driven: failed to set lower limit.")
+                return False
+            self.write("SWEEP DOWN")
+ 
+        self._wait_for_field(H_kG, self.H_tol_kG)
+ 
+        self.info(f"CM4G driven: at {H_T} T; heater on, leads energized.")
+        return True
+ 
+    def get_H_driven(self) -> float | None:
+        """
+        Query the field in driven mode. Reads IOUT? (output/lead current)
+        directly, since IMAG? (coil current) is only meaningful in persistence
+        mode (heater off).
+ 
+        Returns
+        -------
+        H : float or None
+            Field in T, or None on communication error.
+        """
+        iout_ = self.query("IOUT?").strip()
+        if iout_[-2:] != 'kG':
+            self.error("get_H_driven: IOUT? returned unexpected units.")
+            return None
+        return 0.1 * float(iout_[:-2])
+    
+
+@register_device_class("CM4GChannel")
+class CM4GChannel(AsyncChannel):
+    """
+    AsyncChannel wrapper for the Cryomagnetics 4G superconducting magnet power supply.
+
+    Parameters
+    ----------
+    magnet : cryomagnetics4G
+        A connected cryomagnetics4G instance registered in HardwareRegistry.
+    name : str, default 'B'
+    long_name : str, default 'Field'
+    unit : str, default 'T'
+    registry_id : str, optional
+    """
+
+    def __init__(self,
+        magnet      : cryomagnetics4G,
+        name        : str        = 'B',
+        long_name   : str        = 'Field',
+        unit        : str        = 'T',
+        registry_id : str | None = None,
+    ):
+        super().__init__(name=name, long_name=long_name, unit=unit,
+                         registry_id=registry_id)
+        self._magnet = magnet
+
+    def _get(self) -> float:
+        return self._magnet.get_H()
+
+    def _set(self, value: float) -> None:
+        self._magnet.sweep_H(value)
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def _serialize_state(self) -> dict:
+        return {
+            'magnet'   : format_reference(self._magnet),
+            'name'     : self.name,
+            'long_name': self.long_name,
+            'unit'     : self.unit,
+        }
+
+    def _deserialize_state(self, state: dict) -> None:
+        if 'magnet' in state:
+            self._magnet = DeferredReference(state['magnet']).unwrap()
+        if 'name' in state:
+            self.name = state['name']
+        if 'long_name' in state:
+            self.long_name = state['long_name']
+        if 'unit' in state:
+            self.unit = state['unit']
+
+    @classmethod
+    def from_config(cls, config: dict) -> 'CM4GChannel':
+        registry_id = config.pop('registry_id', None)
+        magnet_ref  = config.pop('magnet', None)
+
+        instance = cls(
+            magnet      = None,  # resolved in _deserialize_state (pass 2)
+            name        = config.pop('name',      'B'),
+            long_name   = config.pop('long_name', 'Field'),
+            unit        = config.pop('unit',      'T'),
+            registry_id = registry_id,
+        )
+        if magnet_ref is not None:
+            instance._magnet = DeferredReference(magnet_ref)
+        return instance
+    
+
+@register_device_class("CM4GDrivenChannel")
+class CM4GDrivenChannel(AsyncChannel):
+    """
+    AsyncChannel wrapper for the Cryomagnetics 4G in driven mode. The switch
+    heater is left on between sweeps and the leads remain energized. Sweeps
+    are faster than in persistence mode, but the continuous heat load on the
+    pulse tube limits safe operation to fields below max_driven_B.
+ 
+    Calling _set on this channel while the supply is in persistence mode
+    (heater off) will safely match the leads to the coil before closing the
+    switch, preventing a quench.
+ 
+    Parameters
+    ----------
+    magnet : cryomagnetics4G
+        A connected cryomagnetics4G instance registered in HardwareRegistry.
+    max_driven_H : float, default 4.0
+        Maximum field magnitude permitted in driven mode (T). Requests
+        exceeding this limit are refused. Set according to the pulse tube
+        heat load limit for the specific system.
+    name : str, default 'B'
+    long_name : str, default 'Field (driven)'
+    unit : str, default 'T'
+    registry_id : str, optional
+    """
+ 
+    def __init__(self,
+        magnet        : cryomagnetics4G,
+        max_driven_H  : float        = 4.0,
+        name          : str          = 'B',
+        long_name     : str          = 'Field (driven)',
+        unit          : str          = 'T',
+        registry_id   : str | None   = None,
+    ):
+        super().__init__(name=name, long_name=long_name, unit=unit,
+                         registry_id=registry_id)
+        self._magnet      = magnet
+        self.max_driven_H = max_driven_H
+ 
+    def _get(self) -> float:
+        return self._magnet.get_H_driven()
+ 
+    def _set(self, value: float) -> None:
+        if abs(value) > self.max_driven_H:
+            self._magnet.warn(
+                f"CM4GDrivenChannel: requested field {value:.4f} T exceeds "
+                f"driven-mode limit of {self.max_driven_H} T; refusing."
+            )
+            return
+        self._magnet.sweep_H_driven(value)
+ 
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+ 
+    def _serialize_state(self) -> dict:
+        return {
+            'magnet'      : format_reference(self._magnet),
+            'max_driven_H': self.max_driven_H,
+            'name'        : self.name,
+            'long_name'   : self.long_name,
+            'unit'        : self.unit,
+        }
+ 
+    def _deserialize_state(self, state: dict) -> None:
+        if 'magnet' in state:
+            self._magnet = DeferredReference(state['magnet']).unwrap()
+        if 'max_driven_H' in state:
+            self.max_driven_H = state['max_driven_H']
+        if 'name' in state:
+            self.name = state['name']
+        if 'long_name' in state:
+            self.long_name = state['long_name']
+        if 'unit' in state:
+            self.unit = state['unit']
+ 
+    @classmethod
+    def from_config(cls, config: dict) -> 'CM4GDrivenChannel':
+        registry_id = config.pop('registry_id', None)
+        magnet_ref  = config.pop('magnet', None)
+ 
+        instance = cls(
+            magnet       = None,  # resolved in _deserialize_state (pass 2)
+            max_driven_H = config.pop('max_driven_H', 4.0),
+            name         = config.pop('name',      'B'),
+            long_name    = config.pop('long_name', 'Field (driven)'),
+            unit         = config.pop('unit',      'T'),
+            registry_id  = registry_id,
+        )
+        if magnet_ref is not None:
+            instance._magnet = DeferredReference(magnet_ref)
+        return instance
+
 
 if __name__ == '__main__':
     """Example test of the magnet power supply using dummyResource"""
@@ -310,74 +687,3 @@ if __name__ == '__main__':
 
     print("CALLING get_H")
     print(f"result = {magnet.get_H()}")
-
-
-@register_device_class("CM4GChannel")
-class CM4GChannel(AsyncChannel):
-    """
-    AsyncChannel wrapper for the Cryomagnetics 4G superconducting magnet power supply.
-
-    Parameters
-    ----------
-    magnet : cryomagnetics4G
-        A connected cryomagnetics4G instance registered in HardwareRegistry.
-    name : str, default 'B'
-    long_name : str, default 'Field'
-    unit : str, default 'T'
-    registry_id : str, optional
-    """
-
-    def __init__(self,
-        magnet      : cryomagnetics4G,
-        name        : str        = 'B',
-        long_name   : str        = 'Field',
-        unit        : str        = 'T',
-        registry_id : str | None = None,
-    ):
-        super().__init__(name=name, long_name=long_name, unit=unit,
-                         registry_id=registry_id)
-        self._magnet = magnet
-
-    def _get(self) -> float:
-        return self._magnet.get_H()
-
-    def _set(self, value: float) -> None:
-        self._magnet.sweep_H(value)
-
-    # ------------------------------------------------------------------
-    # Serialization
-    # ------------------------------------------------------------------
-
-    def _serialize_state(self) -> dict:
-        return {
-            'magnet'   : format_reference(self._magnet),
-            'name'     : self.name,
-            'long_name': self.long_name,
-            'unit'     : self.unit,
-        }
-
-    def _deserialize_state(self, state: dict) -> None:
-        if 'magnet' in state:
-            self._magnet = DeferredReference(state['magnet']).unwrap()
-        if 'name' in state:
-            self.name = state['name']
-        if 'long_name' in state:
-            self.long_name = state['long_name']
-        if 'unit' in state:
-            self.unit = state['unit']
-
-    @classmethod
-    def from_config(cls, config: dict) -> 'CM4GChannel':
-        registry_id = config.pop('registry_id', None)
-        magnet_ref  = config.pop('magnet', None)
-
-        instance = cls(
-            magnet      = None,  # resolved in _deserialize_state (pass 2)
-            name        = config.pop('name',      'B'),
-            long_name   = config.pop('long_name', 'Field'),
-            unit        = config.pop('unit',      'T'),
-            registry_id = registry_id,
-        )
-        if magnet_ref is not None:
-            instance._magnet = DeferredReference(magnet_ref)
-        return instance
