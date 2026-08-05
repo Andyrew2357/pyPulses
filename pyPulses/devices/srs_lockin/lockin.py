@@ -11,6 +11,13 @@ from .base import (
 )
 from ..registry import register_hardware_class
 
+# Backward-compat aliases; prefer lockin_channel / series_correlated_covariance
+# (pyPulses.devices.lockin.channels).
+from ..lockin.channels import (
+    lockin_channel as sr860_lockin_channel,
+    series_correlated_covariance,
+)
+
 import numpy as np
 import time
 from math import log2
@@ -18,46 +25,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from logging import Logger
 from typing import Tuple
-
-def series_correlated_covariance(samples: np.ndarray, L: int = None) -> np.ndarray:
-    """
-    Provide a covariance estimate that reflects serial correlations present in 
-    the underlying data. The measurements are assumed to be steady-state.
-
-    Parameters
-    ----------
-    samples : ndarray
-        Shape (N, d) where N is the number of samples and d is the dimension of
-        the data.
-    L : int, optional
-        Maximum autocorrelation length to use
-
-    Returns
-    -------
-    cov : ndarray
-    """
-
-    if samples.ndim != 2:
-        raise ValueError("`samples` should be a 2D array")
-    
-    N, _ = samples.shape
-    v = samples - samples.mean(0)
-    if L is None:
-        L = max(10, int(N**(1 / 3)))
-    L = min(N - 1, L)
-
-    nfft = 1 << (2 * N - 1).bit_length()
-    Vf = np.fft.rfft(v, n=nfft, axis=0)
-    cross_spec = np.einsum('fk, fj->fkj', Vf, np.conj(Vf)) / N
-    full_corr = np.fft.irfft(cross_spec, n=nfft, axis=0)
-    Gam = full_corr[:L + 1]
-
-    w = 1.0 - np.arange(L + 1) / (L + 1.0)
-    S0 = Gam[0].real
-    for k in range(1, L + 1):
-        Gk = Gam[k].real
-        S0 += w[k] * (Gk + Gk.T)
-    return S0/N
 
 @register_hardware_class("sr830")
 class sr830(
@@ -771,38 +738,6 @@ class sr860(
             return sr860_lockin_channel(self, accessor, scale, series_corr)
 
         return super().resolve(accessor)
-
-
-class sr860_lockin_channel():
-    """
-    LockInChannel for sr860.get_average / get_average_series_correlated.
-
-    Parameters
-    ----------
-    parent : sr860
-    accessor : str
-    scale : float
-        1.0 for raw volts, 1e6 for microvolts. Applied as mean*scale,
-        cov*(scale**2) so that units are consistent throughout.
-    series_corr : bool
-        If True, use get_average_series_correlated; else get_average.
-    """
-    def __init__(self, parent, accessor: str, scale: float, series_corr: bool):
-        self._parent      = parent
-        self._accessor    = accessor
-        self.scale        = scale
-        self._series_corr = series_corr
-
-    def format_ref(self):
-        return self._parent, self._accessor
-
-    def __call__(self):
-        if self._series_corr:
-            mean, cov = self._parent.get_average_series_correlated()
-        else:
-            mean, cov = self._parent.get_average()
-        s = self.scale
-        return mean * s, cov * (s * s)
 
 
 @register_hardware_class("sr865")

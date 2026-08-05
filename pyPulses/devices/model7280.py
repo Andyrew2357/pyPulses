@@ -24,16 +24,17 @@ Protocol notes specific to the 7280
 from __future__ import annotations
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .srs_lockin.gui import SRSLockinGUI
+    from .lockin.gui import LockinGUI
 
 from .pyvisa_device import pyvisaDevice
 from .channel_adapter import ScalarChannelAdapter
 from .registry import register_hardware_class
 
-# Re-use the SRS channel adapters so `resolve` returns the same objects the rest
-# of the ecosystem already understands.
-from .srs_lockin.base import SRSLockin_sensitivity_channel
-from .srs_lockin.lockin import series_correlated_covariance, sr860_lockin_channel
+# Re-use the shared lock-in channel adapters so `resolve` returns the same
+# objects the rest of the ecosystem already understands.
+from .lockin.channels import (
+    lockin_channel, sensitivity_channel, series_correlated_covariance,
+)
 
 import time
 from math import log10
@@ -1308,11 +1309,11 @@ class model7280(pyvisaDevice):
         }
         if accessor in _lockin_accessors:
             series_corr, scale = _lockin_accessors[accessor]
-            return sr860_lockin_channel(self, accessor, scale, series_corr)
+            return lockin_channel(self, accessor, scale, series_corr)
         if accessor == "input_sensitivity":
-            return SRSLockin_sensitivity_channel(self, lockin_scale=1.0)
+            return sensitivity_channel(self, lockin_scale=1.0)
         if accessor == "input_sensitivity_uV":
-            return SRSLockin_sensitivity_channel(self, lockin_scale=1e6)
+            return sensitivity_channel(self, lockin_scale=1e6)
         raise ValueError(
             f"{self.__class__.__name__} cannot resolve accessor: {accessor!r}"
         )
@@ -1339,17 +1340,17 @@ class model7280(pyvisaDevice):
 
     # ── GUI lifecycle ────────────────────────────────────────────────────────
 
-    def launch_gui(self, port: int = 8760, poll_interval: float = 0.5) -> "SRSLockinGUI":
+    def launch_gui(self, port: int = 8760, poll_interval: float = 0.5) -> "LockinGUI":
         """
         Launch a localhost web GUI for this instrument.
-        Sets self.gui and returns the SRSLockinGUI instance.
+        Sets self.gui and returns the LockinGUI instance.
         """
-        from .srs_lockin.gui import SRSLockinGUI
+        from .lockin.gui import LockinGUI
         gui = getattr(self, "gui", None)
         if gui is not None:
             print(f"GUI already running → http://localhost:{gui._port}")
             return gui
-        return SRSLockinGUI(self, port=port, poll_interval=poll_interval).start()
+        return LockinGUI(self, port=port, poll_interval=poll_interval).start()
 
     def kill_gui(self):
         """Stop the running GUI, if any."""

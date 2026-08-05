@@ -10,6 +10,9 @@ if TYPE_CHECKING:
 from ..pyvisa_device import pyvisaDevice
 from ..channel_adapter import ScalarChannelAdapter
 
+# Backward-compat alias; prefer sensitivity_channel (pyPulses.devices.lockin.channels).
+from ..lockin.channels import sensitivity_channel as SRSLockin_sensitivity_channel
+
 import numpy as np
 from logging import Logger
 from typing import Any, Dict, List, Tuple
@@ -702,27 +705,3 @@ class SyncFilterMixin:
             return int(self.query(f"{self.cmd_map['sync']}?")) == 1
         self.write(f"{self.cmd_map['sync']} {int(on)}")
         self.info(f"{'En' if on else 'Dis'}abled sync filter.")
-
-
-class SRSLockin_sensitivity_channel(ScalarChannelAdapter):
-    """
-    ScalarChannel for lock-in input sensitivity in volts.
-
-    Parameters
-    ----------
-    parent : SRSLockin
-    lockin_scale : float
-        The scale factor used by the accompanying lockin_call channel
-        (e.g. 1e6 if readings are in µV). Sensitivity targets derived
-        from lock-in readings must be divided by this before being passed
-        to input_sensitivity().
-    """
-    def __init__(self, parent: SRSLockin, lockin_scale: float = 1.0):
-        super().__init__(parent, 'input_sensitivity')
-        self.lockin_scale = lockin_scale
-
-    def get_output(self) -> float:
-        return self._parent.input_sensitivity() * self.lockin_scale
-
-    def set_output(self, value: float):
-        self._parent.input_sensitivity(value / self.lockin_scale)
