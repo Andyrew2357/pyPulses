@@ -167,7 +167,14 @@ from .measurement import Query, QuerySignature, Measurement
 from .runner import Runner
 
 # -- Sidecar (live plotting) -------------------------------------------------
-from .sidecar import Sidecar, Pane, LinePane, LineConfig
+from .sidecar import (
+    Sidecar, 
+    Pane, 
+    LinePane, 
+    LineConfig, 
+    HeatmapPane, 
+    AnnotationRecorder
+)
 
 # -- Database logging --------------------------------------------------------
 from .database import DatabaseLogger, CheckpointMode
@@ -205,6 +212,8 @@ __all__ = [
     "Pane",
     "LinePane",
     "LineConfig",
+    "HeatmapPane",
+    "AnnotationRecorder",
     # Database
     "DatabaseLogger",
     "CheckpointMode",

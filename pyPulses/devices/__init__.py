@@ -13,7 +13,7 @@ from .fastflight2.fastflight2 import FastFlight2
 from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel, 
                     hf2liOscillator, hf2liOutputChannel)
 from .hp34401a import hp34401a
-from .ips120 import ips120, IPS120Channel
+from .ips120 import ips120, IPS120Channel, IPS120DrivenChannel
 from .keithley2000 import keithley2000
 from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
@@ -46,6 +46,7 @@ __all__ = [
     "hp34401a",
     "ips120",
     "IPS120Channel",
+    "IPS120DrivenChannel",
     "keithley2000",
     "keithley2400",
     "keithley2450",

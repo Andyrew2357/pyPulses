@@ -31,6 +31,7 @@ class ad5791(pyvisaDevice):
     # maximum bounds on channel values
     max_V = 10.
     min_V = -10.
+    NUM_CHANNELS = 8
 
     def __init__(self,
         resource_name: str,

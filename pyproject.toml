@@ -37,6 +37,7 @@ dependencies = [
     "PyVISA-py>=0.7",
     "pyvisa-py",
     "websockets",
+    "zeroconf",
     "zhinst-toolkit"
 ]
 

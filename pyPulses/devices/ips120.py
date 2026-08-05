@@ -679,7 +679,7 @@ class IPS120DrivenChannel(AsyncChannel):
         exceeding this limit are refused. Set according to the pulse tube
         heat load limit for the specific system.
     name : str, default 'B'
-    long_name : str, default R'$B_\mathrm{driven}$'
+    long_name : str, default R'$B_\\mathrm{driven}$'
     unit : str, default 'T'
     registry_id : str, optional
     """
