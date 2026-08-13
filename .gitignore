@@ -22,3 +22,6 @@ dist/
 # Docs
 docs-site/docs/reference
 docs-site/mkdocs.yml
+
+# Local design-doc scratch (not meant for the repo, kept for local reference)
+SNR_PLUMBING.md

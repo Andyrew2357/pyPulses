@@ -20,6 +20,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
+    "bayesian-optimization>=2.0",
     "bitarray",
     "gpib-ctypes>=0.2",
     "ipython>=9.0",

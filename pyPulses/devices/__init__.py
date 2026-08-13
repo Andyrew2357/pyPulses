@@ -5,12 +5,15 @@ from .attenuator import FixedAttenuator
 from .calibrated_channel import CalibratedChannel, PolarityCalibratedChannel
 from .calibration import PolynomialCalibration, TrivialCalibration
 from .calibrate_pulse_shaper import PulseShaperCalibration, PulseShaperCalibrationResult
+from .circuit_elements import (
+    CircuitElement, ResistiveElement, ThermalStage, TransistorElement,
+)
 from .cryomagnetics_4G import cryomagnetics4G, CM4GChannel
 from .dtg.dtg import dtg5274
 from .dtg.dtg_comp_pair import dtgCompPair
 from .fastflight2.fastflight2 import FastFlight2
-# from .hemt_amp import HEMTCommonSource
-from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel, 
+from .HEMT import AmplifierLike, HEMTCommonSource
+from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel,
                     hf2liOscillator, hf2liOutputChannel)
 from .hp34401a import hp34401a
 from .ips120 import ips120, IPS120Channel, IPS120DrivenChannel
@@ -30,6 +33,8 @@ __all__ = [
     "ad5764",
     "ad5791",
     "ad9854",
+    "AmplifierLike",
+    "CircuitElement",
     "cryomagnetics4G",
     "CM4GChannel",
     "CalibratedChannel",
@@ -37,7 +42,7 @@ __all__ = [
     "dtg5274",
     "FastFlight2",
     "FixedAttenuator",
-    # "HEMTCommonSource",
+    "HEMTCommonSource",
     "hf2li",
     "hf2liACout",
     "hf2liDemodChannel",
@@ -59,6 +64,7 @@ __all__ = [
     "pulsePair",
     "PulseShaperCalibration",
     "PulseShaperCalibrationResult",
+    "ResistiveElement",
     "sr830",
     "sr844",
     "sr850",
@@ -66,8 +72,10 @@ __all__ = [
     "sr865a",
     "SweepableChannel",
     "SweepConfig",
+    "ThermalStage",
+    "TransistorElement",
     "TrivialCalibration",
-    "wfAverager", 
+    "wfAverager",
     "wfBalance", 
     "wfJump", 
     "wfSlope"

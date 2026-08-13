@@ -16,10 +16,27 @@ On-balance (`cap_balance`)
     Updates the filter with each (dL, dv) observation.
 
 Differential balance (`differential_balance`)
-    Nulls compressibility features along a 1D cut by measuring lock-in readings 
-    through the excitation and complementary gates separately, then computing a 
-    complex ratio gamma that sets the complementary amplitude and phase. 
+    Nulls compressibility features along a 1D cut by measuring lock-in readings
+    through the excitation and complementary gates separately, then computing a
+    complex ratio gamma that sets the complementary amplitude and phase.
     Independent of the Kalman filter machinery.
+
+Balance refinement (`cap_balance_refine`)
+    Sharpens an existing three-point or two-point balance result's V0 via a
+    small, fixed number of fixed-gain Newton correction steps -- the gain
+    itself is not re-estimated (contrast cap_balance's continuous Kalman
+    tracking). Useful for tightening a calibration's balance point without
+    the overhead of full Kalman-filter balance tracking.
+
+Noise probe (`cap_noise_probe`) and amp tuning (`prep_amp`)
+    cap_noise_probe reports the capacitance noise floor (empirical std) and
+    non-Gaussianity (empirical excess kurtosis) at the bridge's current
+    setting, from a cheap local recalibration (cap_balance_three_point by
+    default, or cap_balance_two_point), optional refinement, and repeated
+    reads -- no gate sweep, independent of ctx.cap_filter/extrapolator.
+    prep_amp wires it into the general SNR-tuning framework
+    (pyPulses.routines.amp_tune) to tune a HEMTCommonSource-like amplifier's
+    bias for the best capacitance-referred SNR.
 
 Typical usage
 -------------
@@ -74,6 +91,8 @@ Result dataclasses
     cap.TwoPointBalanceResult       — result of two-point initial balance
     cap.CapInitialFilterConfig      — result of cap_initialize / cap_initialize_filter
     cap.DifferentialBalanceResult   — result of differential_balance
+    cap.RefineBalanceResult         — result of cap_balance_refine
+    cap.CapNoiseProbeResult         — result of cap_noise_probe
 
 Context, filter, and extrapolator
 ----------------------------------
@@ -108,11 +127,13 @@ from .context import CapContext
 from .initialize import (
     cap_balance_three_point,
     cap_balance_two_point,
+    cap_balance_refine,
     cap_initialize_filter,
     cap_initialize,
     ThreePointBalanceResult,
     TwoPointBalanceResult,
     CapInitialFilterConfig,
+    RefineBalanceResult,
 )
 
 # Measurement functions
@@ -121,6 +142,10 @@ from .balance import cap_balance, CapBalanceResult
 
 # Differential balance
 from .differential import differential_balance, DifferentialBalanceResult
+
+# Noise probe and amp tuning
+from .noise_probe import cap_noise_probe, CapNoiseProbeResult
+from .prep_amp import prep_amp
 
 __all__ = [
     # Config
@@ -135,11 +160,13 @@ __all__ = [
     # Initialization
     'cap_balance_three_point',
     'cap_balance_two_point',
+    'cap_balance_refine',
     'cap_initialize_filter',
     'cap_initialize',
     'ThreePointBalanceResult',
     'TwoPointBalanceResult',
     'CapInitialFilterConfig',
+    'RefineBalanceResult',
     # Measurement
     'cap_measure',
     'CapMeasureResult',
@@ -148,4 +175,8 @@ __all__ = [
     # Differential balance
     'differential_balance',
     'DifferentialBalanceResult',
+    # Noise probe and amp tuning
+    'cap_noise_probe',
+    'CapNoiseProbeResult',
+    'prep_amp',
 ]

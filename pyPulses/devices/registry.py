@@ -11,6 +11,7 @@ unregistered classes (tracked but not serialized).
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
@@ -18,6 +19,35 @@ if TYPE_CHECKING:
     from .abstract_device import abstractDevice
 
 T = TypeVar('T')
+
+
+def _is_main_rerun_of(existing_cls: Type) -> bool:
+    """
+    True if a tag collision is happening only because `python -m
+    some.module` re-executed a module that was already imported normally
+    elsewhere (e.g. by a package __init__.py) -- not a genuine collision
+    between two different classes that happen to share a tag string.
+
+    When a module is run via `-m`, Python imports it twice: once under
+    its real dotted name (however it got there -- e.g. a package
+    __init__.py import), and again under __name__ == '__main__', which
+    re-executes the whole file, including any @register_*_class
+    decorator, defining a *new* class object with the same code. Without
+    this check, that second registration looks identical to a real
+    tag-collision bug and raises before the file's own `if __name__ ==
+    '__main__':` self-test can ever run.
+
+    Distinguished from a real collision via sys.modules['__main__'].
+    __spec__.name, which `-m` sets to the target's actual dotted module
+    path (not the literal string '__main__') -- confirmed empirically,
+    not just from documentation, since this is exactly the mechanism the
+    fix depends on. A plain script/REPL invocation leaves __spec__ as
+    None, so this never fires outside the specific `-m` re-run case.
+    """
+    main_mod = sys.modules.get('__main__')
+    main_spec = getattr(main_mod, '__spec__', None)
+    return main_spec is not None and main_spec.name == existing_cls.__module__
+
 
 # Global mapping: class_tag -> class type
 # Populated by @register_hardware_class decorator
@@ -38,13 +68,20 @@ def register_hardware_class(tag: str):
 
     def decorator(cls: Type[T]) -> Type[T]:
         if tag in _HARDWARE_CLASS_REGISTRY:
+            existing = _HARDWARE_CLASS_REGISTRY[tag]
+            if cls.__module__ == '__main__' and _is_main_rerun_of(existing):
+                # `-m` re-executing an already-imported module -- not a
+                # real collision (see _is_main_rerun_of). Let this class
+                # behave normally without touching the original entry.
+                cls._registry_class_tag_ = tag
+                return cls
             raise ValueError(
-                f"Hardware class tag '{tag}' already registered to {_HARDWARE_CLASS_REGISTRY[tag]}"
+                f"Hardware class tag '{tag}' already registered to {existing}"
             )
         _HARDWARE_CLASS_REGISTRY[tag] = cls
         cls._registry_class_tag_ = tag
         return cls
-    
+
     return decorator
 
 def get_hardware_class(tag: str) -> Type | None:
@@ -298,9 +335,15 @@ def register_device_class(tag: str):
     """Decorator that registers a device class with a string tag."""
     def decorator(cls: Type[T]) -> Type[T]:
         if tag in _DEVICE_CLASS_REGISTRY:
+            existing = _DEVICE_CLASS_REGISTRY[tag]
+            if cls.__module__ == '__main__' and _is_main_rerun_of(existing):
+                # `-m` re-executing an already-imported module -- not a
+                # real collision (see _is_main_rerun_of). Let this class
+                # behave normally without touching the original entry.
+                cls._registry_class_tag_ = tag
+                return cls
             raise ValueError(
-                f"Device class tag '{tag}' already registered to "
-                f"{_DEVICE_CLASS_REGISTRY[tag]}"
+                f"Device class tag '{tag}' already registered to {existing}"
             )
         _DEVICE_CLASS_REGISTRY[tag] = cls
         cls._registry_class_tag_ = tag

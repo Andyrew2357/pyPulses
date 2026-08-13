@@ -4,6 +4,7 @@ from .cap_filter import CapFilter
 from .context import CapContext
 from .config import CAP_INIT_P_MULT_THREE_POINT, CAP_INIT_P_MULT_TWO_POINT
 from ...devices.channel_adapter import ScalarChannel, LockInChannel
+from ...core.job import checkpoint
 from ...core.sidecar import LinePane, LineConfig, Sidecar
 
 from dataclasses import dataclass
@@ -600,6 +601,190 @@ def cap_balance_two_point(
     if logger:
         logger.info(result)
     return result
+
+"""Balance refinement"""
+
+def _invert_gain(
+    LX: float, LY: float,
+    A_matrix: np.ndarray | None = None,
+    A_complex: complex | None = None,
+) -> Tuple[float, float] | None:
+    """
+    Invert a lock-in reading (LX, LY) through a calibrated gain to a
+    Vstd-space correction (dVx, dVy), exactly mirroring cap_measure's two
+    inversion branches -- the full 2x2 matrix (three-point) or the
+    compressed complex gain (two-point). Returns None if the gain is
+    degenerate (exactly zero, or non-finite) rather than raising or
+    silently producing inf/nan -- this is the direct numerical-safety
+    counterpart to "what if the amp has ~zero gain": see
+    cap_noise_probe's docstring for the physical discussion.
+    """
+    if A_matrix is not None:
+        Kc1, Kr1 = A_matrix[0]
+        Kc2, Kr2 = A_matrix[1]
+        det = Kc1 * Kr2 - Kr1 * Kc2
+        if not np.isfinite(det) or det == 0.0:
+            return None
+        return (
+            (Kr2 * LX - Kr1 * LY) / det,
+            (-Kc2 * LX + Kc1 * LY) / det,
+        )
+    else:
+        X, Y = A_complex.real, A_complex.imag
+        absA2 = X**2 + Y**2
+        if not np.isfinite(absA2) or absA2 == 0.0:
+            return None
+        return (
+            (X * LX + Y * LY) / absA2,
+            (-Y * LX + X * LY) / absA2,
+        )
+
+
+@dataclass
+class RefineBalanceResult:
+    """
+    Result of cap_balance_refine.
+
+    Attributes
+    ----------
+    status : bool
+        True if all n_refine steps completed with V0 staying inside
+        Vstd_range and the local gain non-degenerate throughout. False
+        means refinement was aborted early -- V0/residual reflect the
+        last good step, not what was requested.
+    V0 : complex
+        Refined balance point.
+    residual : (float, float) or None
+        Lock-in reading (LX, LY) at V0 after the final refinement step.
+    Cex, Closs : float or None
+        None if status is False.
+    n_refine : int
+        Number of refinement steps actually completed (may be less than
+        requested if refinement was aborted early).
+    """
+    status: bool
+    V0: complex
+    residual: tuple | None
+    Cex: float | None
+    Closs: float | None
+    n_refine: int
+
+    def __str__(self) -> str:
+        s = f"RefineBalanceResult: {'OK' if self.status else 'ABORTED EARLY'}\n"
+        s += f"  V0 = {self.V0.real:.5e} + {self.V0.imag:.5e}i  ({self.n_refine} step(s))\n"
+        if self.Cex is not None:
+            s += f"  Cex = {self.Cex:.5e}  Closs = {self.Closs:.5e}\n"
+        if self.residual is not None:
+            s += f"  Residual: LX={self.residual[0]:.5e}  LY={self.residual[1]:.5e}\n"
+        return s
+
+
+def cap_balance_refine(
+    Vstd: ScalarChannel,
+    Theta: ScalarChannel,
+    lockin_call: LockInChannel,
+    Vex: float,
+    Cstd: float,
+    Vstd_range: float,
+    result: ThreePointBalanceResult | TwoPointBalanceResult,
+    n_refine: int = 1,
+    samples: int = 1,
+    wait: float = 1.0,
+    logger: logging.Logger | None = None,
+) -> RefineBalanceResult:
+    """
+    Refine an existing three-point or two-point balance result's V0 via
+    `n_refine` fixed-gain Newton correction steps.
+
+    Each step: move to the current best V0, read the residual lock-in
+    signal there, and correct V0 using the gain already calibrated in
+    `result` (the full A_matrix for a ThreePointBalanceResult, or the
+    compressed A_complex for a TwoPointBalanceResult) -- the gain itself
+    is *not* re-estimated at each step. This is deliberately simpler than
+    cap_balance, which continuously re-estimates the gain via a Kalman
+    filter; use this when you just want to sharpen an existing
+    calibration's balance point without that overhead/complexity (see
+    routines/linear_balance.py's lstsqBalance.refine() for the same
+    "step to current best guess, measure residual, correct" pattern in a
+    different context).
+
+    Parameters
+    ----------
+    Vstd, Theta, lockin_call, Vex, Cstd, Vstd_range
+        Same as cap_balance_two_point/cap_balance_three_point.
+    result : ThreePointBalanceResult or TwoPointBalanceResult
+        A prior balance result to refine (its own gain is reused, not
+        modified).
+    n_refine : int, default=1
+        Number of correction steps to take.
+    samples : int, default=1
+        lockin_call averaging per step.
+    wait : float, default=1.0
+        Seconds to wait after setting Vstd before reading the lock-in.
+    logger : Logger, optional
+
+    Returns
+    -------
+    RefineBalanceResult
+    """
+    V0 = result.V0
+    if isinstance(result, ThreePointBalanceResult):
+        A_matrix, A_complex = result.A_matrix, None
+    else:
+        A_matrix, A_complex = None, result.A_complex
+
+    residual: tuple | None = None
+    for i in range(n_refine):
+        checkpoint()
+        V0 = _set_Vstd_complex(Vstd, Theta, V0, wait=wait, max_amp=Vstd_range)
+        mean, _ = _sample_lockin(lockin_call, samples)
+        LX, LY = float(mean[0]), float(mean[1])
+        residual = (LX, LY)
+
+        dV = _invert_gain(LX, LY, A_matrix=A_matrix, A_complex=A_complex)
+        if dV is None:
+            if logger:
+                logger.warning(
+                    "cap_balance_refine: degenerate local gain "
+                    f"(step {i + 1}/{n_refine}); stopping early."
+                )
+            return RefineBalanceResult(
+                status=False, V0=V0, residual=residual,
+                Cex=None, Closs=None, n_refine=i,
+            )
+
+        V0_new = V0 - complex(dV[0], dV[1])
+        if abs(V0_new) > Vstd_range:
+            if logger:
+                logger.warning(
+                    f"cap_balance_refine: step {i + 1}/{n_refine} would push "
+                    "V0 outside Vstd_range; stopping early."
+                )
+            return RefineBalanceResult(
+                status=False, V0=V0, residual=residual,
+                Cex=None, Closs=None, n_refine=i,
+            )
+        V0 = V0_new
+
+    V0 = _set_Vstd_complex(Vstd, Theta, V0, wait=wait, max_amp=Vstd_range)
+    mean, _ = _sample_lockin(lockin_call, samples)
+    residual = (float(mean[0]), float(mean[1]))
+
+    Cex = -Cstd * V0.real / Vex
+    Closs = -Cstd * V0.imag / Vex
+
+    if logger:
+        logger.info(
+            f"cap_balance_refine: refined V0={V0.real:.5e}+{V0.imag:.5e}i "
+            f"after {n_refine} step(s). "
+            f"Residual: LX={residual[0]:.5e}  LY={residual[1]:.5e}"
+        )
+
+    return RefineBalanceResult(
+        status=True, V0=V0, residual=residual,
+        Cex=Cex, Closs=Closs, n_refine=n_refine,
+    )
+
 
 def cap_initialize_filter(
     ctx: CapContext,
