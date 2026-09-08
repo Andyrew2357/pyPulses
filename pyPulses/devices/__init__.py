@@ -11,6 +11,7 @@ from .circuit_elements import (
 from .cryomagnetics_4G import cryomagnetics4G, CM4GChannel
 from .dtg.dtg import dtg5274
 from .dtg.dtg_comp_pair import dtgCompPair
+from .e5071c import e5071c
 from .fastflight2.fastflight2 import FastFlight2
 from .HEMT import AmplifierLike, HEMTCommonSource
 from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel,
@@ -22,6 +23,7 @@ from .keithley2400 import keithley2400
 from .keithley2450 import keithley2450
 from .keithley2700 import keithley2700
 from .mso44 import mso44
+from .n9010a import n9010a
 from .ashoorilab.pcm1704 import pcm1704
 from .ashoorilab.pid_dcbox import PIDbox
 from .pulse_pair import pulsePair
@@ -40,6 +42,7 @@ __all__ = [
     "CalibratedChannel",
     "dtgCompPair",
     "dtg5274",
+    "e5071c",
     "FastFlight2",
     "FixedAttenuator",
     "HEMTCommonSource",
@@ -57,6 +60,7 @@ __all__ = [
     "keithley2450",
     "keithley2700",
     "mso44",
+    "n9010a",
     "pcm1704",
     "PIDbox",
     "PolarityCalibratedChannel",
