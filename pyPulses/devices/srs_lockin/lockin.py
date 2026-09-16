@@ -281,6 +281,15 @@ class sr860(
         'agan': "ASCL"
     }
 
+    # RSRC encoding (differs from the base FMOD encoding, and adds dual/chop):
+    # RSRC 0=Internal, 1=External, 2=Dual, 3=Chop. Inherited by sr865a.
+    REF_SOURCE_CODES = {
+        'internal': 0,
+        'external': 1,
+        'dual':     2,
+        'chop':     3,
+    }
+
     output_map = {
         'X': 0,
         'Y': 1,

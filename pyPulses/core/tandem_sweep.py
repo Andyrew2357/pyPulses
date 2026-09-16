@@ -328,7 +328,7 @@ def tandemSweep(
 
     start = np.array([ch.get_output() for ch in channels], dtype=float)
 
-    if isinstance(target, float):
+    if isinstance(target, (int, float)):
         target = [target for _ in channels]
 
     if isinstance(target, dict):

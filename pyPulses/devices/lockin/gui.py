@@ -45,7 +45,8 @@ _ACTION_METHODS = ['auto_phase', 'auto_gain', 'auto_range']
 
 # All get/set settings, in render order
 _ALL_SETTINGS = [
-    'reference_phase', 'internal_reference', 'reference_frequency',
+    'reference_phase', 'reference_source', 'internal_reference',
+    'reference_frequency',
     'detection_harmonic', 'reference_trigger', 'reference_input_impedance',
     'sine_output_amplitude', 'sine_output_offset',
     'input_configuration', 'input_shield_grounded', 'input_coupling_DC',
@@ -311,8 +312,26 @@ class LockinGUI:
         supported = [m for m in _ALL_SETTINGS if hasattr(inst, m)]
         actions   = [m for m in _ACTION_METHODS if hasattr(inst, m)]
 
+        # reference_source (internal/external[/dual/chop]) supersedes the
+        # internal_reference boolean. Only treat it as a dropdown when the
+        # instrument exposes its own code map, so the option list stays
+        # model-driven (2-way for FMOD models, 4-way for SR860/SR865A). If a
+        # reference_source method exists without a code map, fall back to the
+        # boolean toggle rather than render a choice-less control.
+        ref_source_options = None
+        if 'reference_source' in supported:
+            codes = getattr(inst, 'REF_SOURCE_CODES', None)
+            if codes:
+                ref_source_options = list(codes)
+                if 'internal_reference' in supported:
+                    supported.remove('internal_reference')
+            else:
+                supported.remove('reference_source')
+
         # String option lists — use model-specific overrides where needed
         options = {m: _STRING_OPTIONS[m] for m in supported if m in _STRING_OPTIONS}
+        if ref_source_options is not None:
+            options['reference_source'] = ref_source_options
         if inst.__class__.__name__ == 'sr844' and 'low_pass_filter_slope' in supported:
             options['low_pass_filter_slope'] = _SR844_SLOPE_OPTIONS
 

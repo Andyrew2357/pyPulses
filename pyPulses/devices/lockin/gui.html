@@ -339,6 +339,7 @@ const WS_URL = `ws://localhost:__WS_PORT__`;
 
 const LABELS = {
   reference_phase          : 'Phase',
+  reference_source         : 'Reference',
   internal_reference       : 'Int Reference',
   reference_frequency      : 'Frequency',
   detection_harmonic       : 'Harmonic',
@@ -388,7 +389,8 @@ const LEFT_SECTIONS = [
 
 const RIGHT_SECTIONS = [
   { id: 'sec-reference', hdr: 'REFERENCE',
-    methods: ['reference_phase','internal_reference','reference_frequency',
+    methods: ['reference_phase','reference_source','internal_reference',
+              'reference_frequency',
               'detection_harmonic','reference_trigger','reference_input_impedance'] },
   { id: 'sec-sineout',   hdr: 'SINE OUT',
     methods: ['sine_output_amplitude','sine_output_offset'] },

@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 import json
 import sqlite3
+import threading
 import warnings
 from enum import Enum
 from pathlib import Path
@@ -141,7 +142,18 @@ class DatabaseLogger:
         self._flush_count: int = 0
         self._point_count: int = 0
 
-        self._conn = sqlite3.connect(self.path, timeout=30)
+        # The logger is constructed on one thread (the notebook / main thread,
+        # via from_runner) but its observer callback runs on whatever thread
+        # the sweep executes on -- e.g. a JobQueue worker thread. A sqlite3
+        # connection is bound to its creating thread unless check_same_thread
+        # is disabled, so allow cross-thread use and serialize every access to
+        # the connection/cursor through this lock. Access is already serial in
+        # practice (setup -> run -> close); the lock also guards a close() or
+        # checkpoint that could overlap the writer.
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(
+            self.path, timeout=30, check_same_thread=False
+        )
         self._cur = self._conn.cursor()
 
         # WAL mode: readers never block writers and vice versa
@@ -241,16 +253,61 @@ class DatabaseLogger:
         self._cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
         return bool(self._cur.fetchall())
 
+    # Names that cannot be used as user column names in the sweep table.
+    # `dim*` and `timestamp` are injected internal columns; the rowid aliases
+    # would shadow SQLite's implicit rowid. `id` is intentionally NOT reserved:
+    # the sweep table has no explicit surrogate key (see _init_tables), so a
+    # user channel named `ID`/`id` (e.g. drain current) is a valid data column.
+    _ROWID_ALIASES = frozenset({'rowid', '_rowid_', 'oid'})
+
+    def _check_reserved_collisions(self):
+        """
+        Validate user column names before creating the sweep table.
+
+        SQLite compares column identifiers case-insensitively, so two channels
+        differing only in case cannot coexist in one table, and no channel may
+        collide with an injected internal column. Failing here gives a clear
+        error at the point of cause instead of a raw OperationalError from the
+        CREATE TABLE three frames down.
+        """
+        reserved = {d.lower() for d in self.dims} | self._ROWID_ALIASES
+        if self.timestamp:
+            reserved.add('timestamp')
+
+        seen: Dict[str, str] = {}
+        for name in self.coord_names + self.data_names:
+            lc = name.lower()
+            if lc in reserved:
+                raise ValueError(
+                    f"Column {name!r} collides (case-insensitively) with a "
+                    f"reserved internal column. Reserved names are the scan "
+                    f"dimensions {self.dims}, 'timestamp', and the SQLite "
+                    f"rowid aliases {sorted(self._ROWID_ALIASES)}. "
+                    f"Rename the channel."
+                )
+            if lc in seen:
+                raise ValueError(
+                    f"Columns {seen[lc]!r} and {name!r} differ only in case; "
+                    f"SQLite column names are case-insensitive and cannot "
+                    f"coexist in one table. Rename one of them."
+                )
+            seen[lc] = name
+
     def _init_tables(self):
+        self._check_reserved_collisions()
+
         idx_cols = [f'{d} INTEGER' for d in self.dims]
         coord_cols = [f'"{n}" REAL'  for n in self.coord_names]
         data_cols = [f'"{n}" REAL'  for n in self.data_names]
         ts_col = ['timestamp REAL'] if self.timestamp else []
 
+        # No explicit surrogate key: rows get SQLite's implicit rowid, which is
+        # insertion-ordered for this append-only table and never referenced by
+        # the reader. This keeps the user namespace free of a hardcoded `id`
+        # and matches the id-free schema produced by xarray_to_sqlite.
         all_cols = idx_cols + coord_cols + data_cols + ts_col
         self._cur.execute(
-            f"CREATE TABLE IF NOT EXISTS sweep "
-            f"(id INTEGER PRIMARY KEY AUTOINCREMENT, {', '.join(all_cols)})"
+            f"CREATE TABLE IF NOT EXISTS sweep ({', '.join(all_cols)})"
         )
         self._cur.execute(
             "CREATE TABLE IF NOT EXISTS metadata "
@@ -330,16 +387,17 @@ class DatabaseLogger:
               tuple(data_vals) + \
               tuple(ts_val)
 
-        self._point_count += 1
+        with self._lock:
+            self._point_count += 1
 
-        if self.use_buffer:
-            self._buffer.append(row)
-            if len(self._buffer) >= self.buffer_size:
-                self._flush()
-        else:
-            self._cur.execute(self._insert_sql, row)
-            self._conn.commit()
-            self._maybe_checkpoint()
+            if self.use_buffer:
+                self._buffer.append(row)
+                if len(self._buffer) >= self.buffer_size:
+                    self._flush()
+            else:
+                self._cur.execute(self._insert_sql, row)
+                self._conn.commit()
+                self._maybe_checkpoint()
 
     """Flushing and checkpointing"""
 
@@ -384,14 +442,15 @@ class DatabaseLogger:
         Store global key-value metadata. Values must be JSON-serializable.
         None values are silently skipped.
         """
-        for k, v in attrs.items():
-            if v is None:
-                continue
-            self._cur.execute(
-                "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                (k, _json(v)),
-            )
-        self._conn.commit()
+        with self._lock:
+            for k, v in attrs.items():
+                if v is None:
+                    continue
+                self._cur.execute(
+                    "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                    (k, _json(v)),
+                )
+            self._conn.commit()
 
     def set_variable_attrs(self, var: str, attrs: Dict[str, Any]):
         """
@@ -414,25 +473,59 @@ class DatabaseLogger:
                 f"'{var}' is not a known variable. "
                 f"Known: {sorted(known)}"
             )
-        for k, v in attrs.items():
-            if v is None:
-                continue
-            self._cur.execute(
-                "INSERT OR REPLACE INTO var_metadata "
-                "(var_name, key, value) VALUES (?, ?, ?)",
-                (var, k, _json(v)),
-            )
-        self._conn.commit()
+        with self._lock:
+            for k, v in attrs.items():
+                if v is None:
+                    continue
+                self._cur.execute(
+                    "INSERT OR REPLACE INTO var_metadata "
+                    "(var_name, key, value) VALUES (?, ?, ?)",
+                    (var, k, _json(v)),
+                )
+            self._conn.commit()
 
     """Lifecycle"""
 
     def close(self):
-        """Flush any buffered rows and close the database connection."""
-        if self.use_buffer:
-            self._flush()
-        self._cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        self._cur.execute("PRAGMA journal_mode=DELETE")
-        self._conn.close()
+        """
+        Flush buffered rows and close the database connection.
+
+        The final WAL checkpoint and the switch back to rollback-journal mode
+        are best-effort. Switching out of WAL needs exclusive access, which is
+        denied ('database is locked') if any other connection or process has
+        the file open -- a still-running sweep, a live reader/plot, a DB
+        browser, or cloud-sync (Dropbox etc.) on the data directory. That never
+        endangers the data: every point is committed as it is written, and the
+        checkpoint folds the WAL into the main file where it can. So on a lock
+        error we warn, always close this connection (releasing the writer's own
+        lock -- otherwise a transient external lock would strand it and lock the
+        file indefinitely), and leave the -wal/-shm sidecars for the next opener
+        to absorb.
+
+        The PRAGMA result rows are stepped (fetchall) so the journal-mode switch
+        commits and releases its lock before we close; an unstepped switch would
+        leave a hot journal and a connection sqlite3_close_v2 only defers.
+        """
+        with self._lock:
+            try:
+                if self.use_buffer:
+                    self._flush()
+                try:
+                    self._cur.execute(
+                        "PRAGMA wal_checkpoint(TRUNCATE)"
+                    ).fetchall()
+                    self._cur.execute("PRAGMA journal_mode=DELETE").fetchall()
+                except sqlite3.OperationalError as exc:
+                    warnings.warn(
+                        f"Could not finalize WAL on close ({exc}). Data is "
+                        f"committed, but the -wal/-shm files may remain -- "
+                        f"another connection or process (a running sweep, a "
+                        f"live reader/plot, a DB browser, or cloud sync) still "
+                        f"has the database open. The next opener will absorb "
+                        f"the WAL."
+                    )
+            finally:
+                self._conn.close()
         
     def __enter__(self) -> 'DatabaseLogger':
         return self

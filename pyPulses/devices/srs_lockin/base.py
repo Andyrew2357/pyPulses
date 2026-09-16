@@ -43,6 +43,13 @@ class SRSLockin(pyvisaDevice):
     irng_vals: np.ndarray = np.array([])
     cmd_map: Dict[str, str] = {}
 
+    # Value encoding for the model's reference-source command (cmd_map['fmod']).
+    # The 800-series FMOD command uses External (0) / Internal (1). The
+    # SR860/SR865A RSRC command uses a different encoding AND adds 'dual'/'chop'
+    # -- those models override this map. Keys are lower-case source names;
+    # values are the integer codes the command sends and returns.
+    REF_SOURCE_CODES: Dict[str, int] = {'internal': 1, 'external': 0}
+
     DEFAULT_CMDS = {
         'phas': "PHAS",
         'fmod': "FMOD",
@@ -135,9 +142,57 @@ class SRSLockin(pyvisaDevice):
         self.write(f"{self.cmd_map['phas']} {phase}")
         self.info(f"Set reference phase shift to {phase} degrees.")
 
+    def reference_source(self, source: str = None) -> str | None:
+        """
+        Set or query the reference source.
+
+        Accepted sources are the keys of this model's REF_SOURCE_CODES: every
+        model supports 'internal' and 'external'; the SR860/SR865A additionally
+        support 'dual' (detect at |f_int - f_ext|) and 'chop'. The integer sent
+        to the instrument depends on the model -- FMOD uses external=0,
+        internal=1, whereas RSRC uses internal=0, external=1, dual=2, chop=3 --
+        so the mapping lives in REF_SOURCE_CODES rather than being hardcoded.
+
+        Parameters
+        ----------
+        source : str, optional
+            One of the model's supported source names (case-insensitive). If
+            omitted, the current source is queried.
+
+        Returns
+        -------
+        str or None
+            The current source name when querying, else None.
+        """
+        cmd = self.cmd_map['fmod']
+        if source is None:
+            code = int(self.query(f"{cmd}?"))
+            for name, c in self.REF_SOURCE_CODES.items():
+                if c == code:
+                    return name
+            model = getattr(self, '_name', type(self).__name__)
+            raise ValueError(
+                f"{model} returned unknown reference-source code {code}; "
+                f"expected one of {self.REF_SOURCE_CODES}."
+            )
+        key = source.lower()
+        if key not in self.REF_SOURCE_CODES:
+            model = getattr(self, '_name', type(self).__name__)
+            raise ValueError(
+                f"{model} reference source must be one of "
+                f"{sorted(self.REF_SOURCE_CODES)}; got {source!r}."
+            )
+        self.write(f"{cmd} {self.REF_SOURCE_CODES[key]}")
+        self.info(f"Set reference source to {key}.")
+
     def internal_reference(self, on: bool = None) -> bool | None:
         """
-        Set or query whether the reference is internal or external.
+        Set or query whether the reference is internal.
+
+        Convenience boolean wrapper over reference_source(): the query returns
+        True only when the source is exactly 'internal', and False otherwise --
+        including the SR860/SR865A 'dual' and 'chop' modes, which this boolean
+        cannot represent. Use reference_source() to read or set those.
 
         Parameters
         ----------
@@ -148,14 +203,16 @@ class SRSLockin(pyvisaDevice):
         bool or None
         """
         if on is None:
-            return int(self.query(f"{self.cmd_map['fmod']}?")) == 1
-        self.write(f"{self.cmd_map['fmod']} {int(on)}")
-        self.info(f"{'En' if on else 'Dis'}abled internal reference.")
+            return self.reference_source() == 'internal'
+        self.reference_source('internal' if on else 'external')
 
     def reference_frequency(self, freq: float = None) -> float | None:
         """
-        Set or query the reference frequency in Hz (set only works if using an
-        internal reference).
+        Set or query the reference frequency in Hz. Setting only takes effect
+        when the internal oscillator is in use -- i.e. the reference source is
+        anything other than 'external'. For FMOD models that means internal; on
+        the SR860/SR865A the internal oscillator is also active in 'dual' and
+        'chop', where FREQ sets f_int.
 
         Parameters
         ----------
@@ -167,7 +224,7 @@ class SRSLockin(pyvisaDevice):
         """
         if freq is None:
             return float(self.query(f"{self.cmd_map['freq']}?"))
-        if self.internal_reference():
+        if self.reference_source() != 'external':
             self.write(f"{self.cmd_map['freq']} {freq}")
             self.info(f"Set reference frequency to {freq} Hz.")
 
@@ -374,6 +431,7 @@ class SRSLockin(pyvisaDevice):
             # timebase settings
             'reference_phase',
             'internal_reference',
+            'reference_source',
             'reference_frequency',
             'detection_harmonic',
             'reference_trigger',
@@ -419,6 +477,7 @@ class SRSLockin(pyvisaDevice):
             # timebase settings
             'reference_phase',
             'internal_reference',
+            'reference_source',
             'reference_frequency',
             'detection_harmonic',
             'reference_trigger',
