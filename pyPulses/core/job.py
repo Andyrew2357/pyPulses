@@ -210,6 +210,11 @@ class Job:
                 return
             time.sleep(0.1)
 
+    def extend_on_done(self, callbacks: List[Callable]):
+        self.on_error.extend(callbacks)
+        self.on_finish.extend(callbacks)
+        self.on_stop.extend(callbacks)
+
     """Internal"""
 
     def _fire(self, callbacks: List[Callable], *args: Any) -> None:

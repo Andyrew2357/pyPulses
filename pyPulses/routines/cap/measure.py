@@ -40,8 +40,72 @@ class CapMeasureResult:
             f"LX={self.LX:.5e}  LY={self.LY:.5e}"
         )
 
+class CapQuery():
+    """
+    Query for a capacitance measure result to be used in a Measurement.
+    """
 
-def cap_measure(ctx: 'CapContext', use_matrix: bool = False) -> CapMeasureResult:
+    NAMES = {
+        'Cex': 'Cex',
+        'Closs': 'Closs',
+        'Lx': 'Lx',
+        'Ly': 'Ly',
+        'A': ['A11', 'A21', 'A12', 'A22'],
+    }
+
+    LONG_NAMES = {
+        'Cex': R'$C/C_\text{std}$',
+        'Closs': R'$C_\text{loss}/C_\text{std}$',
+        'Lx': R'$L_x$',
+        'Ly': R'$L_y$',
+        'A': [R'$A_{11}$', R'$A_{21}$', R'$A_{12}$', R'$A_{22}$'],
+    }
+
+    def __init__(self, 
+        ctx: 'CapContext', 
+        use_matrix: bool = True, 
+        lazy: bool = False,
+        lockin_unit: str = 'uV',
+    ):
+        self.ctx = ctx
+        self.use_matrix = use_matrix
+        self.lazy = lazy
+        self.included = ['Cex', 'Closs', 'Lx', 'Ly', 'A']
+        self.UNITS = {
+            'Cex': None,
+            'Closs': None,
+            'Lx': lockin_unit,
+            'Ly': lockin_unit,
+            'A': [None, None, None, None],
+        }
+
+    @property
+    def name(self):
+        name = []
+        for k in self.included:
+            name.extend(self.NAMES[k])
+        return name
+
+    @property 
+    def long_name(self):
+        long_name = []
+        for k in self.included:
+            long_name.extend(self.LONG_NAMES[k])
+        return long_name
+
+    @property
+    def unit(self):
+        unit = []
+        for k in self.included:
+            unit.extend(self.UNITS[k])
+        return unit
+
+    def __call__(self):
+        r = cap_measure(self.ctx)
+        return [getattr(r, k) for k in self.included]
+    
+
+def cap_measure(ctx: 'CapContext', use_matrix: bool = True) -> CapMeasureResult:
     """
     Take a single off-balance capacitance measurement.
 
@@ -55,7 +119,7 @@ def cap_measure(ctx: 'CapContext', use_matrix: bool = False) -> CapMeasureResult
     Parameters
     ----------
     ctx : CapContext
-    use_matrix : bool, default False
+    use_matrix : bool, default True
         If True and a K_matrix is stored on the filter (set when initialized
         from a three-point balance), use the full 2x2 matrix inversion instead
         of the compressed complex gain A. Falls back to A if no matrix is stored.

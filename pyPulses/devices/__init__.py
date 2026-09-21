@@ -8,7 +8,7 @@ from .calibrate_pulse_shaper import PulseShaperCalibration, PulseShaperCalibrati
 from .circuit_elements import (
     CircuitElement, ResistiveElement, ThermalStage, TransistorElement,
 )
-from .cryomagnetics_4G import cryomagnetics4G, CM4GChannel
+from .cryomagnetics_4G import cryomagnetics4G, CM4GChannel, CM4GDrivenChannel
 from .dtg.dtg import dtg5274
 from .dtg.dtg_comp_pair import dtgCompPair
 from .e5071c import e5071c
@@ -39,6 +39,7 @@ __all__ = [
     "CircuitElement",
     "cryomagnetics4G",
     "CM4GChannel",
+    "CM4GDrivenChannel",
     "CalibratedChannel",
     "dtgCompPair",
     "dtg5274",

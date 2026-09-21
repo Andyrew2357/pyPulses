@@ -137,7 +137,7 @@ from .initialize import (
 )
 
 # Measurement functions
-from .measure import cap_measure, CapMeasureResult
+from .measure import cap_measure, CapMeasureResult, CapQuery
 from .balance import cap_balance, CapBalanceResult
 
 # Differential balance
@@ -172,6 +172,7 @@ __all__ = [
     'CapMeasureResult',
     'cap_balance',
     'CapBalanceResult',
+    'CapQuery',
     # Differential balance
     'differential_balance',
     'DifferentialBalanceResult',
