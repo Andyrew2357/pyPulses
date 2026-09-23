@@ -433,7 +433,11 @@ class HeatmapPane(Pane):
     ):
         super().__init__(name)
         self.channel = channel
-        self.shape = shape
+        # Coerce to plain Python ints: callers commonly pass a scan's
+        # `dimensions` (a numpy int array), and numpy scalars aren't
+        # JSON-serializable -- left as-is, every /state poll after a
+        # HeatmapPane is added would raise inside the request handler.
+        self.shape = tuple(int(s) for s in shape)
         self.idx_axes = idx_axes
         self.xlabel = xlabel
         self.ylabel = ylabel

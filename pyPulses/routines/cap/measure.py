@@ -45,25 +45,41 @@ class CapQuery():
     Query for a capacitance measure result to be used in a Measurement.
     """
 
+    # Each value is a list, one entry per output column that key
+    # contributes. Widths must match the actual data CapMeasureResult
+    # produces: Cex/Closs/Lx/Ly are scalars (width 1); A is the compressed
+    # complex gain [X, Y] returned by CapFilter.get_A() (width 2, not the
+    # full 2x2 K matrix -- cap_measure() never exposes that per-reading).
     NAMES = {
+        'Cex': ['Cex'],
+        'Closs': ['Closs'],
+        'Lx': ['Lx'],
+        'Ly': ['Ly'],
+        'A': ['A_re', 'A_im'],
+    }
+
+    # Maps an `included` key to the CapMeasureResult attribute it reads.
+    # Only 'Lx'/'Ly' differ from their own name -- CapMeasureResult stores
+    # them as LX/LY.
+    _ATTRS = {
         'Cex': 'Cex',
         'Closs': 'Closs',
-        'Lx': 'Lx',
-        'Ly': 'Ly',
-        'A': ['A11', 'A21', 'A12', 'A22'],
+        'Lx': 'LX',
+        'Ly': 'LY',
+        'A': 'A',
     }
 
     LONG_NAMES = {
-        'Cex': R'$C/C_\text{std}$',
-        'Closs': R'$C_\text{loss}/C_\text{std}$',
-        'Lx': R'$L_x$',
-        'Ly': R'$L_y$',
-        'A': [R'$A_{11}$', R'$A_{21}$', R'$A_{12}$', R'$A_{22}$'],
+        'Cex': [R'$C/C_\text{std}$'],
+        'Closs': [R'$C_\text{loss}/C_\text{std}$'],
+        'Lx': [R'$L_x$'],
+        'Ly': [R'$L_y$'],
+        'A': [R'$\Re(A)$', R'$\Im(A)$'],
     }
 
-    def __init__(self, 
-        ctx: 'CapContext', 
-        use_matrix: bool = True, 
+    def __init__(self,
+        ctx: 'CapContext',
+        use_matrix: bool = True,
         lazy: bool = False,
         lockin_unit: str = 'uV',
     ):
@@ -72,11 +88,11 @@ class CapQuery():
         self.lazy = lazy
         self.included = ['Cex', 'Closs', 'Lx', 'Ly', 'A']
         self.UNITS = {
-            'Cex': None,
-            'Closs': None,
-            'Lx': lockin_unit,
-            'Ly': lockin_unit,
-            'A': [None, None, None, None],
+            'Cex': [None],
+            'Closs': [None],
+            'Lx': [lockin_unit],
+            'Ly': [lockin_unit],
+            'A': [None, None],
         }
 
     @property
@@ -86,7 +102,7 @@ class CapQuery():
             name.extend(self.NAMES[k])
         return name
 
-    @property 
+    @property
     def long_name(self):
         long_name = []
         for k in self.included:
@@ -101,9 +117,23 @@ class CapQuery():
         return unit
 
     def __call__(self):
-        r = cap_measure(self.ctx)
-        return [getattr(r, k) for k in self.included]
-    
+        r = cap_measure(self.ctx, use_matrix=self.use_matrix)
+        out = []
+        for k in self.included:
+            val = getattr(r, self._ATTRS[k])
+            if np.ndim(val) == 0:
+                out.append(float(val))
+            else:
+                # e.g. 'A' -> CapMeasureResult.A, a (2,) array [X, Y].
+                # Flatten so the returned list stays one entry per
+                # declared column (matches NAMES[k]'s width).
+                out.extend(float(v) for v in np.ravel(val))
+        return out
+
+    def measure(self):
+        """Satisfies the QuerySignature protocol used by core.Measurement."""
+        return self()
+
 
 def cap_measure(ctx: 'CapContext', use_matrix: bool = True) -> CapMeasureResult:
     """
