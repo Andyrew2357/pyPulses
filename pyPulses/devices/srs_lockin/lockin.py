@@ -10,6 +10,8 @@ from .base import (
     SyncFilterMixin,
 )
 from ..registry import register_hardware_class
+from ..errors import RecoverableError, is_recoverable
+from ..pyvisa_device import DeviceCommunicationError
 
 # Backward-compat aliases; prefer lockin_channel / series_correlated_covariance
 # (pyPulses.devices.lockin.channels).
@@ -234,6 +236,12 @@ class sr850(
         super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
 
 
+class AcquisitionError(RecoverableError):
+    """A buffered acquisition failed, but the capture was stopped and the
+    host-side acquisition state reset: that acquisition's data is lost and
+    the next one can start normally."""
+
+
 @dataclass
 class srs_acquisition:
     ready       : bool  = False  # Is the acquisition set up?
@@ -260,6 +268,9 @@ class sr860(
     """Class representation of the SR860 DSP Lock-in"""
 
     _name = 'SR860'
+
+    # Compared before/after every USBTMC device clear (see pyvisaDevice).
+    USBTMC_SYNC_QUERY = '*IDN?'
 
     DEFAULT_PYVISA_CONFIG = {
         'output_buffer_size': 512,
@@ -570,6 +581,19 @@ class sr860(
         self._acquisition.running = False
         self.info("Stopped data acquisition.")
 
+    def _abort_acquisition(self) -> bool:
+        """Best-effort stop after an error. Never raises; always clears the
+        host-side running flag so the next acquisition can start. Returns
+        True if CAPTURESTOP was delivered."""
+        try:
+            self.write("CAPTURESTOP")
+            return True
+        except Exception as e:
+            self.error(f"CAPTURESTOP failed while aborting acquisition: {e!r}")
+            return False
+        finally:
+            self._acquisition.running = False
+
     def _get_buffered_data(self, max_tries: int = 5) -> np.ndarray:
         """
         Get buffered data.
@@ -583,38 +607,60 @@ class sr860(
                 "Cannot get buffered from an acquisition not in progress."
             )
 
-        start_time = time.time()
-        bytes_per_sample = {'X': 2, 'XY': 4, 'RT': 4, 'XYRT': 8}[self._acquisition.data_config]
-        expected_time = (self._acquisition.buffer_size * 1024 \
-                         * self._acquisition.sampint / bytes_per_sample)
-        time.sleep(0.9 * expected_time)
-        seen = defaultdict(int)
-        while True:
-            n = int(self.query("CAPTUREBYTES?"))
-            if n >= 1024 * self._acquisition.buffer_size:
-                break
+        # Anything escaping between CAPTURESTART and CAPTURESTOP (an error
+        # that survived USBTMC recovery, a timeout, Ctrl-C during the sleep)
+        # would otherwise leave the capture running on the instrument and
+        # _acquisition.running stuck at True.
+        try:
+            start_time = time.time()
+            bytes_per_sample = {'X': 2, 'XY': 4, 'RT': 4, 'XYRT': 8}[self._acquisition.data_config]
+            expected_time = (self._acquisition.buffer_size * 1024 \
+                             * self._acquisition.sampint / bytes_per_sample)
+            time.sleep(0.9 * expected_time)
+            seen = defaultdict(int)
+            while True:
+                n = int(self.query("CAPTUREBYTES?"))
+                if n >= 1024 * self._acquisition.buffer_size:
+                    break
 
-            seen[n] += 1
-            if seen[n] > 3 or \
-                time.time() - start_time > self._acquisition.timeout:
+                seen[n] += 1
+                if seen[n] > 3 or \
+                    time.time() - start_time > self._acquisition.timeout:
 
-                self.error(f"Insufficient progess waiting for acquisition.")
-                self._stop_acquisition()
-                break
+                    self._stop_acquisition()
+                    raise AcquisitionError(
+                        f"Insufficient progress waiting for acquisition: "
+                        f"{n} of {1024 * self._acquisition.buffer_size} bytes "
+                        f"captured."
+                    )
 
-            delay = max((1024 * self._acquisition.buffer_size - n) \
-                        * self._acquisition.sampint / bytes_per_sample, 0.05)
-            self.info(f"Waiting for {delay:.2f} s to acquire data.")
-            time.sleep(delay)
+                delay = max((1024 * self._acquisition.buffer_size - n) \
+                            * self._acquisition.sampint / bytes_per_sample, 0.05)
+                self.info(f"Waiting for {delay:.2f} s to acquire data.")
+                time.sleep(delay)
 
-        self._stop_acquisition()
+            self._stop_acquisition()
+        except BaseException as e:
+            if self._acquisition.running and not self._abort_acquisition():
+                # The capture may still be running on the instrument, so a
+                # recoverable error from below no longer is.
+                if is_recoverable(e):
+                    raise DeviceCommunicationError(
+                        "Acquisition failed and CAPTURESTOP could not be "
+                        "delivered; instrument state is unknown."
+                    ) from e
+            raise
+
         chunk_kb = 16
         total_kb = self._acquisition.buffer_size
         chunks = []
         for start_kb in range(0, total_kb, chunk_kb):
             size_kb = min(chunk_kb, total_kb - start_kb)
-            self.write(f"CAPTUREGET? {start_kb},{size_kb}")
-            chunk_data = self.device.read_binary_values(
+            # One atomic, retryable transaction per chunk. The capture has
+            # already been stopped, so the buffer is static and re-issuing a
+            # chunk after a USBTMC clear returns the same data.
+            chunk_data = self.query_binary_values(
+                f"CAPTUREGET? {start_kb},{size_kb}",
                 datatype = 'f',
                 is_big_endian = False,
                 container = np.array,

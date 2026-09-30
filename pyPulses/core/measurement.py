@@ -18,6 +18,7 @@ Measurement
 from __future__ import annotations
 
 from ..devices.registry import format_reference, resolve_reference
+from ..devices.errors import is_recoverable
 
 import datetime
 import warnings
@@ -163,6 +164,14 @@ class Query:
             lazy = d.get('lazy', False),
         )
 
+@dataclass
+class QueryFailure:
+    """A query that failed recoverably at one point; its columns are NaN."""
+    name: str | List[str]
+    error: BaseException
+    attempts: int
+
+
 class Measurement:
     """
     Orchestrates a collection of Query objects at a single point in parameter 
@@ -193,6 +202,11 @@ class Measurement:
         Called after readings are taken. Signature:
             f(idx, coords, measured, timestamp) -> Any
         where measured is a Dict[str, float] keyed by column name.
+    query_retries : int, default=1
+        Extra attempts for a query that raises a *recoverable* error (see
+        devices.errors). If every attempt fails, that query's columns are NaN
+        and the failure is recorded in `last_failures`; the other queries at
+        the point are unaffected. Non-recoverable errors always propagate.
     """
 
     def __init__(self,
@@ -200,8 +214,13 @@ class Measurement:
         time_per_point: float = 0.0,
         pre_callbacks: List[Callable] | None = None,
         post_callbacks: List[Callable] | None = None,
+        query_retries: int = 1,
     ):
         self._queries = list(queries)
+        self.query_retries = query_retries
+
+        # Recoverable failures from the most recent measure() call
+        self.last_failures: List[QueryFailure] = []
         self.time_per_point = time_per_point
         self._pre_callbacks = list(pre_callbacks  or [])
         self._post_callbacks = list(post_callbacks or [])
@@ -296,30 +315,61 @@ class Measurement:
 
     """Core measurement"""
 
+    def _measure_query(self, q: QuerySignature):
+        """
+        Measure one query with up to `query_retries` extra attempts on
+        recoverable errors. Returns (values, None) on success or
+        (None, QueryFailure) if every attempt failed recoverably.
+        Non-recoverable errors propagate on the first occurrence.
+        """
+        attempts = 1 + max(0, self.query_retries)
+        last: BaseException | None = None
+        for _ in range(attempts):
+            try:
+                return np.atleast_1d(q.measure()), None
+            except Exception as e:
+                if not is_recoverable(e):
+                    raise
+                last = e
+        return None, QueryFailure(name=q.name, error=last, attempts=attempts)
+
     def _collect(self) -> np.ndarray:
         """
         Take readings from all queries, threading lazy ones concurrently with 
-        eager ones. Returns a flat ndarray of length num_cols.
+        eager ones. Returns a flat ndarray of length num_cols; columns of
+        queries that failed recoverably are NaN and listed in last_failures.
         """
         result = np.full(self.num_cols, fill_value=np.nan, dtype=float)
+        failures: List[QueryFailure] = []
+
+        def _store(s, w, outcome):
+            values, failure = outcome
+            if failure is None:
+                result[s:s + w] = values
+            else:
+                failures.append(failure)
 
         eager = [(s, w, q) for s, w, q in self._layout if not q.lazy]
         lazy = [(s, w, q) for s, w, q in self._layout if q.lazy]
 
         if lazy:
+            # If anything below raises, leaving the with-block still waits for
+            # every lazy query, so no instrument I/O outlives this call.
             with ThreadPoolExecutor(max_workers=len(lazy)) as ex:
-                futures = [(s, w, ex.submit(q.measure)) for s, w, q in lazy]
+                futures = [(s, w, ex.submit(self._measure_query, q))
+                           for s, w, q in lazy]
 
                 # Run eager queries on the main thread while lazy ones execute
                 for s, w, q in eager:
-                    result[s:s + w] = np.atleast_1d(q.measure())
+                    _store(s, w, self._measure_query(q))
 
                 for s, w, fut in futures:
-                    result[s:s + w] = np.atleast_1d(fut.result())
+                    _store(s, w, fut.result())
         else:
             for s, w, q in eager:
-                result[s:s + w] = np.atleast_1d(q.measure())
+                _store(s, w, self._measure_query(q))
 
+        self.last_failures = failures
         return result
 
     def measure(self,
@@ -393,6 +443,7 @@ class Measurement:
             'time_per_point': self.time_per_point,
             'pre_callbacks': pre_refs,
             'post_callbacks': post_refs,
+            'query_retries': self.query_retries,
         }
 
     @classmethod
@@ -417,4 +468,5 @@ class Measurement:
             time_per_point = d.get('time_per_point', 0.0),
             pre_callbacks = _resolve_callbacks(d.get('pre_callbacks',  []), 'pre_callback'),
             post_callbacks = _resolve_callbacks(d.get('post_callbacks', []), 'post_callback'),
+            query_retries = d.get('query_retries', 1),
         )

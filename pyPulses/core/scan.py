@@ -180,13 +180,20 @@ class ScanBase(ABC):
         end_arr = np.array([target[ch.name] for ch in ordered_channels])
         wait = _derive_wait(ordered_channels, min_wait)
 
-        _tandemSweep(
-            channels = ordered_channels,
-            start = start_arr,
-            end = end_arr,
-            wait = wait,
-            **self.ramp_kwargs,
-        )
+        try:
+            _tandemSweep(
+                channels = ordered_channels,
+                start = start_arr,
+                end = end_arr,
+                wait = wait,
+                **self.ramp_kwargs,
+            )
+        except BaseException:
+            # The ramp stopped somewhere between start and target. Drop the
+            # cache so the next move_to reads the true position from hardware
+            # instead of ramping from a stale start (which would step).
+            self._current_coords = None
+            raise
 
         self._current_coords = dict(target)
 

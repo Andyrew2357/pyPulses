@@ -828,6 +828,7 @@ def cap_initialize_filter(
     ctx.extrapolator.Vstd_range = ctx.Vstd_range
     ctx.extrapolator.clear()
     ctx.extrapolator.push(result.V0.real, result.V0.imag)
+    ctx._Vstd_now = None
 
     kind = 'three' if isinstance(result, ThreePointBalanceResult) else 'two'
     ctx.log(

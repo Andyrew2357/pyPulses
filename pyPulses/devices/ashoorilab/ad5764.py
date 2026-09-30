@@ -13,8 +13,8 @@ from typing import Any, Dict, Tuple
 class ad5764(pyvisaDevice):
     """
     Class representation of the Arduino-AD5764 DC box.
-    
-    The instrument in question has an Arduino Uno connected to the Analog Devices 
+
+    The instrument in question has an Arduino Uno connected to the Analog Devices
     DAC that takes serial bus input to set 16-bit bipolar DC outputs on 8 channels.
     """
 
@@ -24,22 +24,23 @@ class ad5764(pyvisaDevice):
         'parity': pyvisa.constants.Parity.none,
         'stop_bits': pyvisa.constants.StopBits.two,
         'flow_control': pyvisa.constants.VI_ASRL_FLOW_NONE,
-        'write_buffer_size': 512,
-        'max_retries': 1,
-        'min_interval': 0.05
+        'output_buffer_size': 512,
+        'max_retries': 3,
+        'min_interval': 0.05,
     }
 
     hard_max_V = 10.
     hard_min_V = -10.
+    command_settle = 0.0
 
-    def __init__(self, 
-        resource_name: str, 
+    def __init__(self,
+        resource_name: str,
         registry_id: str | None = None,
         logger: Logger | None = None,
         skip_connect: bool = False,
         **kwargs,
     ):
-        
+
         """
         Parameters
         ----------
@@ -61,7 +62,7 @@ class ad5764(pyvisaDevice):
         # sweep parameters
         self.max_step = 0.05
         self.wait = 0.1
-        
+
         # mapping for controlling the instrument channels via serial bus
         self.channel_map = {
             0: (19, 0),
@@ -79,7 +80,7 @@ class ad5764(pyvisaDevice):
         if not skip_connect:
             time.sleep(3.0) # wait a little; otherwise the first query may fail
 
-    def _serailize_state(self) -> Dict[str, Any]:
+    def _serialize_state(self) -> Dict[str, Any]:
         """
         Serialize all state needed to reconstruct and restore this device.
         """
@@ -91,11 +92,12 @@ class ad5764(pyvisaDevice):
             'max_step': self.max_step,
             'step_wait': self.wait,
         })
+        return config
 
     def _deserialize_state(self, state: Dict[str, Any]):
         """
         Restore device state from serialized config.
-        
+
         Called when device already exists and we want to apply saved settings.
         """
 
@@ -103,7 +105,7 @@ class ad5764(pyvisaDevice):
         if 'max_V' in state:
             self.max_V = state['max_V']
         if 'min_V' in state:
-            self.min_V = state['max_V']
+            self.min_V = state['min_V']
         if 'max_step' in state:
             self.max_step = state['max_step']
         if 'step_wait' in state:
@@ -113,7 +115,7 @@ class ad5764(pyvisaDevice):
     def from_config(cls, config: Dict[str, Any]) -> 'ad5764':
         """
         Construct from serialized config.
-        
+
         Parameters
         ----------
         config : dict
@@ -123,14 +125,14 @@ class ad5764(pyvisaDevice):
         # Extract required fields
         registry_id = config.pop('registry_id')
         resource_name = config.pop('resource_name')
-        
+
         # Construct instance
         instance = cls(
             resource_name=resource_name,
             registry_id=registry_id,
             skip_connect=False,
             **config  # Remaining kwargs go to pyvisaDevice
-        )        
+        )
         instance._deserialize_state(config)
 
         return instance
@@ -144,11 +146,11 @@ class ad5764(pyvisaDevice):
             return None
         return ad5764_channel(self, accessor, ch)
 
-    def sweep_V(self, ch: int, V: float, 
+    def sweep_V(self, ch: int, V: float,
                 max_step: float = None, wait: float = None):
         """
         Sweep DC value of a given channel smoothly to the target.
-        
+
         Parameters
         ----------
         ch : int
@@ -164,7 +166,7 @@ class ad5764(pyvisaDevice):
         if ch not in self.channel_map:
             self.error(f"AD5764 does not have a channel {ch}.")
             return
-        
+
         if V > self.max_V[ch] or V < self.min_V[ch]:
             Vt = min(self.max_V[ch], max(self.min_V[ch], V))
             self.warn(
@@ -184,10 +186,10 @@ class ad5764(pyvisaDevice):
         for v in np.linspace(start, V, num_step + 1)[1:]:
             time.sleep(wait)
             self.set_V(ch, v, chatty = False)
-        
+
         self.info(f"Channel Settings: {self.V}")
 
-    def get_V(self, ch: int):    
+    def get_V(self, ch: int):
         """
         Get the DC value on a given channel.
 
@@ -199,24 +201,24 @@ class ad5764(pyvisaDevice):
         Returns
         -------
         V : float
-            voltage on the target channel Note: This is not a true query. It 
-            simply returns what is saved on the computer. There is currently 
+            voltage on the target channel Note: This is not a true query. It
+            simply returns what is saved on the computer. There is currently
             no way to ask the arduino directly.
         """
 
         if ch not in self.channel_map:
             self.error(f"AD5764 does not have a channel {ch}.")
             return None
-        
+
         if self.V[ch] is None:
             return self._true_query(ch)
-        
+
         return self.V[ch]
 
     def set_V(self, ch, V, chatty = True):
         """
         Set the DC value of a given channel.
-        
+
         Parameters
         ----------
         ch : int
@@ -231,7 +233,7 @@ class ad5764(pyvisaDevice):
         if ch not in self.channel_map:
             self.error(f"AD5764 does not have a channel {ch}.")
             return
-        
+
         if V > self.max_V[ch] or V < self.min_V[ch]:
             Vt = min(self.max_V[ch], max(self.min_V[ch], V))
             self.warn(
@@ -251,64 +253,39 @@ class ad5764(pyvisaDevice):
         # Convert to 16-bit binary
         # Using numpy's binary_repr to ensure 16-bit representation
         bin16 = np.binary_repr(dec16, width=16)
-        # Using format
-        # bin16 = format(int(dec16), '016b')
-        
+
         # Split into two 8-bit parts and convert back to decimal
         # First 8 bits (MSB)
         d1 = int(bin16[:8], 2)
         # Second 8 bits (LSB)
         d2 = int(bin16[8:], 2)
-        
+
         # Create command sequence
         command = bytes([255, 254, 253, n1, d1, d2, n2, d1, d2])
 
         try:
-            # Write to instrument using PyVISA
-            self.write_raw(command)
-            
-            # Clear the read buffer
-            try:
-                self.read_raw()
-            except pyvisa.errors.VisaIOError:
-                pass  # No data available to read
-            self.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
-                
-            self.V[ch] = float(V)
-            if chatty:
-                self.info(f"Channel Settings: {self.V}")
-                
+            self.transact(command, settle=self.command_settle)
         except Exception as e:
             self.error(f"Error when writing to AD5764: {e}")
-            self.error(f"Attempting to refresh the connection.")
-            
-            # Attempt to refresh the connection
+            self.error("Attempting to refresh the connection.")
             self.refresh()
+            time.sleep(3.0)  # let the Arduino reboot 
+            self.transact(command, settle=self.command_settle)
 
-            # Write to instrument using PyVISA
-            self.write_raw(command)
-            
-            # Clear the read buffer
-            try:
-                self.read_raw()
-            except pyvisa.errors.VisaIOError:
-                pass  # No data available to read
-            self.flush(pyvisa.constants.VI_WRITE_BUF_DISCARD)
-                
-            self.V[ch] = float(V)
-            if chatty:
-                self.info(f"Channel Settings: {self.V}")
+        self.V[ch] = float(V)
+        if chatty:
+            self.info(f"Channel Settings: {self.V}")
 
     def set_channel_lim(self, ch: int, lim: Tuple[float | None, float | None]):
         """
         Manually set the voltage limits for a channel
-        
+
         Parameters
         ----------
         ch : int
             target channel.
         lim : tuple of float or None
-            channel voltage limits (low, high). If either 'low' or 'high' is 
+            channel voltage limits (low, high). If either 'low' or 'high' is
             None, the class' extreme will be used.
         """
 
@@ -323,7 +300,7 @@ class ad5764(pyvisaDevice):
         vl = max(self.hard_min_V, vl)
         self.max_V[ch] = float(vh)
         self.min_V[ch] = float(vl)
-        
+
         self.info(f"Set hard channel {ch} limits to [{vl}, {vh}] V")
 
     def _true_query(self, ch: int):
@@ -346,43 +323,22 @@ class ad5764(pyvisaDevice):
         }
         nc1, nc2 = getter_map[ch]
 
-        # First query: ask
-        bufferAsk = bytes([255, 254, 253, nc1, 0, 0, nc2, 0, 0])
-        self.write_raw(bufferAsk)
-        time.sleep(0.01)
+        try:
+            bufferAsk = bytes([255, 254, 253, nc1, 0, 0, nc2, 0, 0])
+            self.transact(bufferAsk, settle=0.01)
 
-        # Clear any response
-        while True:
-            try:
-                self.device.read_raw()
-            except pyvisa.errors.VisaIOError:
-                break
+            # Second: ask for the 6 integers, as readIntData() expected.
+            bufferRead = bytes([255, 254, 253, 0, 0, 0, 0, 0, 0])
+            lines = self.transact(bufferRead, n_response_lines=6, settle=0.02)
+        except Exception as e:
+            self.error(f"Failed to query channel {ch}: {e}")
+            return None
 
-        # Second query: read
-        bufferRead = bytes([255, 254, 253, 0, 0, 0, 0, 0, 0])
-        self.write_raw(bufferRead)
-        time.sleep(0.02)
-
-        # Read 6 integers like readIntData() did
-        buff = []
-        for _ in range(6):
-            try:
-                line = self.read().strip()
-            except pyvisa.errors.VisaIOError:
-                self.error("Timeout while reading from Arduino.")
-                return None
-            
-            if not line:
-                self.error("Got empty line from Arduino.")
-                return None
-            
-            try: 
-                val = int(line)
-            except ValueError:
-                self.error(f"Malformed integer from Arduino: {line!r}")
-                return None
-            
-            buff.append(val)
+        try:
+            buff = [int(x) for x in lines]
+        except ValueError:
+            self.error(f"Malformed integer from Arduino: {lines!r}")
+            return None
 
         # Parse according to chanCode1/chanCode2
         if nc1 == 0 and nc2 != 0:
@@ -411,7 +367,7 @@ class ad5764(pyvisaDevice):
 
     def _true_query_state(self):
         """Query the actual DAC voltages from the Arduino."""
-                
+
         for ch in range(8):
             v = self._true_query(ch)
             if v is None:

@@ -125,6 +125,8 @@ class CapContext():
         self.Theta(theta_deg % 360)
         r_set = self.Vstd()
         theta_set = self.Theta()
+        rad = np.deg2rad(theta_set)
+        self._Vstd_now = complex(r_set * np.cos(rad), r_set * np.sin(rad))
         return float(r_set), float(theta_set)
 
     def get_Vstd_complex(self) -> complex:

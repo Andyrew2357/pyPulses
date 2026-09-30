@@ -26,7 +26,8 @@ from typing import TYPE_CHECKING
 import datetime
 import logging
 import time
-from typing import Callable, Dict, List
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 
@@ -36,6 +37,53 @@ from .job import checkpoint, Job
 
 if TYPE_CHECKING:
     from .sidecar import Sidecar
+
+_module_logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ErrorPolicy:
+    """
+    How much recoverable failure a scan tolerates before stopping.
+
+    Only failures that reach the runner as Measurement.last_failures count:
+    queries that raised a *recoverable* error (see devices.errors) on every
+    attempt. Anything non-recoverable, and any error while moving hardware,
+    stops the scan immediately regardless of this policy.
+
+    Parameters
+    ----------
+    max_consecutive_failed_points : int, default=3
+        Abort when this many points in a row have at least one failed query.
+        Stray errors are isolated; a persistent fault shows up as a streak.
+    max_failed_points : int or None, default=None
+        Abort when the total number of points with a failed query reaches
+        this. None means no total limit.
+    """
+    max_consecutive_failed_points: int = 3
+    max_failed_points: int | None = None
+
+
+@dataclass
+class PointError:
+    """One recoverable query failure recorded during a scan."""
+    idx: Tuple[int, ...]
+    coords: Dict[str, float]
+    query: str | List[str]
+    error: BaseException
+    attempts: int
+    timestamp: datetime.datetime | None
+
+
+class ScanAbortedError(RuntimeError):
+    """
+    Raised when an ErrorPolicy limit is exceeded. `resume_idx` is the first
+    point of the failing streak; pass it as start_idx to retake those points.
+    """
+    def __init__(self, msg: str, resume_idx: np.ndarray):
+        super().__init__(msg)
+        self.resume_idx = resume_idx
+
 
 def _is_new_line(idx: np.ndarray) -> bool:
     """True when a new outermost line has started."""
@@ -68,6 +116,18 @@ class Runner:
     plot : bool, default=False
         If True, notifies the session Sidecar (via Sidecar.instance()) after
         each point. The sidecar is never stored in _observers.
+    error_policy : ErrorPolicy, optional
+        Tolerance for recoverable query failures. Defaults to ErrorPolicy().
+        Failed queries leave NaN in their columns; details are collected in
+        `self.errors`.
+
+    Attributes
+    ----------
+    errors : list of PointError
+        Recoverable failures from the current / most recent run or record.
+    result : ndarray or None
+        The result array of the current / most recent run(), kept here so
+        the data taken before an abort is not lost.
     """
 
     def __init__(self,
@@ -80,6 +140,7 @@ class Runner:
         observers: List[Callable] | None = None,
         logger: logging.Logger | None = None,
         plot: bool = False,
+        error_policy: ErrorPolicy | None = None,
     ):
         self.scan = scan
         self.measurement = measurement
@@ -93,6 +154,10 @@ class Runner:
 
         # Set by configure_sidecar
         self._sidecar_clear_on_new_line: bool = False
+
+        self.error_policy = error_policy or ErrorPolicy()
+        self.errors: List[PointError] = []
+        self.result: np.ndarray | None = None
 
     """Observer management"""
 
@@ -145,59 +210,82 @@ class Runner:
         dims = self.scan.dimensions
         n_meas = self.measurement.num_cols
 
+        self.result = None
         if self.retain_return:
             result = np.full(
                 shape=(*dims, n_meas),
                 fill_value=np.nan,
                 dtype=float,
             )
+            self.result = result
 
         reached_start = self.start_idx is None
         points_taken = 0
         start_time = time.time()
+        self._reset_failure_state()
+        current_idx = None
 
-        for idx, coords in self.scan._iter():
-            checkpoint()
+        try:
+            for idx, coords in self.scan._iter():
+                checkpoint()
 
-            # Resume logic
-            if not reached_start:
-                if np.array_equal(idx, self.start_idx):
-                    reached_start = True
-                else:
-                    continue
+                # Resume logic
+                if not reached_start:
+                    if np.array_equal(idx, self.start_idx):
+                        reached_start = True
+                    else:
+                        continue
 
-            # Move hardware
-            self.scan.move_to(coords, min_wait=self.min_wait)
+                current_idx = idx
 
-            # Timestamp
-            now = datetime.datetime.now() if self.timestamp else None
+                # Move hardware. Errors here are never tolerated: the
+                # position is uncertain (move_to has dropped its cache).
+                self.scan.move_to(coords, min_wait=self.min_wait)
 
-            # Measure
-            measured_arr = self.measurement.measure(idx, coords, now)
+                # Timestamp
+                now = datetime.datetime.now() if self.timestamp else None
 
-            # Write into result array
-            if self.retain_return:
-                result[(*idx,)] = measured_arr
+                # Measure (recoverable query failures come back as NaN)
+                measured_arr = self.measurement.measure(idx, coords, now)
 
-            # Named dict for observers and sidecar
-            measured_dict: Dict[str, float] = dict(
-                zip(self.measurement.col_names, measured_arr)
-            )
+                # Write into result array
+                if self.retain_return:
+                    result[(*idx,)] = measured_arr
 
-            # Regular observers
-            for obs in self._observers:
-                obs(idx, coords, measured_dict, now)
+                # Named dict for observers and sidecar
+                measured_dict: Dict[str, float] = dict(
+                    zip(self.measurement.col_names, measured_arr)
+                )
 
-            # Bespoke sidecar notification
-            if self.plot:
-                sidecar = Sidecar.instance()
-                if sidecar is not None:
-                    if self._sidecar_clear_on_new_line and _is_new_line(idx):
-                        sidecar.clear(frame=0)
-                    sidecar(idx, coords, measured_dict, now)
+                # Regular observers
+                for obs in self._observers:
+                    obs(idx, coords, measured_dict, now)
 
-            points_taken += 1
-            self._log_progress(points_taken, start_time)
+                # Bespoke sidecar notification
+                if self.plot:
+                    sidecar = Sidecar.instance()
+                    if sidecar is not None:
+                        if self._sidecar_clear_on_new_line and _is_new_line(idx):
+                            sidecar.clear(frame=0)
+                        sidecar(idx, coords, measured_dict, now)
+
+                points_taken += 1
+                self._log_progress(points_taken, start_time)
+
+                # Apply the error policy after the point is fully recorded
+                self._account_failures(idx, coords, now)
+
+        except ScanAbortedError:
+            raise
+        except BaseException as e:
+            if current_idx is not None:
+                self._warn(
+                    f"Scan stopped at idx {tuple(int(i) for i in current_idx)} "
+                    f"({type(e).__name__}: {e}). Data so far is in "
+                    f"runner.result; resume with "
+                    f"start_idx=np.array({[int(i) for i in current_idx]})."
+                )
+            raise
 
         if self.retain_return:
             return result
@@ -237,6 +325,7 @@ class Runner:
         rows: list[np.ndarray] = []
         points_taken = 0
         start_time = time.time()
+        self._reset_failure_state()
 
         while True:
             checkpoint()
@@ -267,6 +356,7 @@ class Runner:
                     sidecar(idx, {}, measured_dict, now)
 
             points_taken += 1
+            self._account_failures(idx, {}, now)
 
         if self.retain_return:
             if rows:
@@ -282,11 +372,78 @@ class Runner:
             for i, name in enumerate(self.measurement.col_names)
         }
 
+    """Error policy"""
+
+    def _reset_failure_state(self) -> None:
+        self.errors = []
+        self._failed_points = 0
+        self._streak = 0
+        self._streak_start: np.ndarray | None = None
+
+    def _account_failures(self,
+        idx: np.ndarray,
+        coords: Dict[str, float],
+        now: datetime.datetime | None,
+    ) -> None:
+        """
+        Record the recoverable failures from the point just measured and
+        raise ScanAbortedError if the error policy is exceeded.
+        """
+        failures = self.measurement.last_failures
+        if not failures:
+            self._streak = 0
+            self._streak_start = None
+            return
+
+        if self._streak == 0:
+            self._streak_start = np.array(idx, copy=True)
+        self._streak += 1
+        self._failed_points += 1
+
+        idx_t = tuple(int(i) for i in idx)
+        for f in failures:
+            self.errors.append(PointError(
+                idx = idx_t,
+                coords = dict(coords),
+                query = f.name,
+                error = f.error,
+                attempts = f.attempts,
+                timestamp = now,
+            ))
+            self._warn(
+                f"Point {idx_t}: query {f.name!r} failed {f.attempts}x "
+                f"({f.error!r}); its columns are NaN."
+            )
+
+        p = self.error_policy
+        reason = None
+        if self._streak >= p.max_consecutive_failed_points:
+            reason = f"{self._streak} consecutive points failed"
+        elif p.max_failed_points is not None and \
+                self._failed_points >= p.max_failed_points:
+            reason = f"{self._failed_points} points failed in total"
+        if reason is None:
+            return
+
+        resume = self._streak_start if self._streak_start is not None \
+            else np.array(idx, copy=True)
+        msg = (
+            f"Scan aborted by error policy: {reason}. Last error: "
+            f"{failures[-1].error!r}. See runner.errors; data so far is in "
+            f"runner.result. Resume with "
+            f"start_idx=np.array({[int(i) for i in resume]})."
+        )
+        self._warn(msg)
+        raise ScanAbortedError(msg, resume_idx=resume) from failures[-1].error
+
     """Logging"""
 
     def _log(self, msg: str) -> None:
         if self._logger is not None:
             self._logger.info(msg)
+
+    def _warn(self, msg: str) -> None:
+        (self._logger or _module_logger).warning(msg)
 
     def _log_progress(self, points_taken: int, start_time: float) -> None:
         if self._logger is None:
