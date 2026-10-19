@@ -11,6 +11,7 @@ import pyvisa
 import pyvisa.constants
 import pyvisa.errors
 import re
+import sys
 import time
 from contextlib import contextmanager
 from threading import RLock
@@ -227,7 +228,7 @@ class pyvisaDevice(abstractDevice):
             interface_type = 'OTHER'
 
         # Open resource
-        rm = pyvisa.ResourceManager('@py')
+        rm = pyvisa.ResourceManager('@ivi' if sys.platform == 'win32' else '@py')
         self.device = rm.open_resource(resource_name)
 
         # Common configuration
