@@ -27,6 +27,7 @@ from .n9010a import n9010a
 from .ashoorilab.pcm1704 import pcm1704
 from .ashoorilab.pid_dcbox import PIDbox
 from .pulse_pair import pulsePair
+from .registry import HardwareRegistry, DeviceRegistry, RackState
 from .srs_lockin.lockin import (sr830, sr844, sr850, sr860, sr865a)
 from .sweepable_channel import SweepableChannel, SweepConfig
 from .wfatd import wfAverager, wfBalance, wfJump, wfSlope
@@ -41,11 +42,13 @@ __all__ = [
     "CM4GChannel",
     "CM4GDrivenChannel",
     "CalibratedChannel",
+    "DeviceRegistry",
     "dtgCompPair",
     "dtg5274",
     "e5071c",
     "FastFlight2",
     "FixedAttenuator",
+    "HardwareRegistry",
     "HEMTCommonSource",
     "hf2li",
     "hf2liACout",
@@ -69,6 +72,7 @@ __all__ = [
     "pulsePair",
     "PulseShaperCalibration",
     "PulseShaperCalibrationResult",
+    "RackState",
     "ResistiveElement",
     "sr830",
     "sr844",

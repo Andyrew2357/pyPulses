@@ -157,6 +157,7 @@ from .scan import (
     ScanPoints,
     ScanGrid,
     ScanParallelepiped,
+    ScanStack,
     ScanArbitrary,
 )
 
@@ -200,6 +201,7 @@ __all__ = [
     "ScanPoints",
     "ScanGrid",
     "ScanParallelepiped",
+    "ScanStack",
     "ScanArbitrary",
     # Measurement
     "Query",

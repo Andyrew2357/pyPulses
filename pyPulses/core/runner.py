@@ -14,6 +14,10 @@ The Runner owns:
 Observers are callables with signature:
     f(idx, coords, measured, timestamp) -> Any
 
+Transitions are callables with signature:
+    f(scan, idx, target, min_wait) -> None
+called before the runner moves to each point (see Transition).
+
 The sidecar (when plot=True) is notified after observers via Sidecar.instance()
 rather than being stored in _observers, and receives special treatment:
 clear(frame=0) is called at the start of each new outermost scan line when
@@ -27,7 +31,7 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Protocol, Tuple
 
 import numpy as np
 
@@ -85,6 +89,33 @@ class ScanAbortedError(RuntimeError):
         self.resume_idx = resume_idx
 
 
+class Transition(Protocol):
+    """
+    Hook called by Runner.run before each move, with the target of that move.
+
+    A transition decides for itself whether it needs to act (it is called at
+    every point, so the not-triggered path must be cheap). When it acts, it
+    may route the hardware through arbitrary waypoints and do work there
+    (e.g. go to a reference point, change the excitation, rebalance). The
+    runner then always finishes with scan.move_to(target), so a transition
+    never needs to move back.
+
+    Contract
+    --------
+    - Move hardware only through scan.move_to, so the scan's position cache
+      stays truthful (scan.move_to invalidates it itself on a failed ramp).
+    - The current position is scan._get_current_coords().
+    - Raising stops the scan exactly like a failed move: the runner reports
+      the idx, and resuming from it calls the transition again.
+    """
+    def __call__(self,
+        scan: ScanBase,
+        idx: np.ndarray,
+        target: Dict[str, float],
+        min_wait: float | None,
+    ) -> None: ...
+
+
 def _is_new_line(idx: np.ndarray) -> bool:
     """True when a new outermost line has started."""
     return len(idx) > 1 and bool(idx[-1] == 0)
@@ -120,6 +151,9 @@ class Runner:
         Tolerance for recoverable query failures. Defaults to ErrorPolicy().
         Failed queries leave NaN in their columns; details are collected in
         `self.errors`.
+    transitions : list of Transition, optional
+        Called in order before each move in run() (not in record()), with
+        (scan, idx, target_coords, min_wait). See Transition.
 
     Attributes
     ----------
@@ -141,6 +175,7 @@ class Runner:
         logger: logging.Logger | None = None,
         plot: bool = False,
         error_policy: ErrorPolicy | None = None,
+        transitions: List[Transition] | None = None,
     ):
         self.scan = scan
         self.measurement = measurement
@@ -149,6 +184,7 @@ class Runner:
         self.start_idx = start_idx
         self.min_wait = min_wait
         self._observers = list(observers or [])
+        self._transitions = list(transitions or [])
         self._logger = logger
         self.plot = plot
 
@@ -168,6 +204,16 @@ class Runner:
     def remove_observer(self, f: Callable) -> None:
         """Remove an observer by identity."""
         self._observers.remove(f)
+
+    """Transition management"""
+
+    def add_transition(self, t: Transition) -> None:
+        """Append a transition hook."""
+        self._transitions.append(t)
+
+    def remove_transition(self, t: Transition) -> None:
+        """Remove a transition hook by identity."""
+        self._transitions.remove(t)
 
     """Threaded execution"""
 
@@ -237,6 +283,11 @@ class Runner:
                         continue
 
                 current_idx = idx
+
+                # Transitions may route through waypoints (and do work there)
+                # before the final move. Errors are treated like move errors.
+                for t in self._transitions:
+                    t(self.scan, idx, coords, self.min_wait)
 
                 # Move hardware. Errors here are never tolerated: the
                 # position is uncertain (move_to has dropped its cache).

@@ -221,6 +221,17 @@ class DatabaseLogger:
             'time_per_point': measurement.time_per_point,
         })
 
+        # Full scan definition, so the meaning of each index (e.g. which
+        # ScanStack child a dim1 index is) can be recovered from the file.
+        if scan is not None:
+            try:
+                instance.set_global_attrs({'scan': scan.to_dict()})
+            except Exception as exc:
+                warnings.warn(
+                    f"Scan definition could not be serialized ({exc}); "
+                    f"it will not be stored in the database."
+                )
+
         # Per-coordinate metadata from SweepableChannels
         if scan is not None:
             for ch in scan.channels:

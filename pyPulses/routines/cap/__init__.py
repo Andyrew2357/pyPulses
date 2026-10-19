@@ -147,6 +147,9 @@ from .differential import differential_balance, DifferentialBalanceResult
 from .noise_probe import cap_noise_probe, CapNoiseProbeResult
 from .prep_amp import prep_amp
 
+# Transition for scans that change excitation parameters
+from .transition import CapRebalanceTransition
+
 __all__ = [
     # Config
     'PROCESS_NOISE_COEFF',
@@ -180,4 +183,6 @@ __all__ = [
     'cap_noise_probe',
     'CapNoiseProbeResult',
     'prep_amp',
+    # Transition for scans that change excitation parameters
+    'CapRebalanceTransition',
 ]

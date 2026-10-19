@@ -12,6 +12,9 @@ Interior nodes (constructed only via arithmetic):
     _ScanSum      result of scan_a + scan_b  (concatenation)
     _ScanProduct  result of scan_a * scan_b  (outer product)
 
+Interior node (constructed directly):
+    ScanStack     scans stacked along a new leading axis (one index per scan)
+
 Leaf nodes (constructed directly by the user):
     ScanCut            linear sweep from start to end
     ScanPoints         explicit list of points
@@ -499,6 +502,96 @@ class _ScanProduct(ScanBase):
         if ramp_kwargs:
             node.ramp_kwargs = ramp_kwargs
         return node
+
+@_register_scan("stack")
+class ScanStack(ScanBase):
+    """
+    Stack scans along a new leading axis, so each child gets its own index.
+
+    Unlike scan_a + scan_b (which concatenates along the existing outermost
+    axis), ScanStack([a, b, c]) yields idx = [k, *child_idx], so the child a
+    point came from is its own dimension in the result array / database.
+
+    Children must use the same channels (same objects) and have the same
+    number of dimensions. They may differ in length: dimensions are the
+    per-axis maximum, and the unused tail of a shorter child stays NaN.
+
+    Parameters
+    ----------
+    scans : list of ScanBase
+    space_mask : Callable[[Coords], bool], optional
+    ramp_kwargs : dict, optional
+        Defaults to the first child's ramp_kwargs.
+    """
+
+    def __init__(self,
+        scans: List[ScanBase],
+        space_mask: Callable[[Coords], bool] | None = None,
+        ramp_kwargs: Dict[str, Any] | None = None,
+    ):
+        scans = list(scans)
+        if not scans:
+            raise ValueError("ScanStack needs at least one scan.")
+        first = scans[0]
+        super().__init__(
+            channels = first.channels,
+            space_mask = space_mask,
+            ramp_kwargs = ramp_kwargs or first.ramp_kwargs,
+        )
+
+        fmap = first._channel_map()
+        ndim = len(first.dimensions)
+        for k, sc in enumerate(scans[1:], start=1):
+            smap = sc._channel_map()
+            if set(smap) != set(fmap):
+                raise ValueError(
+                    f"ScanStack child {k} has coordinates {sorted(smap)}, "
+                    f"expected {sorted(fmap)}."
+                )
+            mismatched = [n for n in fmap if smap[n] is not fmap[n]]
+            if mismatched:
+                raise ValueError(
+                    f"ScanStack child {k} uses different channel objects "
+                    f"for: {mismatched}."
+                )
+            if len(sc.dimensions) != ndim:
+                raise ValueError(
+                    f"ScanStack child {k} has {len(sc.dimensions)} dims, "
+                    f"expected {ndim}."
+                )
+
+        self._scans = scans
+        inner = np.max(np.stack([sc.dimensions for sc in scans]), axis=0)
+        self._dims = np.concatenate([[len(scans)], inner]).astype(int)
+
+    @property
+    def scans(self) -> List[ScanBase]:
+        return list(self._scans)
+
+    @property
+    def npoints(self) -> int:
+        return sum(sc.npoints for sc in self._scans)
+
+    @property
+    def dimensions(self) -> np.ndarray:
+        return self._dims.copy()
+
+    def _iter_unmasked(self) -> Iterator[IdxCoords]:
+        # Delegate via _iter so child masks are applied
+        for k, sc in enumerate(self._scans):
+            for idx, coords in sc._iter():
+                yield np.concatenate([[k], idx]).astype(int), coords
+
+    def _serialize_state(self) -> dict:
+        return {'scans': [sc.to_dict() for sc in self._scans]}
+
+    @classmethod
+    def _from_dict(cls, state, channels, space_mask, ramp_kwargs):
+        return cls(
+            scans = [ScanBase.from_dict(d) for d in state['scans']],
+            space_mask = space_mask,
+            ramp_kwargs = ramp_kwargs,
+        )
 
 """Leaf nodes"""
 
