@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .balance import CapBalanceResult
+    from .initialize import ThreePointBalanceResult
 
 from .cap_filter import CapFilter, CapExtrapolator
 
@@ -107,6 +108,13 @@ class CapContext():
         self._previous_result: CapBalanceResult | None = None
         self._Vstd_now: float | None = None
 
+        # Excitation-line crosstalk model fitted with the amp disabled (see
+        # routines.cap.crosstalk). None until CapCrosstalkTransition has run,
+        # or until loaded from a saved state that included one. Read by
+        # CrosstalkCompensatedLockIn; this attribute's presence is what makes
+        # that wrapper active rather than a passthrough.
+        self.crosstalk: 'ThreePointBalanceResult | None' = None
+
     """Logging"""
 
     def log(self, *args, **kwargs):
@@ -194,10 +202,19 @@ class CapContext():
             json.dump(self._serialize_state(), f, indent=2, cls=_NumpyEncoder)
  
     def _serialize_state(self) -> dict:
+        # format_reference has no notion of CrosstalkCompensatedLockIn (it's
+        # a plain Python wrapper, not a registered device) -- reference the
+        # raw channel it wraps instead. _deserialize_state re-wraps it if
+        # a 'Crosstalk_kwargs' block is present.
+        from .crosstalk import CrosstalkCompensatedLockIn
+        lockin_for_ref = self.lockin_call
+        if isinstance(lockin_for_ref, CrosstalkCompensatedLockIn):
+            lockin_for_ref = lockin_for_ref.raw
+
         device_refs: dict = {
             'Vstd':        format_reference(self.Vstd),
             'Theta':       format_reference(self.Theta),
-            'lockin_call': format_reference(self.lockin_call),
+            'lockin_call': format_reference(lockin_for_ref),
         }
         if self.sensitivity_channel is not None:
             device_refs['sensitivity_channel'] = format_reference(self.sensitivity_channel)
@@ -224,7 +241,17 @@ class CapContext():
         if self.cap_filter is not None:
             result.update(self.cap_filter._serialize_state())
         result.update(self.extrapolator._serialize_state())
- 
+
+        if self.crosstalk is not None:
+            result['Crosstalk_kwargs'] = dict(
+                status = self.crosstalk.status,
+                V0 = [self.crosstalk.V0.real, self.crosstalk.V0.imag],
+                A_matrix = self.crosstalk.A_matrix,
+                P = self.crosstalk.P,
+                Vex = self.crosstalk.Vex,
+                Cstd = self.crosstalk.Cstd,
+            )
+
         return result
  
     def _deserialize_state(self, state: dict):
@@ -239,3 +266,22 @@ class CapContext():
  
         if state.get('CapExtrapolator_kwargs') is not None:
             self.extrapolator._deserialize_state(state['CapExtrapolator_kwargs'])
+
+        xtalk = state.get('Crosstalk_kwargs')
+        if xtalk is not None:
+            from .initialize import ThreePointBalanceResult
+            from .crosstalk import CrosstalkCompensatedLockIn
+
+            V0 = complex(xtalk['V0'][0], xtalk['V0'][1])
+            self.crosstalk = ThreePointBalanceResult(
+                status = xtalk['status'],
+                V0 = V0,
+                A_complex = complex(0.0, 0.0),  # not used for crosstalk purposes
+                A_matrix = np.array(xtalk['A_matrix']),
+                P = np.array(xtalk['P']),
+                error = None,
+                Vex = xtalk['Vex'],
+                Cstd = xtalk['Cstd'],
+            )
+            if not isinstance(self.lockin_call, CrosstalkCompensatedLockIn):
+                self.lockin_call = CrosstalkCompensatedLockIn(self.lockin_call, self)

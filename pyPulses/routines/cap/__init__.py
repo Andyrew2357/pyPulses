@@ -28,6 +28,13 @@ Balance refinement (`cap_balance_refine`)
     tracking). Useful for tightening a calibration's balance point without
     the overhead of full Kalman-filter balance tracking.
 
+Crosstalk compensation (`CrosstalkCompensatedLockIn`, `CapCrosstalkTransition`)
+    Subtracts excitation-line crosstalk (signal that bypasses the amplifier
+    entirely, e.g. via attenuator-driven upstream coupling) from every
+    lock-in reading before any balance math sees it -- a post-hoc phase
+    correction can't remove this because it's not a pure rotation. See
+    crosstalk.py's module docstring for the full rationale.
+
 Noise probe (`cap_noise_probe`) and amp tuning (`prep_amp`)
     cap_noise_probe reports the capacitance noise floor (empirical std) and
     non-Gaussianity (empirical excess kurtosis) at the bridge's current
@@ -150,6 +157,9 @@ from .prep_amp import prep_amp
 # Transition for scans that change excitation parameters
 from .transition import CapRebalanceTransition
 
+# Excitation-line crosstalk compensation
+from .crosstalk import CrosstalkCompensatedLockIn, CapCrosstalkTransition
+
 __all__ = [
     # Config
     'PROCESS_NOISE_COEFF',
@@ -185,4 +195,7 @@ __all__ = [
     'prep_amp',
     # Transition for scans that change excitation parameters
     'CapRebalanceTransition',
+    # Excitation-line crosstalk compensation
+    'CrosstalkCompensatedLockIn',
+    'CapCrosstalkTransition',
 ]

@@ -58,6 +58,60 @@ AttrSpec = (
 )
 
 
+"""
+Shared ctx_attrs / trigger-state helpers.
+
+Extracted so CapCrosstalkTransition (crosstalk.py) can reuse the same
+'ctx_attrs' spec mini-language as CapRebalanceTransition without duplicating
+it. Pure functions -- no behavior change to CapRebalanceTransition itself.
+"""
+
+def _compile_attr_spec(
+    trigger: Sequence[str],
+    attr: str,
+    spec: AttrSpec,
+) -> Callable[[Coords], float]:
+    def need(coord):
+        if coord not in trigger:
+            raise ValueError(
+                f"ctx_attrs[{attr!r}] refers to {coord!r}, "
+                f"which is not in trigger {list(trigger)}."
+            )
+    if isinstance(spec, str):
+        need(spec)
+        return lambda st, c=spec: st[c]
+    if isinstance(spec, tuple):
+        coord, fn = spec
+        need(coord)
+        return lambda st, c=coord, f=fn: f(st[c])
+    if callable(spec):
+        return spec
+    raise TypeError(f"ctx_attrs[{attr!r}]: unsupported spec {spec!r}.")
+
+
+def _apply_ctx_attrs(
+    ctx: 'CapContext',
+    attr_fns: Dict[str, Callable[[Coords], float]],
+    state: Coords,
+) -> Dict[str, float]:
+    """Compute every attr first so a failing spec leaves ctx untouched."""
+    values = {attr: float(fn(state)) for attr, fn in attr_fns.items()}
+    if 'Vstd_range' in values and not values['Vstd_range'] > 0:
+        raise ValueError(
+            f"Vstd_range must be positive, got {values['Vstd_range']} "
+            f"for {state}."
+        )
+    for attr, val in values.items():
+        setattr(ctx, attr, val)
+    return values
+
+
+def _same_state(a: Coords, b: Coords, rtol: float) -> bool:
+    return a.keys() == b.keys() and all(
+        np.isclose(a[k], b[k], rtol=rtol, atol=0.0) for k in a
+    )
+
+
 class CapRebalanceTransition:
     """
     Parameters
@@ -131,7 +185,7 @@ class CapRebalanceTransition:
         for attr, spec in (ctx_attrs or {}).items():
             if not hasattr(ctx, attr):
                 raise ValueError(f"CapContext has no attribute {attr!r}.")
-            self.ctx_attrs[attr] = self._compile_spec(attr, spec)
+            self.ctx_attrs[attr] = _compile_attr_spec(self.trigger, attr, spec)
 
         self.change_at_ref = change_at_ref
         self.settle = settle
@@ -152,7 +206,7 @@ class CapRebalanceTransition:
         min_wait: float | None,
     ) -> None:
         state = {n: float(target[n]) for n in self.trigger}
-        if self.balanced is not None and self._same(state, self.balanced):
+        if self.balanced is not None and _same_state(state, self.balanced, self.rtol):
             return
 
         # Invalid until the rebalance succeeds; a raise stops the scan and a
@@ -163,14 +217,16 @@ class CapRebalanceTransition:
         here = dict(scan._get_current_coords())
 
         # Go to the reference, then change the excitation there.
-        exc_changes = not self._same(state, {n: here[n] for n in self.trigger})
+        exc_changes = not _same_state(
+            state, {n: here[n] for n in self.trigger}, self.rtol
+        )
         if self.change_at_ref and exc_changes:
             scan.move_to({**here, **ref}, min_wait=min_wait)
         scan.move_to({**here, **ref, **state}, min_wait=min_wait)
         if self.settle > 0:
             time.sleep(self.settle)
 
-        ctx_set = self._update_ctx(state)
+        ctx_set = _apply_ctx_attrs(self.ctx, self.ctx_attrs, state)
         bal = self._balance(state)
         cap_initialize_filter(self.ctx, bal)   # A, P, K_matrix, extrapolator,
                                                # clears ctx._Vstd_now
@@ -178,36 +234,6 @@ class CapRebalanceTransition:
         self._record(idx, state, ref, ctx_set, bal)
 
     """Internals"""
-
-    def _compile_spec(self, attr: str, spec: AttrSpec) -> Callable[[Coords], float]:
-        def need(coord):
-            if coord not in self.trigger:
-                raise ValueError(
-                    f"ctx_attrs[{attr!r}] refers to {coord!r}, "
-                    f"which is not in trigger {self.trigger}."
-                )
-        if isinstance(spec, str):
-            need(spec)
-            return lambda st, c=spec: st[c]
-        if isinstance(spec, tuple):
-            coord, fn = spec
-            need(coord)
-            return lambda st, c=coord, f=fn: f(st[c])
-        if callable(spec):
-            return spec
-        raise TypeError(f"ctx_attrs[{attr!r}]: unsupported spec {spec!r}.")
-
-    def _update_ctx(self, state: Coords) -> Dict[str, float]:
-        # Compute everything first so a failing spec leaves ctx untouched.
-        values = {attr: float(fn(state)) for attr, fn in self.ctx_attrs.items()}
-        if 'Vstd_range' in values and not values['Vstd_range'] > 0:
-            raise ValueError(
-                f"Vstd_range must be positive, got {values['Vstd_range']} "
-                f"for {state}."
-            )
-        for attr, val in values.items():
-            setattr(self.ctx, attr, val)
-        return values
 
     def _balance(self, state: Coords):
         ctx = self.ctx
@@ -238,11 +264,6 @@ class CapRebalanceTransition:
         if clash:
             raise ValueError(f"ref_coords must not set trigger coords: {sorted(clash)}")
         return ref
-
-    def _same(self, a: Coords, b: Coords) -> bool:
-        return a.keys() == b.keys() and all(
-            np.isclose(a[k], b[k], rtol=self.rtol, atol=0.0) for k in a
-        )
 
     def _record(self, idx, state, ref, ctx_set, bal):
         entry = dict(
