@@ -74,6 +74,26 @@ if TYPE_CHECKING:
     from ...core.scan import ScanBase
 
 
+def _fit_crosstalk(
+    ctx: 'CapContext',
+    raw_lockin_call,
+    three_point_kwargs: Dict[str, Any],
+) -> ThreePointBalanceResult:
+    """
+    Fit the crosstalk model with the amp already off. Shared by
+    CapCrosstalkTransition and the calibration-library builders (library.py).
+    """
+    kw = {'wait': ctx.settle_time, **three_point_kwargs}
+    return cap_balance_three_point(
+        ctx.Vstd, ctx.Theta, raw_lockin_call,
+        Vex = ctx.Vex,
+        Cstd = 1.0,  # unused for crosstalk purposes -- only A_matrix/V0 matter
+        Vstd_range = ctx.Vstd_range,
+        logger = ctx.logger,
+        **kw,
+    )
+
+
 class CrosstalkCompensatedLockIn:
     """
     Wraps a raw LockInChannel, subtracting a linear crosstalk model from
@@ -143,6 +163,8 @@ class CapCrosstalkTransition:
     pattern as CapRebalanceTransition.
 
     On a trigger-state change:
+      0. Change the excitation to the new state in place (scan.move_to with
+         the gates where they are), so the fit sees the new excitation.
       1. Apply `ctx_attrs` (so e.g. Vex/Vstd_range reflect the new state
          before sizing the calibration sweep).
       2. Ramp `amp_channels` to `amp_off` (disabling the amplifier) via the
@@ -267,6 +289,12 @@ class CapCrosstalkTransition:
         # and a resume re-triggers here.
         self.measured = None
 
+        # Crosstalk depends on the excitation, and the runner only applies
+        # the target after all transitions have run -- so change it here,
+        # in place (gates untouched).
+        here = dict(scan._get_current_coords())
+        scan.move_to({**here, **state}, min_wait=min_wait)
+
         ctx_set = _apply_ctx_attrs(self.ctx, self.ctx_attrs, state)
 
         wait = min_wait if min_wait is not None else self.min_wait
@@ -289,17 +317,7 @@ class CapCrosstalkTransition:
     """Internals"""
 
     def _fit(self, raw_lockin_call, state: Coords) -> ThreePointBalanceResult:
-        ctx = self.ctx
-        kw = {'wait': ctx.settle_time, **self.three_point_kwargs}
-        result = cap_balance_three_point(
-            ctx.Vstd, ctx.Theta, raw_lockin_call,
-            Vex = ctx.Vex,
-            Cstd = 1.0,  # unused for crosstalk purposes -- only A_matrix/V0 matter
-            Vstd_range = ctx.Vstd_range,
-            logger = ctx.logger,
-            **kw,
-        )
-        return result
+        return _fit_crosstalk(self.ctx, raw_lockin_call, self.three_point_kwargs)
 
     def _record(self, idx, state, ctx_set, result: ThreePointBalanceResult):
         entry = dict(
@@ -467,6 +485,8 @@ if __name__ == '__main__':
         coord_names = ['freq']
         def _get_current_coords(self):
             return {'freq': 0.0}
+        def move_to(self, coords, min_wait=None):
+            pass
 
     xtalk(_FakeScan(), np.array([0]), {'freq': 1.0e6}, 0.0)
 
