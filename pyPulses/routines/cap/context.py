@@ -243,14 +243,8 @@ class CapContext():
         result.update(self.extrapolator._serialize_state())
 
         if self.crosstalk is not None:
-            result['Crosstalk_kwargs'] = dict(
-                status = self.crosstalk.status,
-                V0 = [self.crosstalk.V0.real, self.crosstalk.V0.imag],
-                A_matrix = self.crosstalk.A_matrix,
-                P = self.crosstalk.P,
-                Vex = self.crosstalk.Vex,
-                Cstd = self.crosstalk.Cstd,
-            )
+            from .initialize import three_point_to_dict
+            result['Crosstalk_kwargs'] = three_point_to_dict(self.crosstalk)
 
         return result
  
@@ -269,19 +263,9 @@ class CapContext():
 
         xtalk = state.get('Crosstalk_kwargs')
         if xtalk is not None:
-            from .initialize import ThreePointBalanceResult
+            from .initialize import three_point_from_dict
             from .crosstalk import CrosstalkCompensatedLockIn
 
-            V0 = complex(xtalk['V0'][0], xtalk['V0'][1])
-            self.crosstalk = ThreePointBalanceResult(
-                status = xtalk['status'],
-                V0 = V0,
-                A_complex = complex(0.0, 0.0),  # not used for crosstalk purposes
-                A_matrix = np.array(xtalk['A_matrix']),
-                P = np.array(xtalk['P']),
-                error = None,
-                Vex = xtalk['Vex'],
-                Cstd = xtalk['Cstd'],
-            )
+            self.crosstalk = three_point_from_dict(xtalk)
             if not isinstance(self.lockin_call, CrosstalkCompensatedLockIn):
                 self.lockin_call = CrosstalkCompensatedLockIn(self.lockin_call, self)

@@ -112,6 +112,32 @@ def _same_state(a: Coords, b: Coords, rtol: float) -> bool:
     )
 
 
+def _balance_three_point(
+    ctx: 'CapContext',
+    three_point_kwargs: Dict[str, Any],
+    state: Coords,
+):
+    """
+    Sample-path three-point balance from the current ctx values. Shared by
+    CapRebalanceTransition and the calibration-library builders (library.py).
+    """
+    kw = {'wait': ctx.settle_time, **three_point_kwargs}
+    bal = cap_balance_three_point(
+        ctx.Vstd, ctx.Theta, ctx.lockin_call,
+        Vex = ctx.Vex,
+        Cstd = ctx.Cstd,
+        Vstd_range = ctx.Vstd_range,
+        logger = ctx.logger,
+        **kw,
+    )
+    if not bal.status:
+        raise RuntimeError(
+            f"Three-point balance out of range at {state}: "
+            f"|V0|={abs(bal.V0):.3e} > Vstd_range={ctx.Vstd_range:.3e}."
+        )
+    return bal
+
+
 class CapRebalanceTransition:
     """
     Parameters
@@ -236,22 +262,7 @@ class CapRebalanceTransition:
     """Internals"""
 
     def _balance(self, state: Coords):
-        ctx = self.ctx
-        kw = {'wait': ctx.settle_time, **self.three_point_kwargs}
-        bal = cap_balance_three_point(
-            ctx.Vstd, ctx.Theta, ctx.lockin_call,
-            Vex = ctx.Vex,
-            Cstd = ctx.Cstd,
-            Vstd_range = ctx.Vstd_range,
-            logger = ctx.logger,
-            **kw,
-        )
-        if not bal.status:
-            raise RuntimeError(
-                f"Three-point balance out of range at {state}: "
-                f"|V0|={abs(bal.V0):.3e} > Vstd_range={ctx.Vstd_range:.3e}."
-            )
-        return bal
+        return _balance_three_point(self.ctx, self.three_point_kwargs, state)
 
     def _resolve_ref(self, target: Coords, scan: 'ScanBase') -> Coords:
         ref = self.ref_coords(target) if callable(self.ref_coords) \

@@ -72,6 +72,42 @@ class ThreePointBalanceResult():
             s += f"  Residual lock-in: X={self.error[0]:.5e}  Y={self.error[1]:.5e}\n"
         return s
 
+def three_point_to_dict(r: ThreePointBalanceResult) -> dict:
+    """JSON-safe dict of a ThreePointBalanceResult (complex -> [re, im])."""
+    return dict(
+        status = bool(r.status),
+        V0 = [float(r.V0.real), float(r.V0.imag)],
+        A_complex = [float(r.A_complex.real), float(r.A_complex.imag)],
+        A_matrix = np.asarray(r.A_matrix, dtype=float).tolist(),
+        P = np.asarray(r.P, dtype=float).tolist(),
+        error = None if r.error is None else [float(e) for e in r.error],
+        Vex = float(r.Vex),
+        Cstd = float(r.Cstd),
+        Cex = None if r.Cex is None else float(r.Cex),
+        Closs = None if r.Closs is None else float(r.Closs),
+    )
+
+def three_point_from_dict(d: dict) -> ThreePointBalanceResult:
+    """
+    Inverse of three_point_to_dict. Keys other than status/V0/A_matrix/P/
+    Vex/Cstd are optional, so older CapContext 'Crosstalk_kwargs' blocks load.
+    """
+    def _c(v):
+        return complex(v[0], v[1])
+    err = d.get('error')
+    return ThreePointBalanceResult(
+        status = bool(d['status']),
+        V0 = _c(d['V0']),
+        A_complex = _c(d.get('A_complex', [0.0, 0.0])),
+        A_matrix = np.array(d['A_matrix'], dtype=float),
+        P = np.array(d['P'], dtype=float),
+        error = None if err is None else tuple(float(e) for e in err),
+        Vex = float(d['Vex']),
+        Cstd = float(d['Cstd']),
+        Cex = d.get('Cex'),
+        Closs = d.get('Closs'),
+    )
+
 @dataclass
 class TwoPointBalanceResult():
     """

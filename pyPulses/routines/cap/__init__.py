@@ -35,6 +35,14 @@ Crosstalk compensation (`CrosstalkCompensatedLockIn`, `CapCrosstalkTransition`)
     correction can't remove this because it's not a pure rotation. See
     crosstalk.py's module docstring for the full rationale.
 
+Precomputed calibrations (`CapCalibrationLibrary`, `CapCalibrationTransition`)
+    For off-balance work over several excitation states: calibrate crosstalk
+    and balance for every state once, parked at one point
+    (`cap_build_library`), save the library to JSON, then let
+    `CapCalibrationTransition` load the stored state whenever the excitation
+    changes -- no reference-point trip or amp cycling mid-scan, so the
+    excitation can be an inner scan coordinate. See library.py.
+
 Noise probe (`cap_noise_probe`) and amp tuning (`prep_amp`)
     cap_noise_probe reports the capacitance noise floor (empirical std) and
     non-Gaussianity (empirical excess kurtosis) at the bridge's current
@@ -160,6 +168,16 @@ from .transition import CapRebalanceTransition
 # Excitation-line crosstalk compensation
 from .crosstalk import CrosstalkCompensatedLockIn, CapCrosstalkTransition
 
+# Precomputed per-excitation calibrations
+from .library import (
+    CapCalibration,
+    CapCalibrationLibrary,
+    CapCalibrationTransition,
+    cap_calibrate_crosstalk,
+    cap_calibrate_balance,
+    cap_build_library,
+)
+
 __all__ = [
     # Config
     'PROCESS_NOISE_COEFF',
@@ -198,4 +216,11 @@ __all__ = [
     # Excitation-line crosstalk compensation
     'CrosstalkCompensatedLockIn',
     'CapCrosstalkTransition',
+    # Precomputed per-excitation calibrations
+    'CapCalibration',
+    'CapCalibrationLibrary',
+    'CapCalibrationTransition',
+    'cap_calibrate_crosstalk',
+    'cap_calibrate_balance',
+    'cap_build_library',
 ]
