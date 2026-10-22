@@ -461,7 +461,7 @@ def cap_balance_three_point(
 
     Cex = -Cstd * Vc0 / Vex
     Closs = -Cstd * Vr0 / Vex
-    in_range = abs(V0) <= Vstd_range
+    in_range = abs(V0) <= Vstd_range or ignore_range_warning
 
     error = None
     if in_range and move_to_balance:
