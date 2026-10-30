@@ -22,18 +22,21 @@ Differential balance (`differential_balance`)
     Independent of the Kalman filter machinery.
 
 Balance refinement (`cap_balance_refine`)
-    Sharpens an existing three-point or two-point balance result's V0 via a
-    small, fixed number of fixed-gain Newton correction steps -- the gain
-    itself is not re-estimated (contrast cap_balance's continuous Kalman
-    tracking). Useful for tightening a calibration's balance point without
-    the overhead of full Kalman-filter balance tracking.
+    `cap_balance_refine(ctx)` re-nulls the bridge from the current Vstd with
+    a small, fixed number of Newton steps through the gain already stored on
+    ctx.cap_filter -- the gain itself is not re-estimated (contrast
+    cap_balance's continuous Kalman tracking).
 
-Crosstalk compensation (`CrosstalkCompensatedLockIn`, `CapCrosstalkTransition`)
+Crosstalk compensation (`cap_initialize_crosstalk`, `CapCrosstalkTransition`)
     Subtracts excitation-line crosstalk (signal that bypasses the amplifier
     entirely, e.g. via attenuator-driven upstream coupling) from every
     lock-in reading before any balance math sees it -- a post-hoc phase
-    correction can't remove this because it's not a pure rotation. See
-    crosstalk.py's module docstring for the full rationale.
+    correction can't remove this because it's not a pure rotation.
+    cap_initialize_crosstalk measures it once at the current excitation
+    (run it before cap_initialize); CapCrosstalkTransition remeasures it
+    whenever the excitation changes in a scan. Both wrap ctx.lockin_call in
+    a CrosstalkCompensatedLockIn. See crosstalk.py's module docstring for
+    the full rationale.
 
 Precomputed calibrations (`CapCalibrationLibrary`, `CapCalibrationTransition`)
     For off-balance work over several excitation states: calibrate crosstalk
@@ -56,24 +59,42 @@ Noise probe (`cap_noise_probe`) and amp tuning (`prep_amp`)
 Typical usage
 -------------
     from pyPulses.routines import cap
+    from pyPulses.devices import hf2li
 
-    # Build context
+    # Bridge on an HF2LI: reference drive on output 0 / mixer ch 1, sample
+    # drive on output 1 / ch 2, measured on demod 0 (see hf2li.configure_bridge)
+    hf2 = hf2li('dev1616', registry_id='hf2')
+    br = hf2.configure_bridge(std=(0, 1), ex=(1, 2), measure_demod=0,
+                              frequency=1e6, output_range=1.0, duration=0.1)
+    br['Vex'](0.01)                                  # V peak
+
+    # Build context (Vstd/Vex in the same units: V peak)
     ctx = cap.CapContext(
-        Vstd        = lockin.resolve('Vstd'),
-        Theta       = lockin.resolve('Theta'),
-        lockin_call = lockin.resolve('get_average'),
+        Vstd        = br['Vstd'],              # hf2->out0_ch1_amplitude
+        Theta       = br['Theta'],             # hf2->out0_ch1_phase
+        lockin_call = br['stream_average'],    # hf2->stream_average
         Vstd_range  = 0.1,
-        Vex         = 1.0,
+        Vex         = 0.01,
         Cstd        = 1e-12,
+        settle_time = 0.3,
     )
 
-    # Optional: attach a serializable rescale callback
+    # Optional (SRS lock-ins): attach a serializable rescale callback
     ctx.set_rescale_callback(lockin, 'auto_gain')
+
+    # Optional: measure excitation-line crosstalk first (amp off/on)
+    cap.cap_initialize_crosstalk(
+        ctx, amp_channels=[amp_gate_ch],
+        amp_on={'amp_VG': -0.2}, amp_off={'amp_VG': -5.0},
+    )
 
     # Initialize (three-point balance seeds A, P, and K_matrix)
     cfg = cap.cap_initialize(ctx, method='three_point')
     # or two-point:
     cfg = cap.cap_initialize(ctx, method='two_point', dVstd=0.05+0j)
+
+    # Tighten the balance with Newton steps through the stored gain
+    cap.cap_balance_refine(ctx, n_refine=2)
 
     # Off-balance measurement at each phase-space point
     result = cap.cap_measure(ctx)
@@ -82,13 +103,14 @@ Typical usage
     # On-balance measurement at each phase-space point
     result = cap.cap_balance(ctx)
 
-    # Differential balance along a 1D cut
+    # Differential balance along a 1D cut (complementary gate driven from a
+    # third mixer channel, e.g. output 1 / ch 3 on the bridge oscillator)
     result = cap.differential_balance(
         ctx        = ctx,
         scan       = scan_1d,
-        Vex_amp    = lockin.resolve('Vex_amp'),
-        Vexp_amp   = lockin.resolve('Vexp_amp'),
-        Vexp_phase = lockin.resolve('Vexp_phase'),
+        Vex_amp    = br['Vex'],
+        Vexp_amp   = hf2.resolve('out1_ch3_amplitude'),
+        Vexp_phase = hf2.resolve('out1_ch3_phase'),
     )
 
     # Save / restore state
@@ -166,7 +188,11 @@ from .prep_amp import prep_amp
 from .transition import CapRebalanceTransition
 
 # Excitation-line crosstalk compensation
-from .crosstalk import CrosstalkCompensatedLockIn, CapCrosstalkTransition
+from .crosstalk import (
+    CrosstalkCompensatedLockIn,
+    CapCrosstalkTransition,
+    cap_initialize_crosstalk,
+)
 
 # Precomputed per-excitation calibrations
 from .library import (
@@ -216,6 +242,7 @@ __all__ = [
     # Excitation-line crosstalk compensation
     'CrosstalkCompensatedLockIn',
     'CapCrosstalkTransition',
+    'cap_initialize_crosstalk',
     # Precomputed per-excitation calibrations
     'CapCalibration',
     'CapCalibrationLibrary',

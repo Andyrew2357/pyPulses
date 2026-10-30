@@ -37,8 +37,18 @@ Usage
 -----
     raw_lockin = lockin.resolve('get_average')
     ctx = CapContext(Vstd=..., Theta=..., lockin_call=raw_lockin, ...)
-    ctx.lockin_call = CrosstalkCompensatedLockIn(raw_lockin, ctx)
 
+    # One-off, at the current excitation (wraps ctx.lockin_call if needed),
+    # then balance as usual against the compensated readings
+    cap_initialize_crosstalk(
+        ctx,
+        amp_channels = [amp_gate_ch],
+        amp_on       = {'amp_gate': -0.2},
+        amp_off      = {'amp_gate': -5.0},
+    )
+    cap_initialize(ctx)
+
+    # In a scan that changes the excitation
     xtalk = CapCrosstalkTransition(
         ctx,
         trigger      = [freq_ch.name],
@@ -65,7 +75,7 @@ from .initialize import cap_balance_three_point, ThreePointBalanceResult
 from .transition import (
     Coords, AttrSpec, _compile_attr_spec, _apply_ctx_attrs, _same_state,
 )
-from ...core.tandem_sweep import tandemSweep
+from ...core.tandem_sweep import tandemSweep, SweepResult
 from ...devices.channel_adapter import LockInChannel
 from ...devices.sweepable_channel import SweepableChannel
 
@@ -89,6 +99,7 @@ def _fit_crosstalk(
         Vex = ctx.Vex,
         Cstd = 1.0,  # unused for crosstalk purposes -- only A_matrix/V0 matter
         Vstd_range = ctx.Vstd_range,
+        Vstd_max = ctx.Vstd_max,
         logger = ctx.logger,
         **kw,
     )
@@ -149,6 +160,84 @@ class CrosstalkCompensatedLockIn:
         )
 
 
+def _ensure_compensated(ctx: 'CapContext') -> CrosstalkCompensatedLockIn:
+    """Wrap ctx.lockin_call in a CrosstalkCompensatedLockIn if it isn't one."""
+    if not isinstance(ctx.lockin_call, CrosstalkCompensatedLockIn):
+        ctx.lockin_call = CrosstalkCompensatedLockIn(ctx.lockin_call, ctx)
+    return ctx.lockin_call
+
+
+def _sweep(channels: Sequence[SweepableChannel], target: Coords,
+           min_wait: float | None) -> None:
+    res = tandemSweep(list(channels), target, min_wait=min_wait)
+    if res is not SweepResult.SUCCEEDED:
+        raise RuntimeError(f"Sweep to {target} did not succeed ({res.name}).")
+
+
+def cap_initialize_crosstalk(
+    ctx: 'CapContext',
+    amp_channels: Sequence[SweepableChannel],
+    amp_on: Coords,
+    amp_off: Coords,
+    settle_off: float = 0.0,
+    settle_on: float = 0.0,
+    three_point_kwargs: Dict[str, Any] | None = None,
+    min_wait: float | None = None,
+) -> ThreePointBalanceResult:
+    """
+    Measure the crosstalk model once, at the current excitation and gate
+    point, and store it on `ctx.crosstalk`.
+
+    The one-off counterpart of CapCrosstalkTransition, meant to sit in the
+    initialization steps right before cap_initialize (whose balance then
+    sees compensated readings). Wraps `ctx.lockin_call` in a
+    CrosstalkCompensatedLockIn if it isn't one already.
+
+    Steps: ramp `amp_channels` to `amp_off`, wait `settle_off`, fit against
+    the raw (uncompensated) channel, ramp back to `amp_on`, wait
+    `settle_on`. The amp is turned back on even if the fit raises.
+
+    Parameters
+    ----------
+    ctx : CapContext
+        Vex/Vstd_range must already reflect the current excitation.
+    amp_channels : sequence of SweepableChannel
+        Channels that control the amplifier's on/off state.
+    amp_on, amp_off : dict
+        Target values for `amp_channels`, keyed by channel name.
+    settle_off, settle_on : float
+        Waits after turning the amp off and after turning it back on.
+    three_point_kwargs : dict, optional
+        Forwarded to cap_balance_three_point. `wait` defaults to
+        ctx.settle_time, `samples` to 5, `plot` to False, `move_to_balance`
+        to False.
+    min_wait : float, optional
+        Floor on the derived wait time passed to tandemSweep.
+
+    Returns
+    -------
+    ThreePointBalanceResult
+        The crosstalk model (also stored on ctx.crosstalk).
+    """
+    wrapper = _ensure_compensated(ctx)
+    kw = {'samples': 5, 'plot': False, 'move_to_balance': False,
+          **(three_point_kwargs or {})}
+
+    _sweep(amp_channels, amp_off, min_wait)
+    try:
+        if settle_off > 0:
+            time.sleep(settle_off)
+        result = _fit_crosstalk(ctx, wrapper.raw, kw)
+        ctx.crosstalk = result
+    finally:
+        _sweep(amp_channels, amp_on, min_wait)
+        if settle_on > 0:
+            time.sleep(settle_on)
+
+    ctx.log(f"Crosstalk measured: V0={result.V0:.5e}")
+    return result
+
+
 class CapCrosstalkTransition:
     """
     A Runner Transition that re-measures excitation-line crosstalk whenever
@@ -167,16 +256,13 @@ class CapCrosstalkTransition:
          the gates where they are), so the fit sees the new excitation.
       1. Apply `ctx_attrs` (so e.g. Vex/Vstd_range reflect the new state
          before sizing the calibration sweep).
-      2. Ramp `amp_channels` to `amp_off` (disabling the amplifier) via the
-         standalone `tandemSweep`.
-      3. Fit K_crosstalk/V0_crosstalk with cap_balance_three_point against
-         the wrapper's raw (uncompensated) channel -- with the amp off,
-         this *is* the crosstalk calibration (see module docstring).
-      4. Store the result on `ctx.crosstalk`.
-      5. Ramp `amp_channels` back to `amp_on`.
+      2. cap_initialize_crosstalk: amp off, fit K_crosstalk/V0_crosstalk
+         against the wrapper's raw (uncompensated) channel -- with the amp
+         off, this *is* the crosstalk calibration (see module docstring) --
+         store it on `ctx.crosstalk`, amp back on.
 
-    Requires `ctx.lockin_call` to already be a CrosstalkCompensatedLockIn,
-    so this can reach its `.raw` channel.
+    Wraps `ctx.lockin_call` in a CrosstalkCompensatedLockIn on construction
+    if it isn't one already.
 
     **Usage ordering**: list this transition *before* CapRebalanceTransition
     in `Runner(transitions=[...])` -- crosstalk must be refit before the
@@ -235,13 +321,7 @@ class CapCrosstalkTransition:
         db=None,
         rtol: float = 1e-9,
     ):
-        if not isinstance(ctx.lockin_call, CrosstalkCompensatedLockIn):
-            raise TypeError(
-                "CapCrosstalkTransition requires ctx.lockin_call to already "
-                "be a CrosstalkCompensatedLockIn (so it can fit against the "
-                "raw, uncompensated channel). Wrap it first: "
-                "ctx.lockin_call = CrosstalkCompensatedLockIn(ctx.lockin_call, ctx)"
-            )
+        _ensure_compensated(ctx)
 
         self.ctx = ctx
         self.trigger = list(trigger)
@@ -297,27 +377,18 @@ class CapCrosstalkTransition:
 
         ctx_set = _apply_ctx_attrs(self.ctx, self.ctx_attrs, state)
 
-        wait = min_wait if min_wait is not None else self.min_wait
-        wrapper: CrosstalkCompensatedLockIn = self.ctx.lockin_call
-
-        tandemSweep(self.amp_channels, self.amp_off, min_wait=wait)
-        if self.settle_off > 0:
-            time.sleep(self.settle_off)
-
-        result = self._fit(wrapper.raw, state)
-        self.ctx.crosstalk = result
-
-        tandemSweep(self.amp_channels, self.amp_on, min_wait=wait)
-        if self.settle_on > 0:
-            time.sleep(self.settle_on)
+        result = cap_initialize_crosstalk(
+            self.ctx, self.amp_channels, self.amp_on, self.amp_off,
+            settle_off = self.settle_off,
+            settle_on = self.settle_on,
+            three_point_kwargs = self.three_point_kwargs,
+            min_wait = min_wait if min_wait is not None else self.min_wait,
+        )
 
         self.measured = state
         self._record(idx, state, ctx_set, result)
 
     """Internals"""
-
-    def _fit(self, raw_lockin_call, state: Coords) -> ThreePointBalanceResult:
-        return _fit_crosstalk(self.ctx, raw_lockin_call, self.three_point_kwargs)
 
     def _record(self, idx, state, ctx_set, result: ThreePointBalanceResult):
         entry = dict(
@@ -336,172 +407,3 @@ class CapCrosstalkTransition:
         )
         if self.db is not None:
             self.db.set_global_attrs({'cap_crosstalk': self.history})
-
-
-if __name__ == '__main__':
-    """
-    Self-test against a synthetic linear bridge + crosstalk model (no real
-    hardware), following the FakeChannel convention used in
-    noise_probe.py/prep_amp.py's self-tests.
-
-    Model: raw_lockin() = K_crosstalk @ Vstd + offset_vex
-                           + (K_sample @ (Vstd - V0_sample) if amp enabled)
-
-    K_crosstalk is deliberately NOT complex-linear (asymmetric: a pure real
-    leakage into LX only), so a naive uncompensated calibration should pick
-    up a biased, non-conformal gain -- and should show spurious loss at a
-    synthetic "hard gap" (V0_sample purely real) that grows with the
-    injected sample signal. After crosstalk compensation, the recovered
-    gain should match K_sample and the hard-gap loss should vanish.
-    """
-
-    from .context import CapContext
-
-    def check(label: str, cond: bool):
-        print(f"[{'PASS' if cond else 'FAIL'}] {label}")
-        assert cond, label
-
-    class FakeChannel:
-        def __init__(self, value: float = 0.0):
-            self._v = value
-        def __call__(self, v: float | None = None) -> float | None:
-            if v is None:
-                return self._v
-            self._v = v
-
-    class FakeSweepable:
-        """Minimal SweepableChannel-like stand-in for tandemSweep."""
-        def __init__(self, name, channel: FakeChannel):
-            self.name = name
-            self._channel = channel
-
-            class _Cfg:
-                max_step = None
-                min_step = None
-                tolerance = 0.0
-                max_rate = None
-                settle_time = 0.0
-                async_set = False
-            self.config = _Cfg()
-
-        def get_output(self) -> float:
-            return self._channel()
-
-        def set_output(self, value: float) -> None:
-            self._channel(value)
-
-    K_sample = np.array([[2.0, -0.5], [0.5, 2.0]])     # ideal (complex-linear)
-    V0_sample = complex(0.3, 0.0)                        # "hard gap": zero loss
-    K_crosstalk = np.array([[0.8, 0.3], [0.1, 0.1]])    # deliberately asymmetric, invertible
-    # Kept near zero so the "scales with Cex" check below isolates the
-    # non-conformal-K_crosstalk mechanism (a term proportional to the true
-    # signal) from a separate, already-well-understood constant floor (a
-    # fixed Vex-proportional leakage would show up as a size-independent
-    # offset, which any correct gap/band-style calibration already handles).
-    offset_vex = np.array([1e-6, -1e-6])
-    Vex, Vstd_range = 1.0, 1.0
-
-    Vstd_raw, Theta_raw = FakeChannel(0.0), FakeChannel(0.0)
-    amp_bias = FakeChannel(-0.2)   # "on" value; set very negative to disable
-    amp_enabled = {'v': True}
-
-    def raw_lockin_call():
-        r, th = Vstd_raw(), np.deg2rad(Theta_raw())
-        Vstd_vec = np.array([r * np.cos(th), r * np.sin(th)])
-        L = K_crosstalk @ Vstd_vec + offset_vex
-        if amp_enabled['v']:
-            dV = np.array([Vstd_vec[0] - V0_sample.real, Vstd_vec[1] - V0_sample.imag])
-            L = L + K_sample @ dV
-        return L, np.eye(2) * 1e-12
-
-    ctx = CapContext(
-        Vstd=Vstd_raw, Theta=Theta_raw,
-        lockin_call=raw_lockin_call,
-        Vstd_range=Vstd_range, Vex=Vex, Cstd=1.0,
-        settle_time=0.0,
-    )
-
-    # --- Baseline: uncompensated three-point balance is biased ----------
-    bal_uncompensated = cap_balance_three_point(
-        ctx.Vstd, ctx.Theta, ctx.lockin_call,
-        Vex=ctx.Vex, Cstd=ctx.Cstd, Vstd_range=ctx.Vstd_range,
-        wait=0.0, move_to_balance=True,
-    )
-    check('uncompensated calibration status OK', bal_uncompensated.status)
-    check('uncompensated gain differs from true K_sample (crosstalk leaks in)',
-          not np.allclose(bal_uncompensated.A_matrix, K_sample, atol=1e-6))
-
-    # Read loss at the uncompensated "balance" point for a couple of
-    # different injected sample magnitudes -- should NOT be ~0, and should
-    # grow with the injected Cex-like signal (scales with V0_sample.real).
-    def uncompensated_loss_at(v0_real):
-        nonlocal_V0 = complex(v0_real, 0.0)
-
-        def lockin_call():
-            r, th = Vstd_raw(), np.deg2rad(Theta_raw())
-            Vstd_vec = np.array([r * np.cos(th), r * np.sin(th)])
-            L = K_crosstalk @ Vstd_vec + offset_vex
-            dV = np.array([Vstd_vec[0] - nonlocal_V0.real, Vstd_vec[1] - nonlocal_V0.imag])
-            L = L + K_sample @ dV
-            return L, np.eye(2) * 1e-12
-
-        bal = cap_balance_three_point(
-            ctx.Vstd, ctx.Theta, lockin_call,
-            Vex=ctx.Vex, Cstd=ctx.Cstd, Vstd_range=ctx.Vstd_range,
-            wait=0.0, move_to_balance=True,
-        )
-        return bal.Closs
-
-    loss_small = abs(uncompensated_loss_at(0.1))
-    loss_large = abs(uncompensated_loss_at(0.3))
-    check('uncompensated hard-gap loss is spuriously nonzero', loss_small > 1e-4)
-    check('uncompensated spurious loss grows with the injected signal (Cex)',
-          loss_large > 2 * loss_small)
-
-    # --- Crosstalk compensation fixes it ---------------------------------
-    ctx.lockin_call = CrosstalkCompensatedLockIn(raw_lockin_call, ctx)
-
-    amp_ch = FakeSweepable('amp_bias', amp_bias)
-
-    def _toggle_amp(targets):
-        amp_enabled['v'] = targets.get('amp_bias', amp_bias()) > -1.0
-
-    orig_set_output = amp_ch.set_output
-    def _set_output_and_toggle(value):
-        orig_set_output(value)
-        amp_enabled['v'] = value > -1.0
-    amp_ch.set_output = _set_output_and_toggle
-
-    xtalk = CapCrosstalkTransition(
-        ctx,
-        trigger=['freq'],
-        amp_channels=[amp_ch],
-        amp_on={'amp_bias': -0.2},
-        amp_off={'amp_bias': -5.0},
-        three_point_kwargs={'wait': 0.0, 'samples': 1},
-    )
-
-    class _FakeScan:
-        coord_names = ['freq']
-        def _get_current_coords(self):
-            return {'freq': 0.0}
-        def move_to(self, coords, min_wait=None):
-            pass
-
-    xtalk(_FakeScan(), np.array([0]), {'freq': 1.0e6}, 0.0)
-
-    check('crosstalk model stored on ctx', ctx.crosstalk is not None)
-    check('amp restored to "on" after crosstalk measurement', amp_enabled['v'])
-
-    bal_compensated = cap_balance_three_point(
-        ctx.Vstd, ctx.Theta, ctx.lockin_call,
-        Vex=ctx.Vex, Cstd=ctx.Cstd, Vstd_range=ctx.Vstd_range,
-        wait=0.0, move_to_balance=True,
-    )
-    check('compensated calibration status OK', bal_compensated.status)
-    check('compensated gain recovers true K_sample',
-          np.allclose(bal_compensated.A_matrix, K_sample, atol=1e-6))
-    check('compensated hard-gap loss is ~0',
-          abs(bal_compensated.Closs) < 1e-6)
-
-    print("\nAll checks passed.")

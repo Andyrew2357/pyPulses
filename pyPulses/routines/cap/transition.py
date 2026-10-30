@@ -127,13 +127,14 @@ def _balance_three_point(
         Vex = ctx.Vex,
         Cstd = ctx.Cstd,
         Vstd_range = ctx.Vstd_range,
+        Vstd_max = ctx.Vstd_max,
         logger = ctx.logger,
         **kw,
     )
     if not bal.status:
         raise RuntimeError(
             f"Three-point balance out of range at {state}: "
-            f"|V0|={abs(bal.V0):.3e} > Vstd_range={ctx.Vstd_range:.3e}."
+            f"|V0|={abs(bal.V0):.3e} > Vstd_max={ctx.Vstd_max:.3e}."
         )
     return bal
 

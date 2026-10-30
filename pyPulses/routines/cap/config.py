@@ -15,3 +15,11 @@ CAP_INIT_P_MULT_THREE_POINT = 1.0
 
 # Initial covariance multiplier for A after a two-point balance.
 CAP_INIT_P_MULT_TWO_POINT = 1.0
+
+"""
+Hardware safety
+"""
+
+# Default hard limit on |Vstd| for the calibration sweeps (three-point /
+# two-point balance). Independent of Vstd_range; see CapContext.Vstd_max.
+VSTD_MAX_DEFAULT = 120e-3

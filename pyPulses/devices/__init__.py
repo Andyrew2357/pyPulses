@@ -14,7 +14,7 @@ from .dtg.dtg_comp_pair import dtgCompPair
 from .e5071c import e5071c
 from .fastflight2.fastflight2 import FastFlight2
 from .HEMT import AmplifierLike, HEMTCommonSource
-from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel,
+from .hf2li import (hf2li, hf2liACout, hf2liDemodChannel, hf2liInputChannel,
                     hf2liOscillator, hf2liOutputChannel)
 from .hp34401a import hp34401a
 from .ips120 import ips120, IPS120Channel, IPS120DrivenChannel
@@ -53,6 +53,7 @@ __all__ = [
     "hf2li",
     "hf2liACout",
     "hf2liDemodChannel",
+    "hf2liInputChannel",
     "hf2liOscillator",
     "hf2liOutputChannel",
     "hp34401a",

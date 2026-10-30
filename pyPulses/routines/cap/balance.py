@@ -109,13 +109,13 @@ def cap_balance(ctx: 'CapContext', verbose: bool = False) -> CapBalanceResult:
         V_now = ctx.get_Vstd_complex()
         Vbx, Vby = V_now.real, V_now.imag
 
-    # Clamp to Vstd_range
+    # Clamp to Vstd_max
     rb  = np.sqrt(Vbx**2 + Vby**2)
-    if rb > ctx.Vstd_range:
-        scale = ctx.Vstd_range / rb
+    if rb > ctx.Vstd_max:
+        scale = ctx.Vstd_max / rb
         Vbx *= scale
         Vby *= scale
-        rb = ctx.Vstd_range
+        rb = ctx.Vstd_max
 
     thb = float(np.degrees(np.arctan2(Vby, Vbx)) % 360)
 

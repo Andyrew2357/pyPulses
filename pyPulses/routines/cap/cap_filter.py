@@ -229,11 +229,11 @@ class CapExtrapolator:
     def __init__(self,
         support: int = 7,
         order:   int = 2,
-        Vstd_range: float | None = None,
+        Vstd_max: float | None = None,
     ):
-        self.support    = support
-        self.order      = order
-        self.Vstd_range = Vstd_range
+        self.support  = support
+        self.order    = order
+        self.Vstd_max = Vstd_max
 
         self._x_hist: list[float] = []
         self._y_hist: list[float] = []
@@ -246,7 +246,7 @@ class CapExtrapolator:
     def extrapolate(self) -> tuple[float, float] | None:
         """
         Extrapolate the next balance point. Returns None if no history.
-        Result is clamped to Vstd_range if set.
+        Result is clamped to Vstd_max if set.
         """
         if not self._x_hist:
             return None
@@ -257,10 +257,10 @@ class CapExtrapolator:
         Vbx = _extrap(xh, self.order)
         Vby = _extrap(yh, self.order)
 
-        if self.Vstd_range is not None:
+        if self.Vstd_max is not None:
             r = np.sqrt(Vbx ** 2 + Vby ** 2)
-            if r > self.Vstd_range:
-                scale = self.Vstd_range / r
+            if r > self.Vstd_max:
+                scale = self.Vstd_max / r
                 Vbx  *= scale
                 Vby  *= scale
 
@@ -277,18 +277,20 @@ class CapExtrapolator:
             'CapExtrapolator_kwargs': dict(
                 support    = self.support,
                 order      = self.order,
-                Vstd_range = self.Vstd_range,
+                Vstd_max   = self.Vstd_max,
                 x_hist     = list(self._x_hist),
                 y_hist     = list(self._y_hist),
             )
         }
 
     def _deserialize_state(self, state: dict):
-        self.support    = state.get('support',    self.support)
-        self.order      = state.get('order',      self.order)
-        self.Vstd_range = state.get('Vstd_range', self.Vstd_range)
-        self._x_hist    = [float(v) for v in state.get('x_hist', [])]
-        self._y_hist    = [float(v) for v in state.get('y_hist', [])]
+        # Older files carry 'Vstd_range' here (the old clamp); ignored, the
+        # owning CapContext re-syncs Vstd_max.
+        self.support  = state.get('support',  self.support)
+        self.order    = state.get('order',    self.order)
+        self.Vstd_max = state.get('Vstd_max', self.Vstd_max)
+        self._x_hist  = [float(v) for v in state.get('x_hist', [])]
+        self._y_hist  = [float(v) for v in state.get('y_hist', [])]
 
     def __str__(self) -> str:
         return (

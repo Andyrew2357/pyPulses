@@ -25,12 +25,19 @@ class cryomagnetics4G(pyvisaDevice):
     H_tol_kG = 1e-3 # finite-precision field strength tolerance
     H_sweep_tol = 0.01
 
+    rate_ranges = range(5)  # RATE ranges used by SWEEP UP / DOWN
+
+    # Ramp state; see start_ramp
+    _ramp_target_kG = None  # None when no ramp is active
+    _ramp_restore_rates = None  # {range: A / s}, rates before the ramp
+
     def __init__(self,
         resource_name: str, 
         registry_id: str | None = None,
         logger: Logger | None = None,
         skip_connect: bool = False,
-        **kwargs,              
+        coil_constant: float | None = None,
+        **kwargs,
     ):
         """
         Parameters
@@ -41,10 +48,19 @@ class cryomagnetics4G(pyvisaDevice):
             Name to register this instance under in the HardwareRegistry
         logger : Logger, optional
             logger used by abstractDevice.
+        coil_constant : float, optional
+            Magnet coil constant in T / A. Required by start_ramp, since the
+            supply takes rates in A / s.
         **kwargs
         """
 
+        self.coil_constant = coil_constant
         super().__init__(resource_name, registry_id, logger, skip_connect, **kwargs)
+
+    def _serialize_state(self) -> dict:
+        state = super()._serialize_state()
+        state['coil_constant'] = self.coil_constant
+        return state
 
     def get_H(self) -> float:
         """
@@ -321,7 +337,10 @@ class cryomagnetics4G(pyvisaDevice):
         if not pshtr:
             self.info("_exit_driven_mode: switch heater already off; already in persistence mode.")
             return True
- 
+
+        # The leads must not keep ramping while the switch closes.
+        self.stop_ramp()
+
         # Read the current field for logging. In driven mode IMAG? and IOUT?
         # should agree; use IOUT? as the authoritative lead/coil field.
         iout_ = self.query("IOUT?").strip()
@@ -382,7 +401,11 @@ class cryomagnetics4G(pyvisaDevice):
         """
         H_kG = 10 * H_T
         self.info(f"CM4G driven: requested sweep to {H_T} T ({H_kG:.4f} kG).")
- 
+
+        # Don't take the move at the slow rate of a ramp left in progress.
+        if self._ramp_target_kG is not None:
+            self.stop_ramp()
+
         if not self._enter_driven_mode():
             self.error("sweep_H_driven: could not enter driven mode safely; aborting.")
             return False
@@ -428,7 +451,146 @@ class cryomagnetics4G(pyvisaDevice):
             self.error("get_H_driven: IOUT? returned unexpected units.")
             return None
         return 0.1 * float(iout_[:-2])
-    
+
+    """Ramping"""
+
+    def start_ramp(self,
+        H_T: float,
+        rate: float,
+        max_driven_H: float = 4.0,
+    ) -> bool:
+        """
+        Start ramping the field toward H_T and return without waiting for it.
+        Read the instantaneous field with get_ramp_field, check progress with
+        is_ramping, and always finish with stop_ramp, which also restores the
+        previous sweep rates.
+
+        If the supply is in persistence mode, this first blocks while the
+        leads are matched and the switch heater turns on. The heater stays on
+        afterward, so the heat load is the same as driven mode.
+
+        The rate is written to every range, but a range is never raised above
+        the rate it is already programmed to.
+
+        Parameters
+        ----------
+        H_T : float
+            Field to ramp to in T.
+        rate : float
+            Ramp rate in T / min.
+        max_driven_H : float, default=4.0
+            Largest field magnitude allowed (T); exceeding it is refused.
+
+        Returns
+        -------
+        success : bool
+            True if the sweep was issued.
+        """
+        if self.coil_constant is None:
+            self.error("start_ramp: coil_constant is not set.")
+            return False
+
+        if rate <= 0:
+            self.error(f"start_ramp: rate must be positive, got {rate}.")
+            return False
+
+        if abs(H_T) > max_driven_H:
+            self.error(f"start_ramp: {H_T} T exceeds the {max_driven_H} T limit.")
+            return False
+
+        if not self._enter_driven_mode():
+            self.error("start_ramp: could not enter driven mode; aborting.")
+            return False
+
+        self.write("SWEEP PAUSE")
+
+        # A ramp may be replacing another, whose rates are not the ones to keep.
+        if self._ramp_restore_rates is None:
+            self._ramp_restore_rates = {
+                r: float(self.query(f"RATE? {r}").strip())
+                for r in self.rate_ranges
+            }
+
+        rate_A_s = rate / self.coil_constant / 60
+        for r, previous in self._ramp_restore_rates.items():
+            self.write(f"RATE {r} {min(rate_A_s, previous):.6f}")
+
+        actual = [float(self.query(f"RATE? {r}").strip()) for r in self.rate_ranges]
+        if min(actual) <= 0:
+            self.error(f"start_ramp: supply reports sweep rates of {actual}.")
+            self.stop_ramp()
+            return False
+        if any(abs(a - rate_A_s) > 0.01 * rate_A_s for a in actual):
+            self.warn(
+                f"start_ramp: requested {rate_A_s:.6f} A/s, supply reports "
+                f"{actual} A/s."
+            )
+
+        H_kG = 10 * H_T
+        H_current_kG = 10 * self.get_H_driven()
+        self._ramp_target_kG = H_kG
+
+        if abs(H_current_kG - H_kG) < self.H_tol_kG:
+            self.info("start_ramp: already at requested field.")
+            return True
+
+        setting, direction = ("ULIM", "UP") if H_kG > H_current_kG \
+                             else ("LLIM", "DOWN")
+        if not self._set_verify(setting, H_kG, self.H_tol_kG):
+            self.error(f"start_ramp: failed to set {setting}.")
+            self.stop_ramp()
+            return False
+
+        self.write(f"SWEEP {direction}")
+        self.info(f"start_ramp: ramping to {H_T} T at {rate} T/min.")
+        return True
+
+    def get_ramp_field(self) -> float | None:
+        """
+        Query the instantaneous field during a ramp.
+
+        Returns
+        -------
+        H : float or None
+            Field in T, or None on communication error.
+        """
+        return self.get_H_driven()
+
+    def is_ramping(self) -> bool:
+        """
+        Whether a ramp is still on its way to its target. False once it has
+        arrived, but stop_ramp is still needed to restore the sweep rates.
+
+        Returns
+        -------
+        bool
+        """
+        if self._ramp_target_kG is None:
+            return False
+
+        H_T = self.get_H_driven()
+        return H_T is None or \
+            abs(10 * H_T - self._ramp_target_kG) >= self.H_tol_kG
+
+    def stop_ramp(self) -> bool:
+        """
+        Hold the field where it is and restore the sweep rates in force before
+        the ramp. The heater stays on. Safe to call if no ramp is active.
+
+        Returns
+        -------
+        success : bool
+        """
+        self.write("SWEEP PAUSE")
+        self._ramp_target_kG = None
+
+        if self._ramp_restore_rates is not None:
+            for r, previous in self._ramp_restore_rates.items():
+                self.write(f"RATE {r} {previous:.6f}")
+            self._ramp_restore_rates = None
+
+        return True
+
 
 @register_device_class("CM4GChannel")
 class CM4GChannel(AsyncChannel):

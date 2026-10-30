@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from .cap_filter import CapFilter
 from .context import CapContext
-from .config import CAP_INIT_P_MULT_THREE_POINT, CAP_INIT_P_MULT_TWO_POINT
+from .config import (
+    CAP_INIT_P_MULT_THREE_POINT, CAP_INIT_P_MULT_TWO_POINT, VSTD_MAX_DEFAULT,
+)
 from ...devices.channel_adapter import ScalarChannel, LockInChannel
 from ...core.job import checkpoint
 from ...core.sidecar import LinePane, LineConfig, Sidecar
@@ -30,7 +32,7 @@ class ThreePointBalanceResult():
     Attributes
     ----------
     status : bool
-        True if V0 lies within Vstd_range.
+        True if V0 lies within Vstd_max.
     V0 : complex
         Balance point in Vstd space (V0.real = in-phase, V0.imag = out-of-phase).
     A_complex : complex
@@ -119,7 +121,7 @@ class TwoPointBalanceResult():
     Attributes
     ----------
     status : bool
-        True if V0 lies within Vstd_range.
+        True if V0 lies within Vstd_max.
     V0 : complex
         Balance point in Vstd space.
     A_complex : complex
@@ -306,7 +308,7 @@ def cap_balance_three_point(
     wait: float = 3.0,
     move_to_balance: bool = True,
     robust_error: bool = False,
-    ignore_range_warning: bool = False,
+    Vstd_max: float = VSTD_MAX_DEFAULT,
     logger: logging.Logger | None = None,
     plot: bool = False,
     frame: int = 0,
@@ -335,7 +337,7 @@ def cap_balance_three_point(
     Cstd : float
         Standard capacitance.
     Vstd_range : float
-        Maximum Vstd magnitude.
+        Scale of the calibration steps (not a limit; see Vstd_max).
     small_step : (float, float)
         (vc, vr) as fractions of Vstd_range for the base measurement point.
     large_step : (float, float)
@@ -346,16 +348,18 @@ def cap_balance_three_point(
         Seconds to wait after setting Vstd before sampling.
     move_to_balance : bool
         If True and status is good, move Vstd to V0 after solving.
-    robust_error : bool default=True
-        Whether to take samples when finding the residual balance error
-    ignore_range_warning : bool
-        If True, allow Vstd to exceed 2 V rms during measurement.
+    robust_error : bool, default=False
+        Whether to take `samples` readings (rather than one) for the
+        residual balance error.
+    Vstd_max : float, default=VSTD_MAX_DEFAULT
+        Hard limit on |Vstd| (normally ctx.Vstd_max). Raises ValueError
+        before moving if any of the three points would exceed it; a balance
+        point beyond it gives status=False and is not moved to.
     logger : Logger, optional
     plot : bool, default=False
         Whether to plot lock-in readings during the initialization
     frame : int, default=0
         Which frame to use for plotting
-    
 
     Returns
     -------
@@ -365,27 +369,17 @@ def cap_balance_three_point(
     vc, vr   = small_step
     dvc, dvr = large_step
 
-    if not ignore_range_warning:
-        hi = max(
-            np.sqrt(vr ** 2 + (vc + dvc) ** 2),
-            np.sqrt(vc ** 2 + (vr + dvr) ** 2),
+    Vhi = Vstd_range * max(
+        np.sqrt(vr ** 2 + (vc + dvc) ** 2),
+        np.sqrt(vc ** 2 + (vr + dvr) ** 2),
+    )
+    if Vhi > Vstd_max:
+        raise ValueError(
+            f"Three-point balance cancelled: Vstd would reach {Vhi:.5g} > "
+            f"Vstd_max={Vstd_max:.5g}. Reduce Vstd_range or the step sizes, "
+            f"or raise Vstd_max."
         )
-        Vhi = Vstd_range * hi
-        if Vhi > 1.0:
-            msg = (
-                f"Balance cancelled: Vstd would reach {Vhi:.5f}. "
-                f"Reduce step sizes, or set ignore_range_warning=True."
-            )
-            if logger:
-                logger.warning(msg)
-            else:
-                print(f"WARNING: {msg}")
-            return ThreePointBalanceResult(
-                status=False, V0=0j, A_complex=0j,
-                A_matrix=np.zeros((2, 2)), P=np.eye(2),
-                error=None, Vex=Vex, Cstd=Cstd,
-            )
-        
+
     # Set up the pane for plotting, if needed
     pane = _setup_lockin_pane(frame=frame) if (plot and samples > 1) else None
     sample_count = 0    
@@ -461,7 +455,7 @@ def cap_balance_three_point(
 
     Cex = -Cstd * Vc0 / Vex
     Closs = -Cstd * Vr0 / Vex
-    in_range = abs(V0) <= Vstd_range
+    in_range = abs(V0) <= Vstd_max
 
     error = None
     if in_range and move_to_balance:
@@ -484,7 +478,7 @@ def cap_balance_three_point(
     elif not in_range and logger:
         logger.warning(
             f"Balance point |V0|={abs(V0):.5e} exceeds "
-            f"Vstd_range={Vstd_range:.5e}. Not moving to balance."
+            f"Vstd_max={Vstd_max:.5e}. Not moving to balance."
         )
 
     result = ThreePointBalanceResult(
@@ -512,13 +506,13 @@ def cap_balance_two_point(
     lockin_call: Callable[[], tuple],
     Vex: float,
     Cstd: float,
-    Vstd_range: float,
     dVstd: complex,
     Vi: complex | None = None,
     samples: int   = 1,
     wait: float = 1.0,
     fudge: float = CAP_INIT_P_MULT_TWO_POINT,
     move_to_balance: bool = True,
+    Vstd_max: float = VSTD_MAX_DEFAULT,
     logger: logging.Logger | None = None,
     plot: bool = False,
     frame: int = 0,
@@ -541,7 +535,6 @@ def cap_balance_two_point(
     lockin_call : callable -> (ndarray(2,), ndarray(2,2))
     Vex : float
     Cstd : float
-    Vstd_range : float
     dVstd : complex
         Vstd step (dVc + i*dVr, amplitude units).
     Vi : complex, optional
@@ -554,6 +547,10 @@ def cap_balance_two_point(
         Multiplicative factor when propagating measurement covariance to P.
     move_to_balance : bool
         If True and status is good, move Vstd to V0.
+    Vstd_max : float, default=VSTD_MAX_DEFAULT
+        Hard limit on |Vstd| (normally ctx.Vstd_max). Raises ValueError
+        before moving if Vi or Vi + dVstd would exceed it; a balance point
+        beyond it gives status=False and is not moved to.
     logger : Logger, optional
     plot : bool, default=False
         Whether to plot lock-in readings during the initialization
@@ -565,14 +562,25 @@ def cap_balance_two_point(
     TwoPointBalanceResult
     """
 
-    pane = _setup_lockin_pane(frame=frame) if (plot and samples > 1) else None
-    sample_count = 0
-
     if Vi is None:
         r0  = float(Vstd())
         th0 = float(Theta())
         Vi = complex(r0 * np.cos(np.deg2rad(th0)), r0 * np.sin(np.deg2rad(th0)))
+        set_Vi = False
     else:
+        set_Vi = True
+
+    Vhi = max(abs(Vi), abs(Vi + dVstd))
+    if Vhi > Vstd_max:
+        raise ValueError(
+            f"Two-point balance cancelled: Vstd would reach {Vhi:.5g} > "
+            f"Vstd_max={Vstd_max:.5g}. Reduce Vi/dVstd or raise Vstd_max."
+        )
+
+    pane = _setup_lockin_pane(frame=frame) if (plot and samples > 1) else None
+    sample_count = 0
+
+    if set_Vi:
         Vi = _set_Vstd_complex(Vstd, Theta, Vi, wait=wait)
 
     Li_mean, Li_cov = _sample_lockin(lockin_call, samples,
@@ -588,7 +596,7 @@ def cap_balance_two_point(
     A_c = (Lf - Li) / (Vf - Vi)
     V0 = Vi - Li / A_c
 
-    in_range = abs(V0) <= Vstd_range
+    in_range = abs(V0) <= Vstd_max
 
     dV_actual = Vf - Vi
     dV_vec = np.array([dV_actual.real, dV_actual.imag])
@@ -614,7 +622,7 @@ def cap_balance_two_point(
     elif not in_range and logger:
         logger.warning(
             f"Two-point: |V0|={abs(V0):.5e} exceeds "
-            f"Vstd_range={Vstd_range:.5e}. Not moving."
+            f"Vstd_max={Vstd_max:.5e}. Not moving."
         )
 
     result = TwoPointBalanceResult(
@@ -685,7 +693,7 @@ class RefineBalanceResult:
     ----------
     status : bool
         True if all n_refine steps completed with V0 staying inside
-        Vstd_range and the local gain non-degenerate throughout. False
+        Vstd_max and the local gain non-degenerate throughout. False
         means refinement was aborted early -- V0/residual reflect the
         last good step, not what was requested.
     V0 : complex
@@ -716,64 +724,92 @@ class RefineBalanceResult:
 
 
 def cap_balance_refine(
-    Vstd: ScalarChannel,
-    Theta: ScalarChannel,
-    lockin_call: LockInChannel,
-    Vex: float,
-    Cstd: float,
-    Vstd_range: float,
-    result: ThreePointBalanceResult | TwoPointBalanceResult,
+    ctx: CapContext,
     n_refine: int = 1,
     samples: int = 1,
-    wait: float = 1.0,
+    wait: float | None = None,
+    result: ThreePointBalanceResult | TwoPointBalanceResult | None = None,
+    use_matrix: bool = True,
     logger: logging.Logger | None = None,
 ) -> RefineBalanceResult:
     """
-    Refine an existing three-point or two-point balance result's V0 via
-    `n_refine` fixed-gain Newton correction steps.
+    Re-null the bridge with `n_refine` fixed-gain Newton steps, using the
+    gain already stored on `ctx`.
+
+        cap.cap_balance_refine(ctx)              # one step from where Vstd is
+        cap.cap_balance_refine(ctx, n_refine=3)
 
     Each step: move to the current best V0, read the residual lock-in
-    signal there, and correct V0 using the gain already calibrated in
-    `result` (the full A_matrix for a ThreePointBalanceResult, or the
-    compressed A_complex for a TwoPointBalanceResult) -- the gain itself
-    is *not* re-estimated at each step. This is deliberately simpler than
-    cap_balance, which continuously re-estimates the gain via a Kalman
-    filter; use this when you just want to sharpen an existing
-    calibration's balance point without that overhead/complexity (see
-    routines/linear_balance.py's lstsqBalance.refine() for the same
-    "step to current best guess, measure residual, correct" pattern in a
-    different context).
+    signal there, and correct V0 by inverting the stored gain -- the gain
+    itself is *not* re-estimated (contrast cap_balance's Kalman tracking).
+    By default the gain is ctx.cap_filter's (K_matrix when present and
+    `use_matrix`, as cap_measure does, else A) and the first step starts
+    from the current Vstd, so this works right after cap_initialize,
+    CapCalibration.apply, or a gate move away from the balance point.
+    Vstd is left at the refined V0; the filter and extrapolator are not
+    touched.
 
     Parameters
     ----------
-    Vstd, Theta, lockin_call, Vex, Cstd, Vstd_range
-        Same as cap_balance_two_point/cap_balance_three_point.
-    result : ThreePointBalanceResult or TwoPointBalanceResult
-        A prior balance result to refine (its own gain is reused, not
-        modified).
+    ctx : CapContext
     n_refine : int, default=1
         Number of correction steps to take.
     samples : int, default=1
         lockin_call averaging per step.
-    wait : float, default=1.0
+    wait : float, optional
         Seconds to wait after setting Vstd before reading the lock-in.
+        Defaults to ctx.settle_time.
+    result : ThreePointBalanceResult or TwoPointBalanceResult, optional
+        Take the gain (A_matrix for three-point, A_complex for two-point)
+        and starting V0 from this result instead of ctx.cap_filter and the
+        current Vstd.
+    use_matrix : bool, default True
+        Use the full 2x2 gain when available, else the compressed complex
+        gain.
     logger : Logger, optional
+        Defaults to ctx.logger.
 
     Returns
     -------
     RefineBalanceResult
     """
-    V0 = result.V0
-    if isinstance(result, ThreePointBalanceResult):
-        A_matrix, A_complex = result.A_matrix, None
+    if wait is None:
+        wait = ctx.settle_time
+    if logger is None:
+        logger = ctx.logger
+
+    if result is not None:
+        V0 = result.V0
+        if use_matrix and isinstance(result, ThreePointBalanceResult):
+            A_matrix, A_complex = result.A_matrix, None
+        else:
+            A_matrix, A_complex = None, result.A_complex
     else:
-        A_matrix, A_complex = None, result.A_complex
+        if ctx.cap_filter is None:
+            raise RuntimeError(
+                "cap_balance_refine needs a stored gain: initialize the "
+                "filter first (cap_initialize, CapCalibration.apply, ...) "
+                "or pass result=."
+            )
+        V0 = ctx.get_Vstd_complex()
+        K = ctx.cap_filter.K_matrix
+        if use_matrix and K is not None:
+            A_matrix, A_complex = K, None
+        else:
+            X, Y = ctx.cap_filter.get_A()
+            A_matrix, A_complex = None, complex(X, Y)
+
+    def _move(V: complex) -> complex:
+        V = ctx.set_Vstd_complex(V)     # clamps to Vstd_max
+        if wait > 0:
+            time.sleep(wait)
+        return V
 
     residual: tuple | None = None
     for i in range(n_refine):
         checkpoint()
-        V0 = _set_Vstd_complex(Vstd, Theta, V0, wait=wait, max_amp=Vstd_range)
-        mean, _ = _sample_lockin(lockin_call, samples)
+        V0 = _move(V0)
+        mean, _ = _sample_lockin(ctx.lockin_call, samples)
         LX, LY = float(mean[0]), float(mean[1])
         residual = (LX, LY)
 
@@ -790,11 +826,11 @@ def cap_balance_refine(
             )
 
         V0_new = V0 - complex(dV[0], dV[1])
-        if abs(V0_new) > Vstd_range:
+        if abs(V0_new) > ctx.Vstd_max:
             if logger:
                 logger.warning(
                     f"cap_balance_refine: step {i + 1}/{n_refine} would push "
-                    "V0 outside Vstd_range; stopping early."
+                    "V0 outside Vstd_max; stopping early."
                 )
             return RefineBalanceResult(
                 status=False, V0=V0, residual=residual,
@@ -802,12 +838,12 @@ def cap_balance_refine(
             )
         V0 = V0_new
 
-    V0 = _set_Vstd_complex(Vstd, Theta, V0, wait=wait, max_amp=Vstd_range)
-    mean, _ = _sample_lockin(lockin_call, samples)
+    V0 = _move(V0)
+    mean, _ = _sample_lockin(ctx.lockin_call, samples)
     residual = (float(mean[0]), float(mean[1]))
 
-    Cex = -Cstd * V0.real / Vex
-    Closs = -Cstd * V0.imag / Vex
+    Cex = -ctx.Cstd * V0.real / ctx.Vex
+    Closs = -ctx.Cstd * V0.imag / ctx.Vex
 
     if logger:
         logger.info(
@@ -861,7 +897,7 @@ def cap_initialize_filter(
     else:
         ctx.cap_filter.K_matrix = None
 
-    ctx.extrapolator.Vstd_range = ctx.Vstd_range
+    ctx.extrapolator.Vstd_max = ctx.Vstd_max
     ctx.extrapolator.clear()
     ctx.extrapolator.push(result.V0.real, result.V0.imag)
     ctx._Vstd_now = None
@@ -892,9 +928,8 @@ def cap_initialize(
     # Three-point options
     small_step: Tuple[float, float] = (0.01, 0.01),
     large_step: Tuple[float, float] = (0.94, 0.94),
-    ignore_range_warning: bool = False,
     robust_error: bool = False,
- 
+
     # Two-point options
     dVstd: complex | None = None,
     Vi: complex | None = None,
@@ -910,11 +945,16 @@ def cap_initialize(
     """
     Convenience wrapper that runs a full initialization pass from a CapContext.
  
-    Pulls hardware accessors (Vstd, Theta, lockin_call), physical parameters 
-    (Vex, Cstd, Vstd_range), and timing (settle_time) directly from `ctx`, runs 
-    either a three-point or two-point balance, then calls `cap_initialize_filter` 
-    to seed the filter and extrapolator.
- 
+    Pulls hardware accessors (Vstd, Theta, lockin_call), physical parameters
+    (Vex, Cstd, Vstd_range, Vstd_max), and timing (settle_time) directly from
+    `ctx`, runs either a three-point or two-point balance, then calls
+    `cap_initialize_filter` to seed the filter and extrapolator.
+
+    Raises ValueError (before moving) if the calibration points would exceed
+    ctx.Vstd_max, and RuntimeError if the balance point lands beyond
+    ctx.Vstd_max; the filter is left untouched in both cases. Vstd_range
+    only sets the size of the calibration steps.
+
     Parameters
     ----------
     ctx : CapContext
@@ -924,16 +964,16 @@ def cap_initialize(
         Three-point only. (vc, vr) as fractions of Vstd_range.
     large_step : (float, float)
         Three-point only. (dvc, dvr) as fractions of Vstd_range.
-    ignore_range_warning : bool
-        Three-point only. Skip the amplitude safety check.
-    robust_error : bool default=True
-        Whether to take samples when finding the residual balance error
+    robust_error : bool, default=False
+        Three-point only. Take `samples` readings (rather than one) for the
+        residual balance error.
     dVstd : complex, optional
-        Two-point only. Vstd step. Required if method='two_point'.
+        Two-point only. Vstd step. Defaults to 0.93 * Vstd_range.
     Vi : complex, optional
-        Two-point only. Starting Vstd; defaults to current hardware setting.
-    fudge : float
-        Two-point only. Multiplier on the propagated covariance.
+        Two-point only. Starting Vstd. Defaults to 0.01 * Vstd_range.
+    fudge : float, optional
+        Multiplier on the propagated covariance P. Defaults to
+        CAP_INIT_P_MULT_THREE_POINT / CAP_INIT_P_MULT_TWO_POINT.
     samples : int
         Number of lockin_call invocations per measurement point. Default 5.
     wait : float, optional
@@ -966,9 +1006,10 @@ def cap_initialize(
             large_step = large_step,
             samples = samples,
             wait = wait,
+            fudge = fudge,
             move_to_balance = move_to_balance,
             robust_error = robust_error,
-            ignore_range_warning = ignore_range_warning,
+            Vstd_max = ctx.Vstd_max,
             logger = ctx.logger,
             plot = plot,
             frame = frame,
@@ -988,18 +1029,23 @@ def cap_initialize(
             lockin_call = ctx.lockin_call,
             Vex = ctx.Vex,
             Cstd = ctx.Cstd,
-            Vstd_range = ctx.Vstd_range,
             dVstd = dVstd,
             Vi = Vi,
             samples = samples,
             wait = wait,
             fudge = fudge,
             move_to_balance = move_to_balance,
+            Vstd_max = ctx.Vstd_max,
             logger = ctx.logger,
             plot = plot,
             frame = frame,
         )
     else:
         raise ValueError(f"Unknown method '{method}'. Use 'three_point' or 'two_point'.")
- 
+
+    if not bal.status:
+        raise RuntimeError(
+            f"{method} balance out of range: |V0|={abs(bal.V0):.3e} > "
+            f"Vstd_max={ctx.Vstd_max:.3e}. Filter not initialized."
+        )
     return cap_initialize_filter(ctx, bal)

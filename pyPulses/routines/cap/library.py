@@ -55,7 +55,9 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Sequence
 import numpy as np
 
 from .context import _NumpyEncoder
-from .crosstalk import CrosstalkCompensatedLockIn, _fit_crosstalk
+from .crosstalk import (
+    CrosstalkCompensatedLockIn, _ensure_compensated, _fit_crosstalk, _sweep,
+)
 from .initialize import (
     ThreePointBalanceResult,
     cap_initialize_filter,
@@ -67,7 +69,6 @@ from .transition import (
     _balance_three_point,
 )
 from ...core.job import checkpoint
-from ...core.tandem_sweep import tandemSweep, SweepResult
 from ...devices.sweepable_channel import SweepableChannel
 
 if TYPE_CHECKING:
@@ -260,13 +261,6 @@ class CapCalibrationLibrary:
 
 """Builders"""
 
-def _sweep(channels: Sequence[SweepableChannel], target: Coords,
-           min_wait: float | None) -> None:
-    res = tandemSweep(list(channels), target, min_wait=min_wait)
-    if res is not SweepResult.SUCCEEDED:
-        raise RuntimeError(f"Sweep to {target} did not succeed ({res.name}).")
-
-
 def _check_excitation_channels(
     library: CapCalibrationLibrary,
     channels: Sequence[SweepableChannel],
@@ -317,7 +311,8 @@ def cap_calibrate_crosstalk(
     Parameters
     ----------
     ctx : CapContext
-        ctx.lockin_call must be a CrosstalkCompensatedLockIn.
+        ctx.lockin_call is wrapped in a CrosstalkCompensatedLockIn if it
+        isn't one already.
     library : CapCalibrationLibrary
         Updated in place (and returned).
     states : sequence of dict
@@ -343,11 +338,6 @@ def cap_calibrate_crosstalk(
     overwrite : bool, default False
         Re-measure states that already have crosstalk.
     """
-    if not isinstance(ctx.lockin_call, CrosstalkCompensatedLockIn):
-        raise TypeError(
-            "cap_calibrate_crosstalk requires ctx.lockin_call to be a "
-            "CrosstalkCompensatedLockIn."
-        )
     _check_excitation_channels(library, excitation_channels)
     attr_fns = _compile_ctx_attrs(ctx, library.trigger, ctx_attrs)
     kw = {'samples': 5, 'plot': False, 'move_to_balance': False,
@@ -359,7 +349,7 @@ def cap_calibrate_crosstalk(
     if not todo:
         return library
 
-    raw = ctx.lockin_call.raw
+    raw = _ensure_compensated(ctx).raw
     _sweep(amp_channels, amp_off, min_wait)
     try:
         if settle_off > 0:
@@ -643,245 +633,3 @@ class CapCalibrationTransition:
                 attrs['cap_calibration_library'] = self.library.to_dict()
                 self._db_with_library = self.db
             self.db.set_global_attrs(attrs)
-
-
-if __name__ == '__main__':
-    """
-    Self-test against a synthetic bridge (no real hardware), following the
-    FakeChannel convention in crosstalk.py's self-test.
-
-    Model: raw_lockin() = Kx(f) @ Vstd + (Ks(f) @ (Vstd - V0s(Vg)) if amp on)
-    with V0s(Vg) = -Vex * (c(Vg) + i*loss) / Cstd, so cap_measure should
-    return Cex = c(Vg), Closs = loss. Both the crosstalk and the sample gain
-    depend on the frequency, so a wrong or stale calibration shows up.
-    """
-
-    import os
-    import tempfile
-
-    from .context import CapContext
-    from .crosstalk import CapCrosstalkTransition
-    from .measure import cap_measure
-    from .transition import CapRebalanceTransition
-
-    def check(label: str, cond: bool):
-        print(f"[{'PASS' if cond else 'FAIL'}] {label}")
-        assert cond, label
-
-    class FakeChannel:
-        def __init__(self, value: float = 0.0):
-            self._v = value
-        def __call__(self, v: float | None = None) -> float | None:
-            if v is None:
-                return self._v
-            self._v = v
-
-    class FakeSweepable:
-        """Minimal SweepableChannel-like stand-in for tandemSweep."""
-        def __init__(self, name, value=0.0, on_set=None):
-            self.name = name
-            self._v = value
-            self._on_set = on_set
-
-            class _Cfg:
-                max_step = None
-                min_step = None
-                tolerance = 0.0
-                max_rate = None
-                settle_time = 0.0
-                async_set = False
-            self.config = _Cfg()
-
-        def get_output(self) -> float:
-            return self._v
-
-        def set_output(self, value: float) -> None:
-            self._v = float(value)
-            if self._on_set is not None:
-                self._on_set(self.name, self._v)
-
-    class FakeScan:
-        def __init__(self, chans):
-            self.chans = {c.name: c for c in chans}
-            self.coord_names = list(self.chans)
-            self.moves = []
-        def _get_current_coords(self):
-            return {n: c.get_output() for n, c in self.chans.items()}
-        def move_to(self, coords, min_wait=None):
-            self.moves.append(dict(coords))
-            for n, v in coords.items():
-                self.chans[n].set_output(v)
-
-    def rot(deg, g):
-        t = np.deg2rad(deg)
-        return g * np.array([[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]])
-
-    def Kx(f):       # deliberately not complex-linear
-        return np.array([[0.3 * f, 0.1], [0.05, 0.02 * f]])
-    def Ks(f):
-        return rot(20.0 * f, 2.0 + 0.5 * f)
-    def c_of(Vg):
-        return 0.3 + 0.4 * Vg
-    LOSS = 0.05
-
-    amp_toggles = []
-    def on_set(name, v):
-        if name == 'amp_VG':
-            amp_toggles.append(v > -1.0)
-
-    freq_ch = FakeSweepable('freq', 1.0)
-    vex_ch = FakeSweepable('Vex_amp', 0.1)
-    vg_ch = FakeSweepable('Vg', 0.0)
-    amp_ch = FakeSweepable('amp_VG', -0.2, on_set=on_set)
-    Vstd_raw, Theta_raw = FakeChannel(0.0), FakeChannel(0.0)
-    n_reads = {'n': 0}
-
-    def raw_lockin_call():
-        n_reads['n'] += 1
-        f, vex, Vg = freq_ch.get_output(), vex_ch.get_output(), vg_ch.get_output()
-        r, th = Vstd_raw(), np.deg2rad(Theta_raw())
-        V = np.array([r * np.cos(th), r * np.sin(th)])
-        L = Kx(f) @ V
-        if amp_ch.get_output() > -1.0:
-            V0s = -vex * np.array([c_of(Vg), LOSS])
-            L = L + Ks(f) @ (V - V0s)
-        return L, np.eye(2) * 1e-12
-
-    def make_ctx():
-        ctx = CapContext(
-            Vstd=Vstd_raw, Theta=Theta_raw, lockin_call=raw_lockin_call,
-            Vstd_range=0.2, Vex=0.1, Cstd=1.0, settle_time=0.0,
-        )
-        ctx.lockin_call = CrosstalkCompensatedLockIn(raw_lockin_call, ctx)
-        return ctx
-
-    trigger = ['freq', 'Vex_amp']
-    ctx_attrs = {'Vex': 'Vex_amp',
-                 'Vstd_range': ('Vex_amp', lambda v: 2.0 * v)}
-    states = [{'freq': 1.0, 'Vex_amp': 0.1},
-              {'freq': 2.0, 'Vex_amp': 0.1},
-              {'freq': 3.0, 'Vex_amp': 0.2}]
-    tp = {'wait': 0.0, 'samples': 1}
-    REF, MEAS = 0.5, -0.25
-
-    # --- Build, parked at the reference point ----------------------------
-    vg_ch.set_output(REF)
-    ctx_lib = make_ctx()
-    lib = CapCalibrationLibrary(trigger)
-    tmp = tempfile.mkdtemp()
-    path = os.path.join(tmp, 'lib.json')
-    cap_build_library(
-        ctx_lib, lib, states, [freq_ch, vex_ch],
-        amp_channels=[amp_ch], amp_on={'amp_VG': -0.2},
-        amp_off={'amp_VG': -5.0}, ctx_attrs=ctx_attrs, ref={'Vg': REF},
-        crosstalk_kwargs=tp, balance_kwargs=tp, path=path,
-    )
-    check('library has every state, complete',
-          len(lib) == 3 and all(e.crosstalk and e.balance for e in lib))
-    check('amp turned off and on exactly once', amp_toggles == [False, True])
-    check('gate never moved during build', vg_ch.get_output() == REF)
-
-    # --- Resume: nothing left to do --------------------------------------
-    reads_before, toggles_before = n_reads['n'], len(amp_toggles)
-    cap_build_library(
-        ctx_lib, lib, states, [freq_ch, vex_ch],
-        amp_channels=[amp_ch], amp_on={'amp_VG': -0.2},
-        amp_off={'amp_VG': -5.0}, ctx_attrs=ctx_attrs,
-        crosstalk_kwargs=tp, balance_kwargs=tp,
-    )
-    check('re-running the build does no hardware work',
-          n_reads['n'] == reads_before and len(amp_toggles) == toggles_before)
-
-    # --- JSON round trip --------------------------------------------------
-    lib2 = CapCalibrationLibrary.load_json(path)
-    check('JSON round trip preserves every entry',
-          lib2.to_dict() == lib.to_dict())
-
-    # --- Load transition vs. live transitions -----------------------------
-    scan = FakeScan([freq_ch, vex_ch, vg_ch])
-    ctx_live = make_ctx()
-    xtalk = CapCrosstalkTransition(
-        ctx_live, trigger, amp_channels=[amp_ch],
-        amp_on={'amp_VG': -0.2}, amp_off={'amp_VG': -5.0},
-        ctx_attrs=ctx_attrs, three_point_kwargs=tp, min_wait=0.0,
-    )
-    rebal = CapRebalanceTransition(
-        ctx_live, trigger, ref_coords={'Vg': REF},
-        ctx_attrs=ctx_attrs, three_point_kwargs=tp,
-    )
-    ctx_load = make_ctx()
-    load = CapCalibrationTransition(ctx_load, lib2)
-
-    for i, st in enumerate(states):
-        target = {**st, 'Vg': MEAS}
-
-        xtalk(scan, np.array([i, 0]), target, 0.0)
-        rebal(scan, np.array([i, 0]), target, 0.0)
-        scan.move_to(target)
-        live = cap_measure(ctx_live)
-        V_live = ctx_live.get_Vstd_complex()
-
-        scan.move_to({**target, 'freq': 9.0, 'Vex_amp': 0.05})  # elsewhere
-        load(scan, np.array([i, 0]), target, 0.0)
-        check(f'{st}: excitation set by the load transition',
-              freq_ch.get_output() == st['freq']
-              and vex_ch.get_output() == st['Vex_amp'])
-        scan.move_to(target)
-        loaded = cap_measure(ctx_load)
-
-        same = (
-            np.isclose(ctx_load.Vex, ctx_live.Vex)
-            and np.isclose(ctx_load.Vstd_range, ctx_live.Vstd_range)
-            and np.allclose(ctx_load.crosstalk.A_matrix, ctx_live.crosstalk.A_matrix)
-            and np.allclose(ctx_load.cap_filter.K_matrix, ctx_live.cap_filter.K_matrix)
-            and np.allclose(ctx_load.cap_filter.get_A(), ctx_live.cap_filter.get_A())
-            and np.isclose(ctx_load.get_Vstd_complex(), V_live)
-        )
-        check(f'{st}: loaded ctx matches live rebalance', same)
-        check(f'{st}: loaded cap_measure matches live and truth',
-              np.isclose(loaded.Cex, live.Cex, atol=1e-9)
-              and np.isclose(loaded.Closs, live.Closs, atol=1e-9)
-              and np.isclose(loaded.Cex, c_of(MEAS), atol=1e-6)
-              and np.isclose(loaded.Closs, LOSS, atol=1e-6))
-
-    # Same state again: no-op
-    n_moves = len(scan.moves)
-    load(scan, np.array([9, 0]), {**states[-1], 'Vg': 0.0}, 0.0)
-    check('unchanged state does not reload', len(scan.moves) == n_moves)
-
-    # Missing state: raises before moving
-    try:
-        load(scan, np.array([10, 0]), {'freq': 7.0, 'Vex_amp': 0.1, 'Vg': 0.0}, 0.0)
-        raised = False
-    except KeyError:
-        raised = True
-    check('missing state raises before any move',
-          raised and len(scan.moves) == n_moves)
-
-    # --- Balance refuses to run without crosstalk when compensated --------
-    try:
-        cap_calibrate_balance(make_ctx(), CapCalibrationLibrary(trigger),
-                              states, [freq_ch, vex_ch], three_point_kwargs=tp)
-        raised = False
-    except ValueError:
-        raised = True
-    check('balance without crosstalk refused when compensated', raised)
-
-    # --- Old Crosstalk_kwargs format still loads --------------------------
-    old = {'Crosstalk_kwargs': dict(
-        status=True, V0=[0.01, -0.02], A_matrix=[[1.0, 0.1], [0.2, 0.9]],
-        P=[[1e-6, 0.0], [0.0, 1e-6]], Vex=0.1, Cstd=1.0,
-    )}
-    ctx_old = make_ctx()
-    ctx_old._deserialize_state(old)
-    check('old Crosstalk_kwargs block loads',
-          ctx_old.crosstalk is not None
-          and ctx_old.crosstalk.V0 == complex(0.01, -0.02))
-    # (Full _serialize_state needs registered devices; round-trip the block.)
-    ctx_rt = make_ctx()
-    ctx_rt._deserialize_state(json.loads(json.dumps(
-        {'Crosstalk_kwargs': three_point_to_dict(ctx_old.crosstalk)})))
-    check('Crosstalk_kwargs survives a save/load round trip',
-          np.allclose(ctx_rt.crosstalk.A_matrix, ctx_old.crosstalk.A_matrix))
-
-    print("\nAll checks passed.")

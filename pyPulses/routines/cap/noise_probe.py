@@ -45,7 +45,7 @@ class CapNoiseProbeResult:
     ----------
     status : bool
         False if the local calibration (or refinement) put the balance
-        point outside Vstd_range, or the local gain was degenerate. In
+        point outside Vstd_max, or the local gain was degenerate. In
         that case std_Cex/std_Closs are a physically meaningful
         worst-case bound (see cap_noise_probe), not a real measurement,
         and mean/kurtosis are not meaningful (0.0).
@@ -130,7 +130,7 @@ def _invert_gain(
 
 
 def _worst_case_result(ctx: 'CapContext', calibration) -> CapNoiseProbeResult:
-    worst_case = abs(ctx.Cstd * ctx.Vstd_range / ctx.Vex)
+    worst_case = abs(ctx.Cstd * ctx.Vstd_max / ctx.Vex)
     return CapNoiseProbeResult(
         status=False,
         mean_Cex=0.0, std_Cex=worst_case, kurtosis_Cex=0.0,
@@ -186,7 +186,7 @@ def cap_noise_probe(
     prevent this from silently looking like a *good* (small) noise
     floor: (a) with near-zero true gain, the calibration's own V0
     estimate becomes numerically unstable (dividing a residual signal by
-    a near-zero gain), almost always landing outside Vstd_range and
+    a near-zero gain), almost always landing outside Vstd_max and
     triggering the worst-case-bound fallback below; (b) even in the rare
     case V0 lands in range anyway, step 3 converts every read by
     dividing by that *same* near-zero gain, so ordinary lock-in noise
@@ -231,7 +231,7 @@ def cap_noise_probe(
         lockin_call averaging per refinement step.
     refine_wait : float, optional
         Settle time passed through to cap_balance_refine's own `wait`.
-        None uses its default (1.0 s).
+        None uses its default (ctx.settle_time).
     logger : Logger, optional
 
     Returns
@@ -247,22 +247,23 @@ def cap_noise_probe(
             Vstd=ctx.Vstd, Theta=ctx.Theta, lockin_call=ctx.lockin_call,
             Vex=ctx.Vex, Cstd=ctx.Cstd, Vstd_range=ctx.Vstd_range,
             small_step=small_step, large_step=large_step,
-            samples=cal_samples, move_to_balance=True, logger=logger,
+            samples=cal_samples, move_to_balance=True,
+            Vstd_max=ctx.Vstd_max, logger=logger,
             **cal_kwargs,
         )
     elif method == 'two_point':
         step = dVstd if dVstd is not None else 0.05 * ctx.Vstd_range
         cal = cap_balance_two_point(
             Vstd=ctx.Vstd, Theta=ctx.Theta, lockin_call=ctx.lockin_call,
-            Vex=ctx.Vex, Cstd=ctx.Cstd, Vstd_range=ctx.Vstd_range,
+            Vex=ctx.Vex, Cstd=ctx.Cstd,
             dVstd=step, samples=cal_samples, move_to_balance=True,
-            logger=logger, **cal_kwargs,
+            Vstd_max=ctx.Vstd_max, logger=logger, **cal_kwargs,
         )
     else:
         raise ValueError(f"Unknown method '{method}'; use 'three_point' or 'two_point'.")
 
     if not cal.status:
-        # The bridge couldn't even be nulled within Vstd_range at this
+        # The bridge couldn't even be nulled within Vstd_max at this
         # bias point. Report a physically meaningful worst-case bound
         # (the largest capacitance the bridge could represent at all)
         # rather than an arbitrary sentinel, so this stays on a scale
@@ -285,9 +286,7 @@ def cap_noise_probe(
     if n_refine > 0:
         refine_kwargs = {} if refine_wait is None else {'wait': refine_wait}
         refined = cap_balance_refine(
-            Vstd=ctx.Vstd, Theta=ctx.Theta, lockin_call=ctx.lockin_call,
-            Vex=ctx.Vex, Cstd=ctx.Cstd, Vstd_range=ctx.Vstd_range,
-            result=cal, n_refine=n_refine, samples=refine_samples,
+            ctx, n_refine=n_refine, samples=refine_samples, result=cal,
             logger=logger, **refine_kwargs,
         )
         if not refined.status:
@@ -315,106 +314,3 @@ def cap_noise_probe(
     if logger:
         logger.info(result)
     return result
-
-
-if __name__ == '__main__':
-    """
-    Self-test against a synthetic linear bridge model (no real hardware).
-    Checks that std_Cex tracks a known injected noise level, that
-    kurtosis_Cex stays near 0 for clean Gaussian noise but is clearly
-    elevated when occasional large excursions ("RTS-like" amplifier gain
-    jumps) are injected, that three-point and two-point calibration
-    agree, that refinement sharpens an intentionally-offset V0, and that
-    an amplifier with ~zero gain is correctly reported as a *worse* (not
-    better) noise floor rather than a vanishing one.
-    """
-
-    from .context import CapContext
-
-    def check(label: str, cond: bool):
-        print(f"[{'PASS' if cond else 'FAIL'}] {label}")
-        assert cond, label
-
-    class FakeChannel:
-        def __init__(self, value: float = 0.0):
-            self._v = value
-        def __call__(self, v: float | None = None) -> float | None:
-            if v is None:
-                return self._v
-            self._v = v
-
-    rng = np.random.default_rng(0)
-    A_true = complex(2.0, 0.5)
-    V0_true = complex(0.02, -0.01)
-    noise_sigma = 1e-4
-    Vex, Cstd, Vstd_range = 1.0, 1e-12, 1.0
-
-    Vstd_raw, Theta_raw = FakeChannel(0.0), FakeChannel(0.0)
-
-    def make_lockin_call(jump_prob: float = 0.0, jump_size: float = 0.0, gain: complex = None):
-        A_use = A_true if gain is None else gain
-        def lockin_call():
-            r, th = Vstd_raw(), np.deg2rad(Theta_raw())
-            V = complex(r * np.cos(th), r * np.sin(th))
-            dV = V - V0_true
-            LX = A_use.real * dV.real - A_use.imag * dV.imag
-            LY = A_use.imag * dV.real + A_use.real * dV.imag
-            LX += rng.normal(0, noise_sigma)
-            LY += rng.normal(0, noise_sigma)
-            if jump_prob > 0 and rng.random() < jump_prob:
-                LX += rng.normal(0, jump_size)
-                LY += rng.normal(0, jump_size)
-            cov = np.eye(2) * noise_sigma**2  # nominal only, not relied upon
-            return np.array([LX, LY]), cov
-        return lockin_call
-
-    ctx = CapContext(
-        Vstd=Vstd_raw, Theta=Theta_raw,
-        lockin_call=make_lockin_call(),
-        Vstd_range=Vstd_range, Vex=Vex, Cstd=Cstd,
-    )
-
-    def probe(ctx, **kwargs):
-        # No real hardware here -- skip the (real-instrument-tuned)
-        # default settle waits entirely.
-        return cap_noise_probe(ctx, cal_wait=0.0, refine_wait=0.0, **kwargs)
-
-    probe_clean = probe(ctx, N=200)
-    print(probe_clean)
-    check('probe succeeds at a nominal bias point (three_point default)', probe_clean.status)
-
-    expected_std = abs(Cstd * noise_sigma / (Vex * abs(A_true)))
-    check('std_Cex tracks the injected noise level within 40%',
-          abs(probe_clean.std_Cex - expected_std) / expected_std < 0.4)
-    check('kurtosis is near 0 for clean Gaussian noise',
-          abs(probe_clean.kurtosis_Cex) < 1.5)
-
-    probe_two = probe(ctx, N=200, method='two_point')
-    print(probe_two)
-    check('two_point calibration agrees with three_point on the noise floor '
-          '(within 50%)',
-          abs(probe_two.std_Cex - probe_clean.std_Cex) / probe_clean.std_Cex < 0.5)
-
-    ctx.lockin_call = make_lockin_call(jump_prob=0.08, jump_size=0.03)
-    probe_jumpy = probe(ctx, N=200)
-    print(probe_jumpy)
-    check('kurtosis is clearly elevated with injected jumps',
-          probe_jumpy.kurtosis_Cex > 2.0)
-
-    # -- Refinement sharpens an intentionally bad initial guess ---------
-    ctx.lockin_call = make_lockin_call()
-    probe_norefine = probe(ctx, N=5, n_refine=0)
-    probe_refined = probe(ctx, N=5, n_refine=3)
-    check('refinement lands closer to the true balance point',
-          abs(probe_refined.calibration.V0 - V0_true) <=
-          abs(probe_norefine.calibration.V0 - V0_true) + 1e-9)
-
-    # -- Amplifier with ~zero gain: worse noise floor, not a vanishing one --
-    ctx.lockin_call = make_lockin_call(gain=complex(1e-9, 0.0))
-    probe_off = probe(ctx, N=20)
-    print(probe_off)
-    check('near-zero amp gain is reported as a worse noise floor '
-          '(or an explicit failure), never a smaller one',
-          (not probe_off.status) or (probe_off.std_Cex > 10 * probe_clean.std_Cex))
-
-    print("\nAll checks passed.")

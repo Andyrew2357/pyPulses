@@ -27,6 +27,10 @@ class ips120(pyvisaDevice):
     B_tol_match = 1e-5  # T (Used when matching output and persistent)
     B_tol_assertive = 1e-4  # T (Used in _goto_B and set_B)
 
+    # Ramp state; see start_ramp
+    _ramp_target = None  # T, None when no ramp is active
+    _ramp_restore_rate = None  # T / min, rate in force before the ramp
+
     def __init__(self,
         resource_name: str, 
         registry_id: str | None = None,
@@ -85,6 +89,13 @@ class ips120(pyvisaDevice):
 
     def _send_cmd(self, cmd: str, retries: int = None) -> str | None:
         """Send command with retry logic"""
+
+        # Field reads can come from a measurement thread while a ramp is being
+        # watched from another; replies cannot be told apart by their echo.
+        with self._device_lock:
+            return self._send_cmd_unlocked(cmd, retries)
+
+    def _send_cmd_unlocked(self, cmd: str, retries: int = None) -> str | None:
         # This class has its own bespoke retry logic because I am reticent to
         # change things that appear to have worked in other implementations for
         # an instrument of this nature
@@ -299,10 +310,9 @@ class ips120(pyvisaDevice):
             # match output and persistent currents
             self._match_currents()
 
-            if not self.is_heater_on():
-                # try to turn the heater on (it will check that currents match)
-                if self._set_heater(True):
-                    break
+            # try to turn the heater on (it will check that currents match)
+            if self.is_heater_on() or self._set_heater(True):
+                break
 
         else:
             self.error(
@@ -467,6 +477,32 @@ class ips120(pyvisaDevice):
 
     """Driven Mode"""
 
+    def _enter_driven_mode(self) -> bool:
+        """
+        Safely transition into driven mode. If the heater is already on this
+        is a no-op. Otherwise the leads are matched to the coil before the
+        heater is turned on.
+
+        Returns
+        -------
+        success : bool
+        """
+        heater = self.is_heater_on()
+        if heater:
+            return True
+        if heater is None:
+            self.error("_enter_driven_mode: heater state unknown; aborting.")
+            return False
+
+        for _ in range(self.retries):
+            self._match_currents()
+            if self._set_heater(True):
+                self.info("_enter_driven_mode: now in driven mode.")
+                return True
+
+        self.error("_enter_driven_mode: failed to turn on switch heater.")
+        return False
+
     def _exit_driven_mode(self) -> bool:
         """
         Safely transition out of driven mode into persistence mode. Ramps the
@@ -489,7 +525,10 @@ class ips120(pyvisaDevice):
             return True
  
         self.info("_exit_driven_mode: heater is on; transitioning to persistence mode.")
- 
+
+        if self._ramp_target is not None:
+            self.stop_ramp()
+
         # In driven mode R18 (persistent field) is unreliable; the true coil
         # field is the output field R7, since the switch is open (normal).
         # We read it now as the field we will persist.
@@ -554,13 +593,17 @@ class ips120(pyvisaDevice):
             self.warn(f"Clipped target field to {B} T.")
  
         self.info(f"set_B_driven: targeting {B:.6f} T.")
- 
-        # _goto_B unconditionally calls _match_currents before enabling the
-        # heater, which is exactly the safe persistent→driven entry sequence:
-        # ramp leads to coil field, verify match, then close the switch.
-        # If the heater is already on (driven→driven), _match_currents detects
-        # this and skips the matching ramp, proceeding directly to the new
-        # target.
+
+        # Don't take the move at the slow rate of a ramp left in progress.
+        if self._ramp_target is not None:
+            self.stop_ramp()
+
+        # Entering first means _goto_B can't take its "already at field"
+        # exit from persistent mode, which would leave the leads unmatched.
+        if not self._enter_driven_mode():
+            self.error("set_B_driven: could not enter driven mode; aborting.")
+            return False
+
         self._goto_B(B)
  
         Bout = self._get_output_field()
@@ -587,6 +630,126 @@ class ips120(pyvisaDevice):
         B : float or None
         """
         return self._get_output_field()
+
+    """Ramping"""
+
+    def start_ramp(self,
+        B: float,
+        rate: float,
+        max_driven_B: float = 4.0,
+    ) -> bool:
+        """
+        Start ramping the field toward B and return without waiting for it.
+        Read the instantaneous field with get_ramp_field, check progress with
+        is_ramping, and always finish with stop_ramp, which also restores the
+        previous sweep rate.
+
+        If the supply is in persistence mode, this first blocks while the
+        leads are matched and the switch heater turns on. The heater stays on
+        afterward, so the heat load is the same as driven mode.
+
+        Parameters
+        ----------
+        B : float
+            Field to ramp to in T.
+        rate : float
+            Ramp rate in T / min.
+        max_driven_B : float, default=4.0
+            Largest field magnitude allowed (T); exceeding it is refused.
+
+        Returns
+        -------
+        success : bool
+            True if the supply is ramping.
+        """
+        if rate <= 0:
+            self.error(f"start_ramp: rate must be positive, got {rate}.")
+            return False
+
+        limit = min(self.max_B, max_driven_B)
+        if abs(B) > limit:
+            self.error(f"start_ramp: {B} T exceeds the {limit} T limit.")
+            return False
+
+        if not self._enter_driven_mode():
+            self.error("start_ramp: could not enter driven mode; aborting.")
+            return False
+
+        self._set_mode(self.mode.HOLD)
+
+        # A ramp may be replacing another, whose rate is not the one to keep.
+        if self._ramp_restore_rate is None:
+            self._ramp_restore_rate = self.get(self.parm.FIELD_SWEEP_RATE)
+            if self._ramp_restore_rate is None:
+                self.error("start_ramp: could not read the sweep rate.")
+                return False
+
+        self.set_sweep_rate(rate)
+        actual = self.get(self.parm.FIELD_SWEEP_RATE)
+        if actual is None or actual <= 0:
+            self.error(f"start_ramp: supply reports a sweep rate of {actual}.")
+            self.stop_ramp()
+            return False
+        if abs(actual - rate) > 0.01 * rate:
+            self.warn(
+                f"start_ramp: requested {rate} T/min, supply reports {actual}."
+            )
+
+        self._set_target_field(B)
+        self._ramp_target = round(B, 4)  # precision sent by _set_target_field
+        self._set_mode(self.mode.GOTOTARGET)
+        time.sleep(0.05)
+
+        if self.get_mode() != self.mode.GOTOTARGET:
+            self.error("start_ramp: supply did not start ramping.")
+            self.stop_ramp()
+            return False
+
+        self.info(f"start_ramp: ramping to {B} T at {actual} T/min.")
+        return True
+
+    def get_ramp_field(self) -> float | None:
+        """
+        Query the instantaneous field during a ramp.
+
+        Returns
+        -------
+        B : float or None
+        """
+        return self.get_B_driven()
+
+    def is_ramping(self) -> bool:
+        """
+        Whether a ramp is still on its way to its target. False once it has
+        arrived, but stop_ramp is still needed to restore the sweep rate.
+
+        Returns
+        -------
+        bool
+        """
+        if self._ramp_target is None:
+            return False
+
+        B = self._get_output_field()
+        return B is None or abs(B - self._ramp_target) > self.B_tol_assertive
+
+    def stop_ramp(self) -> bool:
+        """
+        Hold the field where it is and restore the sweep rate in force before
+        the ramp. The heater stays on. Safe to call if no ramp is active.
+
+        Returns
+        -------
+        success : bool
+        """
+        self._set_mode(self.mode.HOLD)
+        self._ramp_target = None
+
+        if self._ramp_restore_rate is not None:
+            self.set_sweep_rate(self._ramp_restore_rate)
+            self._ramp_restore_rate = None
+
+        return True
 
 @register_device_class("IPS120Channel")
 class IPS120Channel(AsyncChannel):

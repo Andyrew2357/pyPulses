@@ -16,10 +16,16 @@ Usage
     result = differential_balance(
         ctx        = ctx,
         scan       = scan_1d,
-        Vex_amp    = lockin.resolve('Vex_amp'),
-        Vexp_amp   = lockin.resolve('Vexp_amp'),
-        Vexp_phase = lockin.resolve('Vexp_phase'),
+        Vex_amp    = hf2.resolve('out1_ch2_amplitude'),
+        Vexp_amp   = hf2.resolve('out1_ch3_amplitude'),
+        Vexp_phase = hf2.resolve('out1_ch3_phase'),
     )
+
+On an HF2LI the complementary drive needs its own mixer channel on the bridge
+oscillator, not the measuring demod's channel, e.g. after configure_bridge:
+
+    hf2.demod[3].set_oscillator(0)
+    hf2.output[1].enable_channel(3)
 """
 
 from __future__ import annotations

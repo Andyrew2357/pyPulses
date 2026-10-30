@@ -5,6 +5,7 @@ if TYPE_CHECKING:
     from .initialize import ThreePointBalanceResult
 
 from .cap_filter import CapFilter, CapExtrapolator
+from .config import VSTD_MAX_DEFAULT
 
 from ...devices.channel_adapter import ScalarChannel, LockInChannel, CommandChannel
 from ...devices.registry import resolve_reference, format_reference
@@ -55,7 +56,13 @@ class CapContext():
         Phase channel for the reference
     lockin_call : LockInChannel
     Vstd_range: float
-        Maximum allowed amplitude on Vstd
+        Scale of the balance calibration steps (three-point step fractions,
+        two-point defaults). Not a limit.
+    Vstd_max : float, default=120e-3
+        The only hard limit on |Vstd|. Calibration sweeps that would exceed
+        it raise before moving, a balance point beyond it is out of range,
+        and every Vstd set (set_Vstd, cap_balance, the extrapolator) is
+        clamped to it.
     Vex : float, default=1.0
         Applied excitation on the sample side (constant throughout measurement)
     Cstd: float, default=1.0
@@ -71,6 +78,7 @@ class CapContext():
     Theta: ScalarChannel
     lockin_call: LockInChannel
     Vstd_range: float
+    Vstd_max: float = VSTD_MAX_DEFAULT
     sensitivity_channel: ScalarChannel | None = None
     sensitivity_multiplier: float = 4.0
     Vex: float = 1.0
@@ -102,7 +110,7 @@ class CapContext():
         self.extrapolator = CapExtrapolator(
             support = self.extrap_support,
             order = self.extrap_order,
-            Vstd_range = self.Vstd_range,
+            Vstd_max = self.Vstd_max,
         )
 
         self._previous_result: CapBalanceResult | None = None
@@ -125,10 +133,10 @@ class CapContext():
 
     def set_Vstd(self, r: float, theta_deg: float):
         """
-        Set Vstd magnitude and phase, clamping magnitude to Vstd_range.
+        Set Vstd magnitude and phase, clamping magnitude to Vstd_max.
         Returns the actual (r, theta) set on hardware.
         """
-        r = float(np.clip(r, 0.0, self.Vstd_range))
+        r = float(np.clip(r, 0.0, self.Vstd_max))
         self.Vstd(r)
         self.Theta(theta_deg % 360)
         r_set = self.Vstd()
@@ -147,10 +155,10 @@ class CapContext():
 
     def set_Vstd_complex(self, V: complex) -> complex:
         """
-        Set Vstd from a complex value. Clamps magnitude to Vstd_range.
+        Set Vstd from a complex value. Clamps magnitude to Vstd_max.
         Returns the complex Vstd actually set on hardware.
         """
-        r = float(np.clip(abs(V), 0.0, self.Vstd_range))
+        r = float(np.clip(abs(V), 0.0, self.Vstd_max))
         th = float(np.degrees(np.angle(V)) % 360)
         self.Vstd(r)
         self.Theta(th)
@@ -222,6 +230,7 @@ class CapContext():
         result: dict = {
             'CapContext_kwargs': dict(
                 Vstd_range = float(self.Vstd_range),
+                Vstd_max = float(self.Vstd_max),
                 sensitivity_multiplier = self.sensitivity_multiplier,
                 Vex = float(self.Vex),
                 Cstd = float(self.Cstd),
@@ -260,6 +269,7 @@ class CapContext():
  
         if state.get('CapExtrapolator_kwargs') is not None:
             self.extrapolator._deserialize_state(state['CapExtrapolator_kwargs'])
+        self.extrapolator.Vstd_max = self.Vstd_max
 
         xtalk = state.get('Crosstalk_kwargs')
         if xtalk is not None:

@@ -44,28 +44,60 @@ class SweepResult(Enum):
 
 """Wait derivation"""
 
-def _derive_wait(channels: List[SweepableChannel], min_wait: float | None) -> float:
+def _will_step(ch: SweepableChannel, start: float, end: float) -> bool:
+    """
+    True if _tandemSweep would set this channel inside the step loop, i.e. its
+    total change exceeds max(min_step, tolerance). Channels below that
+    threshold are at most touched by the final nudge.
+    """
+    cfg = ch.config
+    thresh = max(0.0 if cfg.min_step is None else cfg.min_step, cfg.tolerance)
+    return abs(end - start) > thresh
+
+
+def _derive_wait(
+    channels: List[SweepableChannel],
+    min_wait: float | None,
+    start   : np.ndarray | None = None,
+    end     : np.ndarray | None = None,
+) -> float:
     """
     Derive the shared per-step wait time from channel SweepConfigs.
 
     Async channels are excluded — they manage their own timing internally.
+    If `start` and `end` are given, sync channels that will not be stepped
+    (see _will_step) are excluded as well, so a stationary channel with a
+    long settle_time cannot throttle the channels that actually move. Without
+    `start`/`end`, every sync channel counts (previous behavior).
 
-    For each sync channel the effective wait contribution is:
+    For each remaining sync channel the effective wait contribution is:
         max_step / max_rate + settle_time   (when max_rate is set)
         settle_time                         (when only settle_time is set)
         0                                   (when neither is set)
 
-    The shared wait is the maximum across all sync channels, floored by
-    min_wait.
+    The shared wait is the maximum across those channels, floored by
+    min_wait. If no sync channel will be stepped, the wait is min_wait
+    (or 0.0).
 
     Raises
     ------
     ValueError
-        If no sync channel contributes a wait constraint and min_wait is not
-        provided, since the sweep would have no cadence information.
+        If some sync channel will be stepped but none of them contributes a
+        wait constraint and min_wait is not provided, since the sweep would
+        have no cadence information.
     """
 
     sync_channels = [ch for ch in channels if not ch.config.async_set]
+
+    if start is not None and end is not None:
+        start = np.asarray(start, dtype=float)
+        end   = np.asarray(end,   dtype=float)
+        sync_channels = [
+            ch for i, ch in enumerate(channels)
+            if not ch.config.async_set and _will_step(ch, start[i], end[i])
+        ]
+        if not sync_channels:
+            return 0.0 if min_wait is None else min_wait
 
     contributions = []
     for ch in sync_channels:
@@ -82,8 +114,8 @@ def _derive_wait(channels: List[SweepableChannel], min_wait: float | None) -> fl
 
     if not any_constrained and min_wait is None:
         raise ValueError(
-            "No sync channel has a max_rate or settle_time, and no min_wait "
-            "was supplied. Cannot determine sweep cadence."
+            "No (moving) sync channel has a max_rate or settle_time, and no "
+            "min_wait was supplied. Cannot determine sweep cadence."
         )
 
     derived = max(contributions) if contributions else 0.0
@@ -250,12 +282,19 @@ def _tandemSweep(
 
         time.sleep(wait)
 
-    # Final nudge for sync channels only
+    # Final nudge for sync channels only. Channels whose change was below
+    # min_step (e.g. a frequency with a huge min_step) are only set here, so
+    # honor their settle_time after setting them; the step loop's waits
+    # happened before they changed and do not count.
+    nudge_settle = 0.0
     for i, ch in enumerate(channels):
         if async_mask[i]:
             continue
         if np.abs(prev[i] - end[i]) > tolerance[i]:
             ch.set_output(end[i])
+            nudge_settle = max(nudge_settle, ch.config.settle_time)
+    if nudge_settle > 0:
+        time.sleep(nudge_settle)
 
     if verbose:
         print("".join(f'\t{v:12g}' for v in end))
@@ -345,7 +384,7 @@ def tandemSweep(
         if end.shape != (N,):
             raise IndexError("target length must match number of channels.")
 
-    wait = _derive_wait(channels, min_wait)
+    wait = _derive_wait(channels, min_wait, start, end)
 
     return _tandemSweep(
         channels          = channels,
