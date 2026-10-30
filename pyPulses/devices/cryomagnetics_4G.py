@@ -2,6 +2,7 @@ from .pyvisa_device import pyvisaDevice
 from .registry import register_hardware_class, register_device_class, format_reference, DeferredReference, HardwareRegistry
 from .sweepable_channel import AsyncChannel
 
+import re
 import time
 from logging import Logger
 
@@ -30,6 +31,11 @@ class cryomagnetics4G(pyvisaDevice):
     # Ramp state; see start_ramp
     _ramp_target_kG = None  # None when no ramp is active
     _ramp_restore_rates = None  # {range: A / s}, rates before the ramp
+    _ramp_restore_limits = None  # {'ULIM': kG, 'LLIM': kG}, limits before the ramp
+
+    # Smallest stored value (A) used to read the field-to-current ratio. The
+    # supply reports ~1e-4 A resolution, so this keeps the ratio good to <0.1%.
+    _ratio_min_A = 0.1
 
     def __init__(self,
         resource_name: str, 
@@ -49,8 +55,9 @@ class cryomagnetics4G(pyvisaDevice):
         logger : Logger, optional
             logger used by abstractDevice.
         coil_constant : float, optional
-            Magnet coil constant in T / A. Required by start_ramp, since the
-            supply takes rates in A / s.
+            Magnet coil constant in T / A. Not normally needed: start_ramp
+            reads it from the supply (see read_coil_constant) and only falls
+            back to this value if that read is impossible.
         **kwargs
         """
 
@@ -454,6 +461,69 @@ class cryomagnetics4G(pyvisaDevice):
 
     """Ramping"""
 
+    @staticmethod
+    def _parse_value(response: str) -> tuple[float, str]:
+        """Split a reply such as '12.345kG' or '1.2345A' into (value, unit)."""
+        m = re.fullmatch(r'\s*([-+0-9.eE]+)\s*([A-Za-z]*)\s*', response)
+        if m is None:
+            raise ValueError(f"Unparseable reply {response!r}")
+        return float(m.group(1)), m.group(2)
+
+    def read_coil_constant(self) -> float | None:
+        """
+        Read the field-to-current ratio programmed into the supply.
+
+        No remote command reports the ratio, but UNITS switches every reading
+        between amperes and field. The same stored values (ULIM, LLIM, IOUT,
+        IMAG) are read in both, and the largest one gives the ratio. The
+        supply stores it as a whole number of G / A, so the result is rounded
+        to that. UNITS is put back as it was, even on error.
+
+        Returns
+        -------
+        coil_constant : float or None
+            T / A, or None if every stored value is below _ratio_min_A.
+        """
+        units = self.query("UNITS?").strip().upper()
+        restore = 'A' if units.startswith('A') else 'G'
+        cmds = ("ULIM", "LLIM", "IOUT", "IMAG")
+        try:
+            self.write("UNITS A")
+            amps = [self._parse_value(self.query(f"{c}?")) for c in cmds]
+            self.write("UNITS G")
+            field = [self._parse_value(self.query(f"{c}?")) for c in cmds]
+        finally:
+            self.write(f"UNITS {restore}")
+
+        to_kG = {'KG': 1.0, 'G': 1e-3, 'T': 10.0}
+        best = None
+        for (a, ua), (f, uf) in zip(amps, field):
+            if ua.upper() != 'A' or uf.upper() not in to_kG:
+                self.error(f"read_coil_constant: unexpected units {ua!r}, {uf!r}.")
+                return None
+            if abs(a) >= self._ratio_min_A and (best is None or abs(a) > abs(best[0])):
+                best = (a, f * to_kG[uf.upper()])
+
+        if best is None:
+            self.warn(
+                "read_coil_constant: ULIM, LLIM, IOUT and IMAG are all below "
+                f"{self._ratio_min_A} A; cannot read the ratio."
+            )
+            return None
+
+        a, f_kG = best
+        ratio = 1e3 * f_kG / a                  # G / A
+        whole = round(ratio)
+        if whole < 1 or abs(ratio - whole) > 0.005 * whole:
+            self.warn(
+                f"read_coil_constant: ratio {ratio:.3f} G/A is not close to a "
+                "whole number; check the units handling."
+            )
+            return None
+
+        self.info(f"read_coil_constant: {whole} G/A from {a} A = {f_kG} kG.")
+        return 1e-4 * whole                     # T / A
+
     def start_ramp(self,
         H_T: float,
         rate: float,
@@ -463,7 +533,10 @@ class cryomagnetics4G(pyvisaDevice):
         Start ramping the field toward H_T and return without waiting for it.
         Read the instantaneous field with get_ramp_field, check progress with
         is_ramping, and always finish with stop_ramp, which also restores the
-        previous sweep rates.
+        sweep rates and limits saved here.
+
+        The rate is converted to the supply's A / s with the field-to-current
+        ratio read from the supply itself (read_coil_constant).
 
         If the supply is in persistence mode, this first blocks while the
         leads are matched and the switch heater turns on. The heater stays on
@@ -486,10 +559,6 @@ class cryomagnetics4G(pyvisaDevice):
         success : bool
             True if the sweep was issued.
         """
-        if self.coil_constant is None:
-            self.error("start_ramp: coil_constant is not set.")
-            return False
-
         if rate <= 0:
             self.error(f"start_ramp: rate must be positive, got {rate}.")
             return False
@@ -498,33 +567,26 @@ class cryomagnetics4G(pyvisaDevice):
             self.error(f"start_ramp: {H_T} T exceeds the {max_driven_H} T limit.")
             return False
 
-        if not self._enter_driven_mode():
-            self.error("start_ramp: could not enter driven mode; aborting.")
-            return False
-
-        self.write("SWEEP PAUSE")
-
-        # A ramp may be replacing another, whose rates are not the ones to keep.
+        # Save the settings this changes, before anything changes them
+        # (_enter_driven_mode rewrites the limits when matching the leads).
+        # A ramp may be replacing another, whose settings are not the ones
+        # to keep.
         if self._ramp_restore_rates is None:
             self._ramp_restore_rates = {
                 r: float(self.query(f"RATE? {r}").strip())
                 for r in self.rate_ranges
             }
+            self._ramp_restore_limits = {
+                s: self._parse_value(self.query(f"{s}?"))[0]
+                for s in ("ULIM", "LLIM")
+            }
 
-        rate_A_s = rate / self.coil_constant / 60
-        for r, previous in self._ramp_restore_rates.items():
-            self.write(f"RATE {r} {min(rate_A_s, previous):.6f}")
-
-        actual = [float(self.query(f"RATE? {r}").strip()) for r in self.rate_ranges]
-        if min(actual) <= 0:
-            self.error(f"start_ramp: supply reports sweep rates of {actual}.")
+        if not self._enter_driven_mode():
+            self.error("start_ramp: could not enter driven mode; aborting.")
             self.stop_ramp()
             return False
-        if any(abs(a - rate_A_s) > 0.01 * rate_A_s for a in actual):
-            self.warn(
-                f"start_ramp: requested {rate_A_s:.6f} A/s, supply reports "
-                f"{actual} A/s."
-            )
+
+        self.write("SWEEP PAUSE")
 
         H_kG = 10 * H_T
         H_current_kG = 10 * self.get_H_driven()
@@ -541,8 +603,47 @@ class cryomagnetics4G(pyvisaDevice):
             self.stop_ramp()
             return False
 
+        # The limit just set is the target, so the ratio can be read from it
+        # or from IOUT unless both ends of the ramp are within ~0.1 A of zero.
+        coil = self.read_coil_constant()
+        if coil is None:
+            if self.coil_constant is None:
+                self.error(
+                    "start_ramp: could not read the field-to-current ratio "
+                    "and no earlier value is known."
+                )
+                self.stop_ramp()
+                return False
+            coil = self.coil_constant
+            self.warn(f"start_ramp: using the previous ratio, {coil} T/A.")
+        elif self.coil_constant is not None and \
+                abs(coil - self.coil_constant) > 1e-3 * coil:
+            self.warn(
+                f"start_ramp: supply ratio is {coil} T/A; replacing "
+                f"{self.coil_constant} T/A."
+            )
+        self.coil_constant = coil
+
+        rate_A_s = rate / coil / 60
+        for r, previous in self._ramp_restore_rates.items():
+            self.write(f"RATE {r} {min(rate_A_s, previous):.6f}")
+
+        actual = [float(self.query(f"RATE? {r}").strip()) for r in self.rate_ranges]
+        if min(actual) <= 0:
+            self.error(f"start_ramp: supply reports sweep rates of {actual}.")
+            self.stop_ramp()
+            return False
+        if any(abs(a - rate_A_s) > 0.01 * rate_A_s for a in actual):
+            self.warn(
+                f"start_ramp: requested {rate_A_s:.6f} A/s, supply reports "
+                f"{actual} A/s."
+            )
+
         self.write(f"SWEEP {direction}")
-        self.info(f"start_ramp: ramping to {H_T} T at {rate} T/min.")
+        self.info(
+            f"start_ramp: ramping to {H_T} T at {rate} T/min "
+            f"({rate_A_s:.6f} A/s at {coil} T/A)."
+        )
         return True
 
     def get_ramp_field(self) -> float | None:
@@ -574,8 +675,9 @@ class cryomagnetics4G(pyvisaDevice):
 
     def stop_ramp(self) -> bool:
         """
-        Hold the field where it is and restore the sweep rates in force before
-        the ramp. The heater stays on. Safe to call if no ramp is active.
+        Hold the field where it is and restore the sweep rates and limits in
+        force before the ramp. The heater stays on. Safe to call if no ramp is
+        active.
 
         Returns
         -------
@@ -588,6 +690,12 @@ class cryomagnetics4G(pyvisaDevice):
             for r, previous in self._ramp_restore_rates.items():
                 self.write(f"RATE {r} {previous:.6f}")
             self._ramp_restore_rates = None
+
+        # Paused, so rewriting the limits does not move the field.
+        if self._ramp_restore_limits is not None:
+            for s, previous in self._ramp_restore_limits.items():
+                self.write(f"{s} {previous}")
+            self._ramp_restore_limits = None
 
         return True
 
