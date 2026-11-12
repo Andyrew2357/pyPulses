@@ -24,32 +24,31 @@ The driver works in volts (peak) throughout and converts with the range.
 
 Bridge use
 ----------
-configure_bridge() does the routing and returns the channels:
+The cabling is declared once, at construction; the driver chooses the mixer
+channels and names the bridge channels by role:
 
-    hf2 = hf2li('dev1616', registry_id='hf2')
-    br = hf2.configure_bridge(
-        std = (0, 1),            # reference capacitor: output 0, mixer ch 1
-        ex  = (1, 2),            # sample:              output 1, mixer ch 2
-        measure_demod = 0, input = 0, oscillator = 0,
-        frequency = 1e6, output_range = 1.0, duration = 0.1,
-    )
-    br['Vex'](0.01)              # V peak
-    ctx = CapContext(
-        Vstd        = br['Vstd'],          # V peak  ('out0_ch1_amplitude')
-        Theta       = br['Theta'],         # deg     ('out0_ch1_phase')
-        lockin_call = br['stream_average'],
-        Vex         = 0.01,                # same units as Vstd (V peak)
-        ...
-    )
-    with hf2.streaming():          # optional: otherwise starts on first read
-        runner.run()
+    hf2 = hf2li('dev1616', registry_id='hf2',
+                bridge={'std_output': 1, 'ex_output': 0})   # Out 2 -> standard, Out 1 -> sample
+    Vstd, Theta = hf2.resolve('Vstd'), hf2.resolve('Theta')  # V peak, deg
+    Vex, freq   = hf2.resolve('Vex'), hf2.resolve('freq')
+    hf2.configure_bridge(frequency=1e6, output_range=0.1)    # routes the outputs
+    Vex(0.01)                                                # V peak
+    ctx = CapContext(Vstd=Vstd, Theta=Theta,
+                     lockin_call=hf2.resolve('stream_average'), Vex=0.01, ...)
 
-The reference drive's phase is its demodulator's phase shift, which also
-rotates that demodulator's reference; so Vstd and Vex sit on channels whose
-demodulators are not the measuring one, all on one oscillator. Channels 6-7
-(the HF2's default output channels) have no phase control and are refused.
-The output range must cover CapContext.Vstd_max: the amplitude accessors
-refuse values beyond it.
+Role accessors ('Vstd', 'Theta', 'Vex', 'Vex_phase', 'freq') can be resolved
+before configure_bridge and change nothing on the instrument. bridge_routing()
+shows the resulting nodes.
+
+A drive's phase is its demodulator's phase shift, which also rotates that
+demodulator's reference. The excitation therefore uses the measuring
+demodulator's own mixer channel (its phase is never set; 'Vex_phase' refuses),
+and the standard, whose phase the balance adjusts, uses the lowest other
+channel, all on one oscillator. With the default cabling this is
+sigouts/0/amplitudes/0 (sample), sigouts/1/amplitudes/1 + demods/1/phaseshift
+(standard), measured on demods/0. Channels 6-7 (the HF2's default output channels) have no phase
+control and are never used. The output range must cover CapContext.Vstd_max:
+the amplitude accessors refuse values beyond it.
 
 Reading
 -------
@@ -66,6 +65,7 @@ from .zhinst_device import zhinstDevice
 from .registry import register_hardware_class
 from .channel_adapter import ScalarChannelAdapter
 from .lockin.channels import series_correlated_covariance
+from .errors import mark_recoverable
 
 import re
 import numpy as np
@@ -88,6 +88,15 @@ class hf2li(zhinstDevice):
 
     OUTPUT_RANGES = (0.01, 0.1, 1.0, 10.0)
 
+    # Bridge cabling. Output indices are 0-based: 0 is "Signal Output 1".
+    BRIDGE_DEFAULTS = {
+        'std_output': 1,      # output cabled to the reference capacitor
+        'ex_output': 0,       # output cabled to the sample
+        'measure_demod': 0,   # demodulator that reads the bridge
+        'input': 0,           # signal input feeding it
+        'oscillator': 0,      # shared by both drives and the measurement
+    }
+
     def __init__(self,
         device_id: str = 'dev1616',
         server_host: str = 'localhost',
@@ -96,6 +105,7 @@ class hf2li(zhinstDevice):
         registry_id: str | None = None,
         logger: Logger | None = None,
         skip_connect: bool = False,
+        bridge: Dict[str, int] | None = None,
         **kwargs,
     ):
         """
@@ -110,7 +120,17 @@ class hf2li(zhinstDevice):
         registry_id : str, optional
         logger : Logger, optional
         skip_connect : bool, default=False
+        bridge : dict, optional
+            Bridge cabling, overriding BRIDGE_DEFAULTS: 'std_output',
+            'ex_output', 'measure_demod', 'input', 'oscillator'. Construction
+            does not touch the instrument; configure_bridge() applies it.
         """
+        unknown = set(bridge or {}) - set(self.BRIDGE_DEFAULTS)
+        if unknown:
+            raise ValueError(f"Unknown bridge settings {sorted(unknown)}; "
+                             f"expected {sorted(self.BRIDGE_DEFAULTS)}.")
+        self.bridge = {**self.BRIDGE_DEFAULTS, **(bridge or {})}
+        self._bridge_ok = False          # routing confirmed this session
         super().__init__(device_id, server_host, server_port, api_level,
                          registry_id, logger, skip_connect)
 
@@ -119,8 +139,10 @@ class hf2li(zhinstDevice):
         self.input = [hf2liInputChannel(self, i) for i in range(self.num_inputs)]
         self.oscillator = [hf2liOscillator(self, i) for i in range(self.num_oscillators)]
 
+        self.bridge_routing()            # validate the cabling now
+
         # Used by get_average() / the 'get_average*' accessors
-        self.measure_demod = 0
+        self.measure_demod = self.bridge['measure_demod']
         self.average_duration = 0.1
 
     """Averaging (LockinLike interface used by lockin_channel)"""
@@ -283,7 +305,22 @@ class hf2li(zhinstDevice):
             ScalarChannel: phase (deg) of mixer channel m (0-5) on output o.
         'osc{n}_freq'
             ScalarChannel: frequency (Hz) of oscillator n.
+        'Vstd', 'Theta', 'Vex', 'Vex_phase', 'freq'
+            The bridge channels by role (see bridge_routing): standard and
+            sample drive amplitudes (V peak) and phases (deg), and the bridge
+            oscillator's frequency.
         """
+        roles = self._bridge_accessors()
+        if accessor in roles:
+            node = roles[accessor]
+            m = self._ACCESSOR_RE.match(node)
+            if m is None:                                     # 'freq'
+                return self.resolve(node)
+            ac = hf2liACout(self, int(m[1]), int(m[2]))
+            cls = hf2li_bridge_amplitude_channel if m[3] == 'amplitude' \
+                else hf2li_bridge_phase_channel
+            return cls(self, node, ac)
+
         m = re.match(r'(get|stream)_average(_sc)?(_uV)?$', accessor)
         if m:
             return hf2li_lockin_channel(
@@ -314,47 +351,119 @@ class hf2li(zhinstDevice):
 
     """Bridge setup"""
 
+    def bridge_routing(self) -> Dict[str, Any]:
+        """
+        Nodes used by the bridge, from the cabling given at construction.
+
+        Returns
+        -------
+        dict
+            'std', 'ex': (output, mixer channel); 'measure_demod', 'input',
+            'oscillator'.
+        """
+        b = self.bridge
+        so, eo, md = b['std_output'], b['ex_output'], b['measure_demod']
+        for o in (so, eo):
+            if not 0 <= o < self.num_outputs:
+                raise ValueError(f"HF2LI has outputs 0-{self.num_outputs - 1}, not {o}.")
+        self._check_demod(md)
+        if not 0 <= b['input'] < self.num_inputs:
+            raise ValueError(f"HF2LI has no input {b['input']}.")
+        if not 0 <= b['oscillator'] < self.num_oscillators:
+            raise ValueError(f"No oscillator {b['oscillator']}.")
+        # A drive's phase is its demod's phase shift. The excitation sits on the
+        # measuring demod's channel (its phase is never adjusted); the standard,
+        # whose phase is, goes on the next channel. Channels 6-7 (PLL) are never used.
+        ec = md
+        sc = next(m for m in range(self.num_demods) if m != md)
+        return {'std': (so, sc), 'ex': (eo, ec), 'measure_demod': md,
+                'input': b['input'], 'oscillator': b['oscillator']}
+
+    def _bridge_accessors(self) -> Dict[str, str]:
+        r = self.bridge_routing()
+        (so, sc), (eo, ec) = r['std'], r['ex']
+        return {
+            'Vstd':      f'out{so}_ch{sc}_amplitude',
+            'Theta':     f'out{so}_ch{sc}_phase',
+            'Vex':       f'out{eo}_ch{ec}_amplitude',
+            'Vex_phase': f'out{eo}_ch{ec}_phase',
+            'freq':      f"osc{r['oscillator']}_freq",
+        }
+
+    def check_bridge(self) -> List[str]:
+        """
+        Compare the instrument with bridge_routing(): each used output on and
+        playing only its drive channel, all three channels on the bridge
+        oscillator, the measurement demod enabled on the bridge input.
+
+        Returns
+        -------
+        list of str
+            Problems found; empty if the bridge is routed.
+        """
+        r = self.bridge_routing()
+        (so, sc), (eo, ec) = r['std'], r['ex']
+        md, osc = r['measure_demod'], r['oscillator']
+        problems = []
+        for o in sorted({so, eo}):
+            keep = {c for oo, c in ((so, sc), (eo, ec)) if oo == o}
+            out = self.output[o]
+            if not out.is_enabled():
+                problems.append(f'output {o + 1} is off')
+            on = set(out.get_enabled_channels())
+            for m in sorted(keep - on):
+                problems.append(f'output {o + 1}: drive channel (row {m + 1}) is not enabled')
+            for m in sorted(on - keep):
+                problems.append(f'output {o + 1}: row {m + 1} is enabled and adds '
+                                f'{out.get_amplitude(m):.4g} V pk')
+        for d in (sc, ec, md):
+            if self.demod[d].get_oscillator() != osc:
+                problems.append(f'demod {d + 1} is not on oscillator {osc + 1}')
+        if not self.demod[md].is_enabled():
+            problems.append(f'measurement demod {md + 1} is not enabled')
+        if self.demod[md].get_input() != r['input']:
+            problems.append(f'measurement demod {md + 1} does not read input {r["input"] + 1}')
+        self._bridge_ok = not problems
+        return problems
+
+    def _require_bridge(self):
+        """Raise unless the bridge routing is in place (checked once per session)."""
+        if self._bridge_ok:
+            return
+        problems = self.check_bridge()
+        if problems:
+            raise RuntimeError(
+                "HF2LI bridge is not routed (" + "; ".join(problems) + "). "
+                "Call configure_bridge() first; setting the drives alone would "
+                "not reach the bridge."
+            )
+
     def configure_bridge(self,
-        std: Tuple[int, int] = (0, 1),
-        ex: Tuple[int, int] = (1, 2),
-        measure_demod: int = 0,
-        input: int = 0,
-        oscillator: int = 0,
         frequency: float | None = None,
         output_range: float = 1.0,
         duration: float = 0.1,
         rate: float | None = None,
     ) -> Dict[str, Any]:
         """
-        Route a capacitance bridge and return its channels.
+        Route the capacitance bridge as given at construction (bridge_routing).
 
-        The reference capacitor is driven from mixer channel std[1] on output
-        std[0], the sample from channel ex[1] on output ex[0], and the bridge
-        signal is measured on `measure_demod` from signal input `input`. All
-        three share `oscillator`. Afterwards:
-
-          - every other mixer channel on the two outputs is disabled and
-            zeroed (the HF2's defaults, channels 6 and 7, would otherwise add
-            to them);
-          - both drive amplitudes are 0, the outputs are at `output_range`
-            and switched on, so nothing is driven until you set Vex/Vstd;
-          - get_average / stream_average read `measure_demod` for `duration`.
+        Afterwards:
+          - the two drive channels are the only mixer channels on their
+            outputs (the HF2's defaults, channels 6 and 7, would otherwise add
+            to them), both at amplitude 0 and phase 0, so nothing is driven
+            until you set Vex/Vstd;
+          - the outputs are at `output_range` and switched on;
+          - all three channels run on the bridge oscillator;
+          - get_average / stream_average read the measurement demod for
+            `duration`.
 
         Parameters
         ----------
-        std, ex : (output, mixer channel)
-            Channels 0-5 only (6-7 have no phase), different from each other
-            and from `measure_demod` (a channel's phase also rotates its
-            demodulator's reference).
-        measure_demod : int, default=0
-        input : int, default=0
-            Signal input feeding the measurement demodulator.
-        oscillator : int, default=0
         frequency : float, optional
-            Set the oscillator frequency (Hz); unchanged if None.
+            Set the bridge oscillator frequency (Hz); unchanged if None.
         output_range : float, default=1.0
-            Range of both outputs (V); must cover CapContext.Vstd_max and the
-            largest Vex.
+            Range of the outputs used (V); must cover CapContext.Vstd_max and
+            the largest Vex.
         duration : float, default=0.1
             Averaging time per reading (s).
         rate : float, optional
@@ -363,25 +472,11 @@ class hf2li(zhinstDevice):
         Returns
         -------
         dict
-            'Vstd', 'Theta', 'Vex', 'Vex_phase', 'freq' (ScalarChannels),
-            'stream_average', 'get_average' (LockInChannels), and 'accessors'
-            (the same as resolve() strings).
+            The routing (see bridge_routing).
         """
-        (so, sc), (eo, ec) = std, ex
-        for o in (so, eo):
-            if not 0 <= o < self.num_outputs:
-                raise ValueError(f"HF2LI has no output {o}.")
-        for c in (sc, ec):
-            if c in self.PLL_CHANNELS or not 0 <= c < self.num_demods:
-                raise ValueError(f"Bridge channels must be 0-5 (got {c}).")
-        if len({sc, ec, measure_demod}) < 3:
-            raise ValueError(
-                "std channel, ex channel and measure_demod must all differ."
-            )
-        if not 0 <= input < self.num_inputs:
-            raise ValueError(f"HF2LI has no input {input}.")
-        if not 0 <= oscillator < self.num_oscillators:
-            raise ValueError(f"No oscillator {oscillator}.")
+        r = self.bridge_routing()
+        (so, sc), (eo, ec) = r['std'], r['ex']
+        md, inp, osc = r['measure_demod'], r['input'], r['oscillator']
 
         # Nothing driven while rerouting
         for o, c in ((so, sc), (eo, ec)):
@@ -396,17 +491,19 @@ class hf2li(zhinstDevice):
             out.set_offset(0.0)
             out.set_range(output_range)
 
-        for d in (sc, ec, measure_demod):
-            self.demod[d].set_oscillator(oscillator)
+        for d in (sc, ec, md):
+            self.demod[d].set_oscillator(osc)
+        for d in (sc, ec):
+            self.demod[d].set_phase(0.0)
         if frequency is not None:
-            self.oscillator[oscillator].set_frequency(frequency)
+            self.oscillator[osc].set_frequency(frequency)
 
-        dm = self.demod[measure_demod]
-        dm.set_input(input)
+        dm = self.demod[md]
+        dm.set_input(inp)
         if rate is not None:
             dm.set_rate(rate)
         dm.enable(True)
-        self.setup_average(measure_demod, duration)
+        self.setup_average(md, duration)
 
         for o, c in ((so, sc), (eo, ec)):
             self.output[o].enable_channel(c, True)
@@ -414,18 +511,11 @@ class hf2li(zhinstDevice):
             self.output[o].enable(True)
         self.sync()
 
-        accessors = {
-            'Vstd':           f'out{so}_ch{sc}_amplitude',
-            'Theta':          f'out{so}_ch{sc}_phase',
-            'Vex':            f'out{eo}_ch{ec}_amplitude',
-            'Vex_phase':      f'out{eo}_ch{ec}_phase',
-            'freq':           f'osc{oscillator}_freq',
-            'stream_average': 'stream_average',
-            'get_average':    'get_average',
-        }
-        self.info(f"HF2LI bridge: {accessors}")
-        return {**{k: self.resolve(a) for k, a in accessors.items()},
-                'accessors': accessors}
+        problems = self.check_bridge()      # read back: did the writes take?
+        if problems:
+            raise RuntimeError("configure_bridge: after routing, " + "; ".join(problems))
+        self.info(f"HF2LI bridge: {r} ({self._bridge_accessors()})")
+        return r
 
     """Routing"""
 
@@ -532,6 +622,7 @@ class hf2li(zhinstDevice):
         state = super()._serialize_state()
         state['measure_demod'] = self.measure_demod
         state['average_duration'] = self.average_duration
+        state['bridge'] = dict(self.bridge)
         state['demod'] = [
             {
                 'oscillator'    : d.get_oscillator(),
@@ -800,6 +891,13 @@ class hf2liDemodChannel:
         X + iY for `duration` seconds, recorded after the call starts
         (starts the stream if needed).
 
+        If the read fails (typically: too few samples arrived in time), the
+        subscription is restarted and the error is re-raised marked
+        recoverable (devices.errors): this reading is lost, the stream is back
+        in a known state, and the next read takes only samples recorded after
+        it starts. If the restart itself fails, a non-recoverable error is
+        raised instead.
+
         Parameters
         ----------
         duration : float, default=0.1
@@ -812,8 +910,27 @@ class hf2liDemodChannel:
         if not self.streaming:
             self.start_stream()
         n = max(2, int(round(duration * self._stream_rate)))
-        data = self.parent.read_stream(self._p("sample"), n, self._stream_rate)
+        try:
+            data = self.parent.read_stream(self._p("sample"), n, self._stream_rate)
+        except RuntimeError as e:
+            self._restart_stream(e)
+            raise mark_recoverable(e)
         return np.asarray(data['x']) + 1j * np.asarray(data['y'])
+
+    def _restart_stream(self, cause: BaseException):
+        """Drop and re-create the subscription after a failed read."""
+        self.parent.info(f"HF2LI demod {self.index}: stream read failed "
+                         f"({cause}); restarting the stream.")
+        try:
+            if self.streaming:
+                self.stop_stream()
+            self.start_stream()
+        except Exception as e:
+            raise RuntimeError(
+                f"HF2LI demod {self.index}: stream read failed ({cause}) and "
+                f"restarting the stream also failed ({e!r}); stream state is "
+                f"unknown."
+            ) from e
 
     def stream_average(self, duration=0.1, series_corr: bool = False,
                        L: int | None = None) -> Tuple[np.ndarray, np.ndarray]:
@@ -1503,3 +1620,16 @@ class hf2li_frequency_channel(ScalarChannelAdapter):
 
     def set_output(self, value: float):
         self._parent.oscillator[self.osc].set_frequency(value)
+
+class hf2li_bridge_amplitude_channel(hf2li_amplitude_channel):
+    """A bridge drive amplitude ('Vstd', 'Vex'): refuses to set until the bridge
+    routing is confirmed, so a drive that cannot reach its output fails loudly."""
+    def set_output(self, value: float):
+        self._parent._require_bridge()
+        super().set_output(value)
+
+class hf2li_bridge_phase_channel(hf2li_phase_channel):
+    """A bridge drive phase ('Theta', 'Vex_phase'); guarded like the amplitudes."""
+    def set_output(self, value: float):
+        self._parent._require_bridge()
+        super().set_output(value)
