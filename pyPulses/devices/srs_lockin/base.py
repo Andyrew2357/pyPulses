@@ -12,6 +12,7 @@ from ..channel_adapter import ScalarChannelAdapter
 
 # Backward-compat alias; prefer sensitivity_channel (pyPulses.devices.lockin.channels).
 from ..lockin.channels import sensitivity_channel as SRSLockin_sensitivity_channel
+from ..channel_adapter import MethodChannelAdapter
 
 import numpy as np
 from logging import Logger
@@ -540,6 +541,8 @@ class SRSLockin(pyvisaDevice):
             return SRSLockin_sensitivity_channel(self, lockin_scale=1.0)
         if accessor == 'input_sensitivity_uV':
             return SRSLockin_sensitivity_channel(self, lockin_scale=1e6)
+        if accessor in ('sine_output_amplitude', 'sine_output_offset') and hasattr(self, accessor):
+            return MethodChannelAdapter(self, accessor)
         raise ValueError(f"{self.__class__.__name__} cannot resolve accessor: {accessor!r}")
 
     # GUI

@@ -169,3 +169,15 @@ class CommandChannelAdapter(ChannelAdapter):
         super().__init__(parent, accessor)
  
     def __call__(self) -> None: ...
+
+class MethodChannelAdapter(ScalarChannelAdapter):
+    """Scalar channel over a set/query method of the parent (accessor = method name)."""
+    def __init__(self, parent, accessor: str):
+        super().__init__(parent, accessor)
+        self._method = getattr(parent, accessor)
+
+    def get_output(self) -> float:
+        return self._method()
+
+    def set_output(self, value: float) -> None:
+        self._method(value)
