@@ -9,16 +9,26 @@ Query
     measurement.
 
 Measurement
-    Orchestrates a list of Query objects at a single point in parameter space: 
-    waits for settling, fires pre-callbacks, collects readings (threading lazy 
-    queries concurrently with eager ones), fires post-callbacks, and returns a 
-    flat numpy array.
+    Orchestrates a list of Query objects at a single point in parameter space:
+    fires pre-callbacks, collects readings (each no earlier than its own settle
+    time, threading lazy queries concurrently with eager ones), fires
+    post-callbacks, and returns a flat numpy array.
+
+Settling
+--------
+Every query has a settle time s_q (its `settle` attribute, or the
+Measurement's `time_per_point` when that is None). After the pre-callbacks
+return, the measurement records t0 and reads each query no earlier than
+t0 + s_q. These are deadlines, not delays: time spent reading one query
+counts toward the settling of the next, so a point costs about
+max(s_q) + the reads that cannot overlap, not sum(s_q).
 """
 
 from __future__ import annotations
 
 from ..devices.registry import format_reference, resolve_reference
 from ..devices.errors import is_recoverable
+from .job import Control, current_control, interruptible_sleep
 
 import datetime
 import warnings
@@ -35,9 +45,18 @@ class QuerySignature(Protocol):
     """
     Protocol satisfied by anything that can act as a measurement source.
 
-    Implementing this protocol (rather than subclassing a base class) means any 
-    callable-wrapping object can participate without inheriting from anything. 
+    Implementing this protocol (rather than subclassing a base class) means any
+    callable-wrapping object can participate without inheriting from anything.
     The Query dataclass satisfies this automatically.
+
+    Optional attribute (deliberately not a protocol member, so existing
+    sources keep satisfying isinstance checks):
+
+    settle : float or None
+        Seconds after t0 (see the module docstring) before this source may
+        be read. None means use the Measurement's time_per_point. It is
+        read once per point, so it may be a property (e.g. derived from a
+        lock-in's time constant), but it should not query hardware.
     """
 
     def measure(self) -> float | np.ndarray:
@@ -109,8 +128,11 @@ class Query:
     unit : str or list of str or None
         Physical unit string(s). Mirrors structure of `name`.
     lazy : bool
-        Whether to dispatch this query concurrently with other lazy queries 
+        Whether to dispatch this query concurrently with other lazy queries
         during measurement.
+    settle : float or None
+        Seconds after t0 before this query may be read. None means use the
+        Measurement's time_per_point; 0 means read as soon as possible.
     """
 
     f: Callable[[], float | np.ndarray]
@@ -118,6 +140,7 @@ class Query:
     long_name: str | List[str] | None = None
     unit: str | List[str] | None = None
     lazy: bool = False
+    settle: float | None = None
 
     def measure(self) -> float | np.ndarray:
         return self.f()
@@ -138,6 +161,7 @@ class Query:
             'long_name': self.long_name,
             'unit': self.unit,
             'lazy': self.lazy,
+            'settle': self.settle,
         }
 
     @classmethod
@@ -162,6 +186,7 @@ class Query:
             long_name = d.get('long_name'),
             unit = d.get('unit'),
             lazy = d.get('lazy', False),
+            settle = d.get('settle'),
         )
 
 @dataclass
@@ -179,9 +204,14 @@ class Measurement:
 
     Responsibilities
     ----------------
-    - Wait `time_per_point` seconds before measuring (settling time).
     - Fire pre-callbacks before taking readings.
+    - Read each query no earlier than t0 + its settle time, where t0 is when
+      the pre-callbacks return.
     - Dispatch lazy queries concurrently with eager ones via a thread pool.
+      Each lazy query waits out its own settle time on its worker thread.
+      Eager queries run on the calling thread in order of settle time
+      (ties keep declaration order), which minimizes the time until the
+      last eager reading.
     - Collect all readings into a flat ndarray in declaration order.
     - Fire post-callbacks with the results.
     - Expose column metadata (names, long names, units) for use by the runner 
@@ -193,9 +223,11 @@ class Measurement:
         Measurement sources in declaration order. Each may be a Query instance 
         or any object satisfying QuerySignature.
     time_per_point : float
-        Seconds to wait before taking readings at each point.
+        Default settle time, in seconds, for queries whose `settle` is None.
+        (Previously a single wait before the pre-callbacks; the pre-callbacks
+        now run first, on an unsettled system.)
     pre_callbacks : list of Callable, optional
-        Called before readings are taken. Signature:
+        Called before readings are taken, and before any settling. Signature:
             f(idx, coords, timestamp) -> Any
         where coords is a Dict[str, float] keyed by coordinate name.
     post_callbacks : list of Callable, optional
@@ -227,6 +259,37 @@ class Measurement:
 
         # Parse column layout once at construction time so measure() is fast
         self._layout = self._parse_layout(self._queries)
+
+        # Fail early on bad settle values rather than at the first point
+        for q in self._queries:
+            self.settle_of(q)
+
+    """Settling"""
+
+    def settle_of(self, q: QuerySignature) -> float:
+        """Effective settle time of a query, in seconds."""
+        s = getattr(q, 'settle', None)
+        s = self.time_per_point if s is None else float(s)
+        if not s >= 0:   # also rejects NaN
+            raise ValueError(
+                f"Query {q.name!r}: settle time must be >= 0, got {s!r}."
+            )
+        return s
+
+    @property
+    def col_settles(self) -> List[float]:
+        """Flat list of effective settle times, one per column."""
+        result = []
+        for _, width, q in self._layout:
+            result.extend([self.settle_of(q)] * width)
+        return result
+
+    @staticmethod
+    def _wait_until(deadline: float, control: Control | None) -> None:
+        """Sleep until time.monotonic() >= deadline; a job stop cuts it short."""
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            interruptible_sleep(remaining, control)
 
     """Column metadata"""
 
@@ -333,11 +396,23 @@ class Measurement:
                 last = e
         return None, QueryFailure(name=q.name, error=last, attempts=attempts)
 
-    def _collect(self) -> np.ndarray:
+    def _settle_and_measure(self,
+        q: QuerySignature,
+        deadline: float,
+        control: Control | None,
+    ):
+        """Wait until `deadline`, then measure `q` (with retries)."""
+        # The wait sits outside _measure_query so a StopRequested raised by
+        # it is never mistaken for a query error.
+        self._wait_until(deadline, control)
+        return self._measure_query(q)
+
+    def _collect(self, t0: float) -> np.ndarray:
         """
-        Take readings from all queries, threading lazy ones concurrently with 
-        eager ones. Returns a flat ndarray of length num_cols; columns of
-        queries that failed recoverably are NaN and listed in last_failures.
+        Take readings from all queries, each no earlier than t0 + its settle
+        time, threading lazy ones concurrently with eager ones. Returns a flat
+        ndarray of length num_cols; columns of queries that failed recoverably
+        are NaN and listed in last_failures.
         """
         result = np.full(self.num_cols, fill_value=np.nan, dtype=float)
         failures: List[QueryFailure] = []
@@ -349,25 +424,39 @@ class Measurement:
             else:
                 failures.append(failure)
 
-        eager = [(s, w, q) for s, w, q in self._layout if not q.lazy]
-        lazy = [(s, w, q) for s, w, q in self._layout if q.lazy]
+        # Resolve settle times on this thread so `settle` properties need not
+        # be thread-safe. The job's Control is captured here because pool
+        # threads do not inherit the job's context.
+        control = current_control()
+        scheduled = [(s, w, q, t0 + self.settle_of(q))
+                     for s, w, q in self._layout]
+
+        # Earliest deadline first is the exact optimum for one thread with
+        # release times (1|r_j|C_max). sorted() is stable, so equal deadlines
+        # keep declaration order. Output columns are unaffected.
+        eager = sorted((x for x in scheduled if not x[2].lazy),
+                       key=lambda x: x[3])
+        lazy = [x for x in scheduled if x[2].lazy]
 
         if lazy:
             # If anything below raises, leaving the with-block still waits for
-            # every lazy query, so no instrument I/O outlives this call.
+            # every lazy query, so no instrument I/O outlives this call. A
+            # stop wakes lazy queries that are still settling immediately.
             with ThreadPoolExecutor(max_workers=len(lazy)) as ex:
-                futures = [(s, w, ex.submit(self._measure_query, q))
-                           for s, w, q in lazy]
+                futures = [
+                    (s, w, ex.submit(self._settle_and_measure, q, d, control))
+                    for s, w, q, d in lazy
+                ]
 
                 # Run eager queries on the main thread while lazy ones execute
-                for s, w, q in eager:
-                    _store(s, w, self._measure_query(q))
+                for s, w, q, d in eager:
+                    _store(s, w, self._settle_and_measure(q, d, control))
 
                 for s, w, fut in futures:
                     _store(s, w, fut.result())
         else:
-            for s, w, q in eager:
-                _store(s, w, self._measure_query(q))
+            for s, w, q, d in eager:
+                _store(s, w, self._settle_and_measure(q, d, control))
 
         self.last_failures = failures
         return result
@@ -378,7 +467,8 @@ class Measurement:
         timestamp: datetime.datetime | None,
     ) -> np.ndarray:
         """
-        Settle, fire pre-callbacks, collect readings, fire post-callbacks.
+        Fire pre-callbacks, collect readings (each after its settle time,
+        counted from when the pre-callbacks return), fire post-callbacks.
 
         Parameters
         ----------
@@ -398,16 +488,16 @@ class Measurement:
             order.
         """
 
-        # Settling wait
-        if self.time_per_point > 0:
-            time.sleep(self.time_per_point)
-
-        # Pre-callbacks
+        # Pre-callbacks (they see an unsettled system)
         for cb in self._pre_callbacks:
             cb(idx, coords, timestamp)
 
+        # Settle times are counted from here: after the move (and any
+        # transition) and after anything the pre-callbacks did.
+        t0 = time.monotonic()
+
         # Collect readings
-        measured = self._collect()
+        measured = self._collect(t0)
 
         # Build named dict for post-callbacks
         measured_dict: Dict[str, float] = dict(zip(self.col_names, measured))

@@ -43,6 +43,19 @@ class CapMeasureResult:
 class CapQuery():
     """
     Query for a capacitance measure result to be used in a Measurement.
+
+    Parameters
+    ----------
+    ctx : CapContext
+    use_matrix : bool, default True
+        Passed to cap_measure.
+    lazy : bool, default False
+        Read concurrently with other lazy queries.
+    lockin_unit : str, default 'uV'
+        Unit recorded for the raw lock-in columns Lx, Ly.
+    settle : float or None, default None
+        Seconds after the move (and pre-callbacks) before this query is
+        read. None uses the Measurement's time_per_point.
     """
 
     # Each value is a list, one entry per output column that key
@@ -82,10 +95,12 @@ class CapQuery():
         use_matrix: bool = True,
         lazy: bool = False,
         lockin_unit: str = 'uV',
+        settle: float | None = None,
     ):
         self.ctx = ctx
         self.use_matrix = use_matrix
         self.lazy = lazy
+        self.settle = settle
         self.included = ['Cex', 'Closs', 'Lx', 'Ly', 'A']
         self.UNITS = {
             'Cex': [None],

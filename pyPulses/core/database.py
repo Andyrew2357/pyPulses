@@ -247,8 +247,11 @@ class DatabaseLogger:
         col_long_names = measurement.col_long_names
         col_units = measurement.col_units
         col_names = measurement.col_names
-        for name, long_name, unit in zip(col_names, col_long_names, col_units):
-            attrs = {}
+        col_settles = measurement.col_settles   # snapshot at logger creation
+        for name, long_name, unit, settle in zip(
+            col_names, col_long_names, col_units, col_settles
+        ):
+            attrs = {'settle': settle}
             if long_name is not None:
                 attrs['long_name'] = long_name
             if unit is not None:

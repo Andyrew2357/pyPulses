@@ -202,10 +202,17 @@ def _tandemSweep(
     if np.any(min_step[sync_mask] < 0):
         raise ValueError("'min_step' values cannot be negative.")
 
-    # Step count driven by sync channels only
+    # Step count driven by sync channels only. A move in which no sync
+    # channel changes by more than its tolerance sets nothing, so it takes no
+    # steps (and no waits).
     sync_finite = sync_mask & np.isfinite(max_step)
-    M = ceil(np.max(np.abs(end - start)[sync_finite] / max_step[sync_finite])) \
-        if sync_finite.any() else 1
+    sync_moving = sync_mask & (np.abs(end - start) > tolerance)
+    if not sync_moving.any():
+        M = 0
+    elif sync_finite.any():
+        M = ceil(np.max(np.abs(end - start)[sync_finite] / max_step[sync_finite]))
+    else:
+        M = 1
 
     if verbose:
         names = [ch.name or f'ch{i}' for i, ch in enumerate(channels)]
@@ -226,13 +233,17 @@ def _tandemSweep(
             prev[i] = end[i]
 
     # ------------------------------------------------------------------
-    # Sync sweep
+    # Sync sweep. Steps j = 1..M, each set followed by `wait`; step M lands
+    # exactly on `end`. (Step j = 0 would be `start` itself: it would set
+    # nothing and just spend `wait` before the first set, where it does
+    # nothing for settling.) Spacing between moves stays rate-limited
+    # because each move ends with a `wait` after its last set.
     # ------------------------------------------------------------------
-    for j in range(M):
+    for j in range(1, M + 1):
         if not ignore_checkpoints:
             checkpoint()
 
-        new = start + j * (end - start) / M
+        new = end.copy() if j == M else start + j * (end - start) / M
 
         # Skip channels that haven't moved enough to bother setting.
         # Async channels are also skipped here — they were dispatched above.
@@ -282,10 +293,10 @@ def _tandemSweep(
 
         time.sleep(wait)
 
-    # Final nudge for sync channels only. Channels whose change was below
-    # min_step (e.g. a frequency with a huge min_step) are only set here, so
-    # honor their settle_time after setting them; the step loop's waits
-    # happened before they changed and do not count.
+    # Final nudge for sync channels only. Channels whose last increment was
+    # below min_step (e.g. a frequency with a huge min_step) are only set
+    # here, so honor their settle_time after setting them; the step loop's
+    # waits happened before they changed and do not count.
     nudge_settle = 0.0
     for i, ch in enumerate(channels):
         if async_mask[i]:

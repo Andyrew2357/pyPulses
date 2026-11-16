@@ -10,6 +10,8 @@ JobQueue.instance()                — the session-wide singleton
 JobQueue.instance().current        — the contextually relevant job
 JobQueue.instance().pending        — list of jobs waiting to run
 checkpoint()                       — cooperative pause/stop point
+interruptible_sleep(s, control)    — sleep that a stop() cuts short
+current_control()                  — this thread's job Control (or None)
 """
 
 from __future__ import annotations
@@ -77,6 +79,33 @@ def checkpoint() -> None:
     ctrl = _current_control.get()
     if ctrl is not None:
         ctrl.wait_if_paused_or_stopped()
+
+
+def current_control() -> Control | None:
+    """
+    The Control of the job running on this thread, or None outside a Job.
+
+    Worker threads (e.g. a ThreadPoolExecutor) do not inherit the job's
+    context, so capture this on the job thread and pass it to them.
+    """
+    return _current_control.get()
+
+
+def interruptible_sleep(seconds: float, control: Control | None = None) -> None:
+    """
+    Sleep that ends early, raising StopRequested, if the job is stopped.
+
+    `control` defaults to the current thread's job; outside a Job (and with no
+    control given) this is a plain time.sleep. Pause is not honored here;
+    it takes effect at the next checkpoint().
+    """
+    if seconds <= 0:
+        return
+    ctrl = control if control is not None else _current_control.get()
+    if ctrl is None:
+        time.sleep(seconds)
+    elif ctrl._stop.wait(seconds):
+        raise StopRequested()
 
 
 """
