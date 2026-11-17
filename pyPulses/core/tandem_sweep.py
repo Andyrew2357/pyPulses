@@ -65,12 +65,19 @@ def _derive_wait(
     Derive the shared per-step wait time from channel SweepConfigs.
 
     Async channels are excluded — they manage their own timing internally.
-    If `start` and `end` are given, sync channels that will not be stepped
-    (see _will_step) are excluded as well, so a stationary channel with a
-    long settle_time cannot throttle the channels that actually move. Without
-    `start`/`end`, every sync channel counts (previous behavior).
 
-    For each remaining sync channel the effective wait contribution is:
+    If `start` and `end` are given (the move is known), only sync channels
+    that will be stepped (see _will_step) count, so a stationary channel
+    cannot throttle the ones that move, and the rate limit is applied to the
+    step actually taken: _tandemSweep moves in M equal steps (M as computed
+    there), so channel i changes by |end_i - start_i| / M per step and
+    contributes
+        |end_i - start_i| / M / max_rate + settle_time   (when max_rate is set)
+        settle_time                                       (otherwise)
+    A single small step thus waits only as long as its size needs at
+    max_rate, while a long ramp (steps of max_step) is unchanged.
+
+    Without `start`/`end`, every sync channel counts with a full step:
         max_step / max_rate + settle_time   (when max_rate is set)
         settle_time                         (when only settle_time is set)
         0                                   (when neither is set)
@@ -88,6 +95,7 @@ def _derive_wait(
     """
 
     sync_channels = [ch for ch in channels if not ch.config.async_set]
+    step_size = {id(ch): ch.config.max_step for ch in sync_channels}
 
     if start is not None and end is not None:
         start = np.asarray(start, dtype=float)
@@ -99,12 +107,24 @@ def _derive_wait(
         if not sync_channels:
             return 0.0 if min_wait is None else min_wait
 
+        # Step count exactly as in _tandemSweep (sync channels with a finite
+        # max_step), then each channel's increment per step
+        delta = np.abs(end - start)
+        M = 1
+        for i, ch in enumerate(channels):
+            ms = ch.config.max_step
+            if not ch.config.async_set and ms is not None and np.isfinite(ms) and ms > 0:
+                M = max(M, ceil(delta[i] / ms))
+        index = {id(ch): i for i, ch in enumerate(channels)}
+        step_size = {id(ch): delta[index[id(ch)]] / M for ch in sync_channels}
+
     contributions = []
     for ch in sync_channels:
         cfg = ch.config
         w = cfg.settle_time
-        if cfg.max_rate is not None and cfg.max_step is not None:
-            w += cfg.max_step / cfg.max_rate
+        step = step_size[id(ch)]
+        if cfg.max_rate is not None and step is not None:
+            w += step / cfg.max_rate
         contributions.append(w)
 
     any_constrained = any(
