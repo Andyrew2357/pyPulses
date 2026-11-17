@@ -181,7 +181,10 @@ class ScanBase(ABC):
         ordered_channels = self._channels
         start_arr = np.array([start[ch.name]  for ch in ordered_channels])
         end_arr = np.array([target[ch.name] for ch in ordered_channels])
-        wait = _derive_wait(ordered_channels, min_wait)
+        # Only channels that will actually step set the cadence, so a slow
+        # channel that is not moving (e.g. the field during a cut) does not
+        # throttle the ones that are.
+        wait = _derive_wait(ordered_channels, min_wait, start_arr, end_arr)
 
         try:
             _tandemSweep(
