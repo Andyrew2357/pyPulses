@@ -68,6 +68,7 @@ from .lockin.channels import series_correlated_covariance
 from .errors import mark_recoverable
 
 import re
+import time
 import numpy as np
 from contextlib import contextmanager
 from logging import Logger
@@ -917,20 +918,27 @@ class hf2liDemodChannel:
             raise mark_recoverable(e)
         return np.asarray(data['x']) + 1j * np.asarray(data['y'])
 
-    def _restart_stream(self, cause: BaseException):
-        """Drop and re-create the subscription after a failed read."""
+    def _restart_stream(self, cause: BaseException, timeout: float = 60.0,
+                        pause: float = 5.0):
+        """Drop and re-create the subscription after a failed read, retrying
+        for up to `timeout` s (data-server stalls) before giving up."""
         self.parent.info(f"HF2LI demod {self.index}: stream read failed "
                          f"({cause}); restarting the stream.")
-        try:
-            if self.streaming:
-                self.stop_stream()
-            self.start_stream()
-        except Exception as e:
-            raise RuntimeError(
-                f"HF2LI demod {self.index}: stream read failed ({cause}) and "
-                f"restarting the stream also failed ({e!r}); stream state is "
-                f"unknown."
-            ) from e
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if self.streaming:
+                    self.stop_stream()
+                self.start_stream()
+                return
+            except Exception as e:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"HF2LI demod {self.index}: stream read failed ({cause}) and "
+                        f"restarting the stream kept failing for {timeout:.0f} s "
+                        f"({e!r}); stream state is unknown."
+                    ) from e
+                time.sleep(pause)
 
     def stream_average(self, duration=0.1, series_corr: bool = False,
                        L: int | None = None) -> Tuple[np.ndarray, np.ndarray]:
