@@ -51,6 +51,11 @@ class SRSLockin(pyvisaDevice):
     # values are the integer codes the command sends and returns.
     REF_SOURCE_CODES: Dict[str, int] = {'internal': 1, 'external': 0}
 
+    # GPIB: a timeout sends a device clear and is re-raised recoverable (see
+    # pyvisaDevice). On SRS lock-ins a device clear only empties the input
+    # buffer and output queue; settings and the capture buffer are untouched.
+    DEVICE_CLEAR_ON_TIMEOUT = True
+
     DEFAULT_CMDS = {
         'phas': "PHAS",
         'fmod': "FMOD",

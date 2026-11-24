@@ -567,7 +567,16 @@ class sr860(
                 "Cannot start acquisition while one is already running."
             )
 
-        self.write("CAPTURESTART 0,0")
+        try:
+            self.write("CAPTURESTART 0,0")
+        except BaseException as e:
+            # It may still have been accepted: stop it, as in _get_buffered_data
+            if not self._abort_acquisition() and is_recoverable(e):
+                raise DeviceCommunicationError(
+                    "CAPTURESTART failed and CAPTURESTOP could not be "
+                    "delivered; instrument state is unknown."
+                ) from e
+            raise
         self._acquisition.running = True
         self.info("Started data acquisition.")
 
@@ -656,9 +665,11 @@ class sr860(
         chunks = []
         for start_kb in range(0, total_kb, chunk_kb):
             size_kb = min(chunk_kb, total_kb - start_kb)
-            # One atomic, retryable transaction per chunk. The capture has
-            # already been stopped, so the buffer is static and re-issuing a
-            # chunk after a USBTMC clear returns the same data.
+            # One atomic transaction per chunk. The capture has already been
+            # stopped, so the buffer is static and re-issuing a chunk after a
+            # USBTMC clear returns the same data. On GPIB a timeout here is
+            # raised recoverable (DEVICE_CLEAR_ON_TIMEOUT); the caller retries
+            # with a new acquisition.
             chunk_data = self.query_binary_values(
                 f"CAPTUREGET? {start_kb},{size_kb}",
                 datatype = 'f',
